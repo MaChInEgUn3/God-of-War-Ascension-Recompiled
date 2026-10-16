@@ -118,6 +118,16 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Resultado medido:** os handlers `0x338C28`/`0x338D2C` rodam, `WST_Global`/`GBL_ProjectSettings` resolvem, zero `MemTable entry not found`. O boot avança: troféus (`sceNpTrophy`), savedata (`ListAutoLoad`), callbacks de sysutil/GCM, `SetFlipMode(2)`, `ENGLISH.PSARC` aberto, e o jogo começa a submeter jobs WWS (`ReadyCountStore`, listas DMA com stall-and-notify em `loadJobState@0x12A0`).
 - **Novo ponto de parada:** a thread principal espera em `0x20A9AE94` (lr `0x467B2C`); provavelmente pela conclusão dos jobs WWS no SPU (o handshake da lista DMA com stall estacionado no M0.8). Também há 16 leituras de NULL+0x40 em `0x37DE80` e 2 NIDs sem resolver (`0xA73BF47E`, `0xC765B995`).
 
+### M0.12 — jobs WWS executando no SPU; SPURS com 32 workloads (2026-10-16)
+- **Handshake do job manager WWS resolvido** (stall-and-notify das listas DMA): o handler de interrupção do PM (LS `0xA2C`) **gera código** (um shim que salva/restaura 80 registradores em `0x3FEC0`) com `lqa`/`stqx`/`stqa` e o chama. Três bugs do runtime impediam isso:
+  1. `spu_smc_microstep` calculava o endereço de `stqa`/`lqa` com `<< 4` (o ISA é `I16 << 2`): o template era lido de `0x2900` em vez de `0xA40` e o shim saía lixo — inclusive um `bisled` com bit E que reabilitava interrupções e as aninhava infinitamente. (Achado do advisor.)
+  2. Quando o interpretador devolvia o controle a código liftado, o microstep não rearmava o trampolim: a execução do PM terminava no meio do handler (`[pm-end] pc=0xA60`).
+  3. O interpretador não tinha `bisled`, os bits E/D dos desvios indiretos nem as operações de dupla precisão (`dfa/dfs/dfm/dfma/dfms/dfnma/dfnms/dfc*`), `bgx`, `mpyhhau`, `mpyui`, `rothmi`, `rotmah(i)`; e `mpyhha` gravava em `rc` (é RR, destino `rt`). Os jobs WWS (módulos de job não liftados) rodam pelo interpretador.
+- **Resultado:** STALL → TAKE → RESUME → IRET funcionando, `loadJobState` avança, milhares de jobs executados, a espera do PPU em `0x466E38` (mínimo dos contadores de jobs por SPU) é liberada.
+- **SPURS com 32 workloads:** o jogo usa `cellSpursInitializeWithAttribute2` (`CellSpurs2`, 8 KB) e registra **19** workloads; o HLE tinha 16 slots (e `spurs_policy.c` também), então `EDGE2` e `RsxSync` nunca eram registrados e o contador de conclusão de jobs em `0x99AAC4` nunca zerava. Implementado o segundo conjunto (wid 16..31) com o layout real: readyCount2 em `0x10`, state2 em `0xC0`, signal2 em `0x74`, wklInfo2 em `0x1000`, contenção em nibbles.
+- **Novo ponto de parada:** um SPU (PM WWS, img 10) gira em `GETLLAR ea=0` em LS `0x4194`, e o RSX recebe um `GET_REPORT` com índice `1048575`; a thread principal espera um job set de renderização (`0x21600530`). Suspeita: um job com EA nulo (sincronização RSX/report).
+- **Ferramentas:** `SPU_IRQTRACE=1` agora reporta interrupções aninhadas com o shim gerado; `SPURS_WID_STATS=1` conta execuções por workload.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.

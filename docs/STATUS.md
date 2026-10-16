@@ -13,12 +13,18 @@ inflate request, so FIOS slice reads of compressed PSARC entries always got the 
 its first record, the DC symbol registry was never bound (`WST_Global` unresolved), heap `WAD_R_Perm` got size 0 and the
 heap corruption ended in `UnmapMainMemory` failures. Fixed in the patch; see [FEASIBILITY.pt-BR.md](FEASIBILITY.pt-BR.md) M0.10/M0.11.
 
+## Resolved (M0.12): WWS SPU jobs run; SPURS has 32 workload slots
+The WWS job-manager interrupt handler (which builds a register save/restore shim at runtime) now runs: fixed the
+microstep `stqa`/`lqa` address scale, the trampoline re-arm after interpreter hand-back, and the interpreter's missing
+ops (`bisled`, E/D bits, double precision, ...). The job pipeline advances and the PPU job waits release. SPURS HLE
+now models `CellSpurs2` (32 workloads); GoW:A registers 19 (EDGE2 and RsxSync were never scheduled before).
+
 ## Current blocker
-Boot now reaches trophies, savedata, sysutil/GCM callbacks, flip mode 2 and starts submitting WWS SPURS jobs. The main
-thread then waits on `0x20A9AE94` (lr `0x467B2C`), most likely for WWS job completion (the job-list DMA stall-and-notify
-handshake at `loadJobState@LS 0x12A0`). Also open: NULL+0x40 reads in `0x37DE80`, unresolved NIDs `0xA73BF47E`, `0xC765B995`.
+An SPU (WWS PM, image 10) spins on `GETLLAR ea=0` at LS `0x4194`, the RSX sees `GET_REPORT idx=1048575`, and the main
+thread waits on a render job set (`0x21600530`, via `0x466E38`). Likely a job with a null EA (RSX report/label sync).
+Also open: NULL+0x40 reads in `0x37DE80`, unresolved NIDs `0xA73BF47E`, `0xC765B995`.
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
 
-Full chronological log (M0.1 to M0.11): [FEASIBILITY.pt-BR.md](FEASIBILITY.pt-BR.md).
+Full chronological log (M0.1 to M0.12): [FEASIBILITY.pt-BR.md](FEASIBILITY.pt-BR.md).
