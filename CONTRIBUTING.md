@@ -8,5 +8,4 @@
 
 ## CI guard
 
-`docs/ci/guard.yml.example` is a GitHub Actions job that fails if forbidden files (game/firmware/lifted output) or
-files over 2 MB are tracked. To enable it: `gh auth refresh -s workflow`, then move it to `.github/workflows/guard.yml`.
+`.github/workflows/guard.yml` fails the build if forbidden files (game, firmware or lifted output) or files over 2 MB are tracked.
