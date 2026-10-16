@@ -1,0 +1,24 @@
+{
+  "_comment": "Declarative RAG ingestion plan. Paths are relative to GOW_ROOT (the checkout's parent in the dev layout: D:/GOW A). Never list game data, firmware or lifted output here (see docs/LEGAL.md).",
+  "staging_dir": "rag_staging",
+  "collections": {
+    "gow-recomp": [
+      {"path": "repo", "glob": "**/*.md"},
+      {"path": "repo", "glob": "**/*.py"},
+      {"path": "repo", "glob": "**/*.cpp"},
+      {"path": "rag_staging/repo", "glob": "**/*.txt"}
+    ],
+    "ps3recomp": [
+      {"path": "tools/ps3recomp/docs", "glob": "**/*.md"},
+      {"path": "tools/ps3recomp/runtime", "glob": "**/*.c"},
+      {"path": "tools/ps3recomp/runtime", "glob": "**/*.cpp"},
+      {"path": "tools/ps3recomp/libs", "glob": "**/*.c"},
+      {"path": "tools/ps3recomp/tools", "glob": "*.py"}
+    ]
+  },
+  "stage": [
+    {"from": "repo/patches/ps3recomp-gow-m0.patch", "to": "rag_staging/repo/patches/ps3recomp-gow-m0.patch.txt"},
+    {"from": "repo/spu/images.json", "to": "rag_staging/repo/spu/images.json.txt"},
+    {"from": "repo/port/lle_keep_hle.inc", "to": "rag_staging/repo/port/lle_keep_hle.inc.txt"}
+  ]
+}

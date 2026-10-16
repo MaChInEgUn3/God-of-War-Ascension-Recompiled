@@ -18,3 +18,10 @@ Lessons that cost days; keep them.
   newline. Compile after every such edit.
 * **Oracle**: RPCS3 boots the game and is good for behavioural comparison. It uses LLE for most firmware libraries,
   so it does not trace HLE calls.
+
+## RAG index (local, optional)
+
+The project is indexed in a local RAG server (collections `gow-recomp` for this repo and `ps3recomp` for the SDK).
+`scripts/rag-manifest.json` declares what is ingested; `scripts/rag_hook.py` is a Claude Code `PostToolUse` hook
+(registered in the parent folder's `.claude/settings.json`) that stages patches/JSON as `.txt` and asks the assistant to
+re-ingest after each `git commit`/`git push`. Never add game data, firmware or lifted output to the manifest.
