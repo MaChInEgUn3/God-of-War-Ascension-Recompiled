@@ -44,7 +44,8 @@ def main() -> int:
              f"(paths are on the server's filesystem, rooted at {ROOT}):"]
     for coll, entries in man.get("collections", {}).items():
         for e in entries:
-            lines.append(f"  collection={coll} path={os.path.normpath(os.path.join(ROOT, e["path"]))} glob_pattern={e['glob']}")
+            full = os.path.normpath(os.path.join(ROOT, e["path"]))
+            lines.append(f"  collection={coll} path={full} glob_pattern={e['glob']}")
     lines.append("Then continue; do this silently in the background and only mention it in one short line.")
     out = {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "\n".join(lines)}}
     print(json.dumps(out))
