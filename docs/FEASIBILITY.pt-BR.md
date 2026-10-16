@@ -141,6 +141,12 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **`0x2001ED1C`** é um contador criado por `func_003B3028` (marca `count=1` e acrescenta a espera ao RsxSync); IO = `0x0001ED1C` (EA `0x20000000` ↔ IO 0). **Nenhuma entrada tipo 2 e nenhum comando RSX na memória referenciam esse contador** (GOW_SCAN), então quem deveria zerá-lo ainda não apareceu — candidato: comando de semáforo do RSX emitido mais tarde no frame (o FIFO está drenado: put=get=`0xA80000`), ou um caminho do PPU que não roda porque a thread principal espera o EDGE0.
 - **Próximo passo:** achar quem libera os marcadores do RsxSync no hardware real (provável: RSX via `NV406E`/`NV4097` semaphore com contexto DMA de memória principal, ainda não implementado no HLE) e verificar se a espera da thread principal (`0x3E7A14`, contador EDGE0) é anterior a isso no frame. RPCS3 como oráculo para os valores em `0x2001ED1C` ao longo do tempo.
 
+### M0.15 — reports do RSX em memória principal liberam o RsxSync (2026-10-16)
+- **Quem zera os contadores de espera do RsxSync é o RSX**, via `NV4097_GET_REPORT` (`0x1800`): com `NV4097_SET_CONTEXT_DMA_REPORT` (`0x1A8`) = `0xFEED0001` (host buffer = memória principal via IO), o report `{u64 timer, u32 value, u32 0}` cai no EA mapeado do offset. GoW:A aponta reports para os contadores WWS (`idx 7889` → `0x2001ED10`, o campo zero em `+0xC` é o contador) e para `spurs+0x60` (zera `wklFlag.flag`, o "kick" de hardware do RsxSync). O HLE gravava só numa área de reports local do host.
+- **Correção** (`cellGcmSys.c`): rastreia `0x1A8`; para `0xFEED0001`/`0xBAD68000` grava o report no EA (`gcm_io2ea`).
+- **Resultado:** o RsxSync avança (tickets consumidos 1 → 4); os marcadores são liberados.
+- **Novo ponto de parada:** BRANCH-TO-0 num job do RsxSync em LS `0x4264` (lr `0x4258`, módulo de job carregado em `0x4020`, VA = LS + `0x778180`); os contadores EDGE0/EDGE1 continuam em 1.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.

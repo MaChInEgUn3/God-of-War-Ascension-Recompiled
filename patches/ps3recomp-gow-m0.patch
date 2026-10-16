@@ -725,7 +725,7 @@ index b7dfd50..3a00f55 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index ac0a7a8..30c867f 100644
+index ac0a7a8..2f5b68e 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -340,19 +340,31 @@ static void populate_offset_table(u32 ea, u32 io, u32 size)
@@ -761,7 +761,36 @@ index ac0a7a8..30c867f 100644
      }
  }
  
-@@ -2637,14 +2649,101 @@ static u32 gcm_io_alloc(u32 size)
+@@ -1936,7 +1948,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
+                      * area. Sample counts are not measured, so a ZPASS query
+                      * reports "visible" -- the conservative answer; reading 0
+                      * tells the title every queried object is occluded. */
+-                    if (m == 0x1800) {
++                    /* NV4097_SET_CONTEXT_DMA_REPORT: LOCAL (0x66626660, default) or
++                     * MAIN (0xBAD68000). With MAIN the report lands in IO-mapped main
++                     * memory -- GoW:A points reports at WWS dependency counters (the
++                     * u32 "zero" field at +0xC is the counter) so the RSX releases its
++                     * RsxSync job waits. */
++                    static u32 s_report_ctx = 0x66626660u;
++                    if (m == 0x1A8) { s_report_ctx = vm_read32(dea);
++                        static int rc = 0; if (rc++ < 6) printf("[CTX_REPORT] 0x%08X%c", s_report_ctx, 10); }
++                    /* 0xFEED0001 = CELL_GCM_CONTEXT_DMA_MEMORY_HOST_BUFFER (what GoW:A
++                     * programs); it also aims reports at spurs+0x60 so the RSX zeroes
++                     * wklFlag.flag (+0x6C) -- the hardware kick of the flag receiver. */
++                    if (m == 0x1800 && (s_report_ctx == 0xBAD68000u || s_report_ctx == 0xFEED0001u)) {
++                        const u32 v = vm_read32(dea), off = v & 0xFFFFFFu;
++                        const u32 ea = gcm_io2ea(off);
++                        { static int rm = 0; if (rm++ < 8) printf("[GET_REPORT] MAIN type=%u io=0x%X -> ea=0x%08X%c", v >> 24, off, ea, 10); }
++                        if (ea) {
++                            vm_write64(ea, get_timestamp_ns());
++                            vm_write32(ea + 8, (v >> 24) == 1u ? 0xFFFFu : 0u);
++                            vm_write32(ea + 12, 0);
++                        }
++                    } else if (m == 0x1800) {
+                         const u32 v = vm_read32(dea), idx = (v & 0xFFFFFFu) / 16u;
+                         { static int rn = 0; if (rn++ < 6) printf("[GET_REPORT] type=%u idx=%u%c", v >> 24, idx, 10); }
+                         if (idx < CELL_GCM_MAX_REPORT_COUNT) {
+@@ -2637,14 +2669,101 @@ static u32 gcm_io_alloc(u32 size)
      if (s_io_alloc_next == 0)
          s_io_alloc_next = (s_config.ioSize + 0xFFFFFu) & ~0xFFFFFu;
      if (s_io_alloc_next < 0x100000u) s_io_alloc_next = 0x100000u;
@@ -863,7 +892,7 @@ index ac0a7a8..30c867f 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -2684,6 +2783,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2684,6 +2803,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -871,7 +900,7 @@ index ac0a7a8..30c867f 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -2692,6 +2792,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2692,6 +2812,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -879,7 +908,7 @@ index ac0a7a8..30c867f 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -2727,6 +2828,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2727,6 +2848,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -896,7 +925,7 @@ index ac0a7a8..30c867f 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -2744,8 +2855,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -2744,8 +2875,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
