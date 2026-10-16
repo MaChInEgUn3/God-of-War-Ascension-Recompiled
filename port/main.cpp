@@ -314,27 +314,41 @@ static bool alloc_guest_vm(void)
 #ifdef _WIN32
 /* GOW_SCAN=<hex bytes>: poll committed guest memory for a byte pattern and log each new
  * hit once (guest EA + ms since start). Answers "did this data ever reach guest memory". */
-/* GOW_PEEK=<hex ea>,<n words>: log those big-endian words whenever they change (polled every 20 ms). */
+/* GOW_PEEK=<hex ea>,<n words>[;<hex ea>,<n>...]: log those big-endian words whenever they
+ * change (polled every 20 ms). Up to 8 regions of up to 32 words; one line per changed region. */
 static DWORD WINAPI guest_peek_thread(LPVOID)
 {
-    const char* e = getenv("GOW_PEEK");
-    char* p = nullptr; uint32_t ea = (uint32_t)strtoul(e, &p, 16), n = (p && *p == ',') ? (uint32_t)strtoul(p + 1, nullptr, 0) : 4;
-    if (n > 32) n = 32;
-    uint32_t prev[32] = {0}; DWORD t0 = GetTickCount();
+    enum { MAXR = 8 };
+    uint32_t ea[MAXR], n[MAXR], prev[MAXR][32] = {{0}}; int nr = 0;
+    for (const char* e = getenv("GOW_PEEK"); e && *e && nr < MAXR; ) {
+        char* p = nullptr;
+        ea[nr] = (uint32_t)strtoul(e, &p, 16);
+        n[nr] = (p && *p == ',') ? (uint32_t)strtoul(p + 1, &p, 0) : 4;
+        if (n[nr] > 32) n[nr] = 32;
+        nr++;
+        e = p ? strchr(p, ';') : nullptr;
+        if (e) e++;
+    }
+    DWORD t0 = GetTickCount();
     for (;;) {
         Sleep(20);
-        uint32_t cur[32];
-        for (uint32_t i = 0; i < n; i++) {
-            const uint8_t* q = vm_base + ea + i * 4;
-            MEMORY_BASIC_INFORMATION mbi;
-            if (!VirtualQuery(q, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT) { cur[i] = 0; continue; }
-            cur[i] = (uint32_t)q[0] << 24 | (uint32_t)q[1] << 16 | (uint32_t)q[2] << 8 | q[3];
-        }
-        if (memcmp(cur, prev, n * 4)) {
-            fprintf(stderr, "[GOW_PEEK] t=%lums @%08X:", (unsigned long)(GetTickCount() - t0), ea);
-            for (uint32_t i = 0; i < n; i++) fprintf(stderr, " %08X", cur[i]);
-            fputc(10, stderr);
-            memcpy(prev, cur, sizeof prev);
+        for (int r = 0; r < nr; r++) {
+            uint32_t cur[32];
+            for (uint32_t i = 0; i < n[r]; i++) {
+                const uint8_t* q = vm_base + ea[r] + i * 4;
+                MEMORY_BASIC_INFORMATION mbi;
+                if (!VirtualQuery(q, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT) { cur[i] = 0; continue; }
+                cur[i] = (uint32_t)q[0] << 24 | (uint32_t)q[1] << 16 | (uint32_t)q[2] << 8 | q[3];
+            }
+            if (memcmp(cur, prev[r], n[r] * 4)) {
+                char line[512]; int k = snprintf(line, sizeof line, "[GOW_PEEK] t=%lums @%08X:",
+                                                 (unsigned long)(GetTickCount() - t0), ea[r]);
+                for (uint32_t i = 0; i < n[r] && k < (int)sizeof line - 10; i++)
+                    k += snprintf(line + k, sizeof line - k, " %08X", cur[i]);
+                line[k++] = 10; line[k] = 0;
+                fputs(line, stderr);      /* one write: less interleaving with other threads */
+                memcpy(prev[r], cur, n[r] * 4);
+            }
         }
     }
 }
@@ -397,6 +411,11 @@ int main(int argc, char** argv)
     }
 
 #ifdef _WIN32
+    /* Title defaults for runtime knobs (an explicit value in the environment wins).
+     * GCM_PARK_WAIT: GoW:A parks the RSX on a self-JUMP and appends the next FIFO
+     * segment behind it before patching the park; following `put` instead skipped
+     * the GET_REPORTs that release the RsxSync job list. */
+    if (!getenv("GCM_PARK_WAIT")) _putenv_s("GCM_PARK_WAIT", "1");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

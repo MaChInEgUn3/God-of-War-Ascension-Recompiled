@@ -21,8 +21,14 @@ Lessons that cost days; keep them.
   `PPU_TRACE_ADDRS=3c93e8,2a0000-2b0000` (hex, ranges allowed) and cap with `PPU_TRACE_MAX`. Each line shows
   `tid`, `r3..r7` and `lr`. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). The `all` build is slower; relift without it for normal runs.
-* **Guest memory probes** (port): `GOW_PEEK=<ea>,<words>` logs every change (20 ms poll); `GOW_SCAN=<hex bytes>` logs where a
-  byte pattern appears. Both are host threads; times are ms since start.
+* **Guest memory probes** (port): `GOW_PEEK=<ea>,<words>[;<ea>,<words>...]` logs every change (20 ms poll; up to 8
+  regions of 32 words; in Bash write `GOW_PEEK="a,n;b,m"` so the `;` is not a command separator); `GOW_SCAN=<hex bytes>`
+  logs where a byte pattern appears. Both are host threads; times are ms since start.
+* **GCM FIFO park**: `GCM_PARK_WAIT=1` (default in the port) keeps the walker on a self-JUMP park until the title
+  patches it, instead of resyncing to `put` (`jump-park`/`stuck-get`). `GCM_RECDBG=1` prints every JUMP and a FIFO dump
+  at each resync.
+* **SPURS tasks**: `SPURS_TASK2_STUB=1` restores the old accept-only `cellSpursCreateTask2`. SPU `BRANCH-TO-0` lines now
+  print `ls[pc-4]`/`ls[pc]`/`r3`: a `stopd` (`0x280xxxxx`) or `stop` word there is a job assert, not a missing lift.
 * **PSARC helpers**: `analysis/psarc_find.py <regex> <psarc...>` lists entries; `analysis/psarc_extract.py <psarc> <name> <out>`
   extracts one (use `MSYS_NO_PATHCONV=1` in Git Bash so `/DIR/NAME` is not rewritten).
 * **Name hash**: Jenkins one-at-a-time over the upper-cased string, seed 0, no final mix (`0x3C4380`); DC symbol tables are
