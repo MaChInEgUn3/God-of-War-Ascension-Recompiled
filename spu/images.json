@@ -1,0 +1,4 @@
+[ {"name": "gowpm0", "va": "0x77CA80", "size": "0x3000", "base": "0xA00", "entry": "0xA00", "id": 10},
+  {"name": "sresk0", "file": "${GOW_LOCAL}/lle/out/libsre_image.bin", "foff": "0x20C00", "size": "2116", "base": "0x100", "entry": "0x848", "id": 11},
+  {"name": "srepm0", "file": "${GOW_LOCAL}/lle/out/libsre_image.bin", "foff": "0x21480", "size": "0x2200", "base": "0xA00", "entry": "0xA00", "id": 12},
+  {"name": "srepm1", "file": "${GOW_LOCAL}/lle/out/libsre_image.bin", "foff": "0x23680", "size": "0x2200", "base": "0xA00", "entry": "0xA00", "id": 13} ]

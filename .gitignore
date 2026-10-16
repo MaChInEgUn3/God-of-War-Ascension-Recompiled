@@ -1,0 +1,35 @@
+# Everything derived from the game, the firmware, or the user's machine stays local.
+/local/
+/dump/
+/vfs/
+/work/
+/tools/
+/build*/
+*.self
+*.elf
+*.sprx
+*.prx
+*.pup
+*.psarc
+*.PSARC
+*.wad
+*.bin
+*.sfo
+*.log
+*.ppm
+*.obj
+*.o
+*.exe
+*.dll
+*.pdb
+# lifted output (translations of copyrighted binaries)
+recompiled*/
+ppu_recomp*.cpp
+spu_recomp*.c
+libsre_*
+/port/spu/
+/port/build*/
+# secrets
+*.pem
+*.key
+.env

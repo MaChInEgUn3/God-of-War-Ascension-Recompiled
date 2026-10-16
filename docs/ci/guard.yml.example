@@ -1,0 +1,13 @@
+name: no-forbidden-files
+on: [push, pull_request]
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject game/firmware/lifted artifacts and large files
+        run: |
+          bad=$(git ls-files | grep -Ei '\.(self|elf|sprx|prx|pup|psarc|wad|sfo|bin|exe|dll|obj|ppm)$|recompiled|ppu_recomp|spu_recomp|libsre_' || true)
+          if [ -n "$bad" ]; then echo "Forbidden files tracked:"; echo "$bad"; exit 1; fi
+          big=$(git ls-files -z | xargs -0 -r du -k | awk '$1>2048' | grep -v 'patches/' || true)
+          if [ -n "$big" ]; then echo "Files larger than 2 MB:"; echo "$big"; exit 1; fi
