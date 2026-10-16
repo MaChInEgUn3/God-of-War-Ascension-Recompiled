@@ -781,7 +781,7 @@ index acbaf12..f9ae67d 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index bf75dc8..630e733 100644
+index bf75dc8..8769e72 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -2434,6 +2434,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
@@ -853,7 +853,7 @@ index bf75dc8..630e733 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -3915,3 +3952,63 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -3915,3 +3952,75 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -862,6 +862,16 @@ index bf75dc8..630e733 100644
 + * 4000 lines); PPU_TRACE_REGS=1 adds r11..r14 and the callee-saved r27..r31. */
 +void ppu_trace_enter(uint32_t addr, ppu_context* ctx)   /* declared in ppu_recomp.h */
 +{
++    /* PPU_TRACE_ADDRS=<hex>[-<hex>],... : run-time filter for a build lifted with PPU_TRACE_FUNCS=all.
++     * Unset = trace every function the lifter instrumented. Code is below 0x800000. */
++    static uint8_t* tmask = nullptr; static int tinit = 0;
++    if (!tinit) { tinit = 1; const char* e = getenv("PPU_TRACE_ADDRS");
++        if (e) { tmask = (uint8_t*)calloc(0x800000 / 4 / 8, 1);
++            while (*e) { char* p = nullptr; uint32_t lo = (uint32_t)strtoul(e, &p, 16), hi = lo;
++                if (p && *p == '-') hi = (uint32_t)strtoul(p + 1, &p, 16);
++                for (uint32_t a = lo; a <= hi && a < 0x800000; a += 4) tmask[(a >> 2) >> 3] |= 1u << ((a >> 2) & 7);
++                if (!p || p == e) break; e = p; while (*e == ',') e++; } } }
++    if (tmask && !(addr < 0x800000 && (tmask[(addr >> 2) >> 3] >> ((addr >> 2) & 7) & 1))) return;
 +    static long limit = -1; static long n = 0;
 +    if (limit < 0) { const char* e = getenv("PPU_TRACE_MAX"); limit = e ? atol(e) : 4000; }
 +    if (n >= limit) return;
@@ -871,13 +881,15 @@ index bf75dc8..630e733 100644
 +            (uint32_t)ctx->gpr[5], (uint32_t)ctx->gpr[6], (uint32_t)ctx->gpr[7],
 +            (uint32_t)ctx->lr, (uint32_t)ctx->gpr[1]);
 +    /* PPU_TRACE_DUMP=<hex fn>,<reg>,<hex len>: also dump len bytes at gpr[reg] on entry to fn. */
-+    static uint32_t dfn = 1, dreg = 0, dlen = 0;
++    static uint32_t dfn = 1, dreg = 0, dlen = 0, ddef = 0;   /* ddef = extra pointer hops before dumping */
 +    if (dfn == 1) { dfn = 0; const char* e = getenv("PPU_TRACE_DUMP");
 +        if (e) { char* p = nullptr; dfn = (uint32_t)strtoul(e, &p, 16);
-+                 if (p && *p == ',') { dreg = (uint32_t)strtoul(p + 1, &p, 10);
-+                     if (p && *p == ',') dlen = (uint32_t)strtoul(p + 1, &p, 16); } } }
-+    if (dfn && addr == dfn && dlen && dreg < 32) {
-+        uint32_t base = (uint32_t)ctx->gpr[dreg];
++                 if (p && *p == ',') { dreg = (uint32_t)strtoul(p + 1, &p, 0);   /* >=32: absolute guest EA (use 0x...) */
++                     if (p && *p == ',') { dlen = (uint32_t)strtoul(p + 1, &p, 16);
++                         if (p && *p == ',') ddef = (uint32_t)strtoul(p + 1, &p, 10); } } } }
++    if (dfn && addr == dfn && dlen) {
++        uint32_t base = dreg < 32 ? (uint32_t)ctx->gpr[dreg] : dreg;
++        for (uint32_t h = 0; h < ddef; h++) base = vm_read32(base);
 +        fprintf(stderr, "[FN %08X]   mem@%08X:", addr, base);
 +        for (uint32_t o = 0; o < dlen && o < 0x200; o += 4) fprintf(stderr, " %08X", vm_read32(base + o));
 +        fprintf(stderr, "\n");
@@ -1177,22 +1189,23 @@ index bcb1df4..b55684f 100644
          rc = 0;                                   /* sys_memory window */
      } else if (addr >= 0xC0000000u && addr < 0xD0000000u) {
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index 66c65e5..524f279 100644
+index 66c65e5..6c36f6f 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
-@@ -20,6 +20,11 @@ import time
+@@ -20,6 +20,12 @@ import time
  from collections import Counter
  from dataclasses import dataclass, field
  
 +# PPU_TRACE_FUNCS=0x375754,0x3754a8,...: emit ppu_trace_enter(addr, ctx) as the first
 +# statement of those functions (a guest function-entry tracer; read by the worker
 +# processes too, since they inherit the environment).
-+_TRACE_FUNCS = {int(x, 16) for x in os.environ.get("PPU_TRACE_FUNCS", "").replace("0x", "").replace("0X", "").split(",") if x.strip()}
++_TRACE_ALL = os.environ.get("PPU_TRACE_FUNCS", "").strip().lower() == "all"   # every function; filter at run time with PPU_TRACE_ADDRS
++_TRACE_FUNCS = {int(x, 16) for x in os.environ.get("PPU_TRACE_FUNCS", "").replace("0x", "").replace("0X", "").split(",") if x.strip() and x.strip().lower() != "all"}
 +
  # ---------------------------------------------------------------------------
  # We import the disassembler from the same directory.
  # ---------------------------------------------------------------------------
-@@ -136,6 +141,7 @@ int      ppu_stdcx64(uint64_t addr, uint64_t expected, uint64_t val);
+@@ -136,6 +142,7 @@ int      ppu_stdcx64(uint64_t addr, uint64_t expected, uint64_t val);
  extern "C"
  #endif
  void lv2_syscall(ppu_context* ctx);
@@ -1200,11 +1213,11 @@ index 66c65e5..524f279 100644
  
  /* Thread-local storage qualifier. The runtime's boot scaffold declares the
   * same objects the generated code does (g_active_ctx, g_trampoline_fn), so
-@@ -647,6 +653,9 @@ class PPULifter:
+@@ -647,6 +654,9 @@ class PPULifter:
              self.functions.append(func)
              return func
  
-+        if start in _TRACE_FUNCS:
++        if _TRACE_ALL or start in _TRACE_FUNCS:
 +            func.body_lines.append(f"    ppu_trace_enter(0x{start:08X}u, ctx);")
 +
          # Instructions in [start, end), located via a cached sorted index so

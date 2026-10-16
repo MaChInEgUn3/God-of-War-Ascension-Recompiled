@@ -10,14 +10,20 @@
 ## Current blocker (root-cause chain, measured)
 1. Boot function `0x47924` loads resource `R_Perm`; its heap `WAD_R_Perm` is created with **size 0**.
 2. The size comes from `0x3AD48`: a hash lookup of `WAD_<name>` in a table whose pointer is the result of
-   `0x339054("WST_Global")`, a lookup in an asset-set registry. `WST_Global` is **not registered**.
-3. A size-0 heap corrupts its free list, the allocator returns pointers `+0x10000000`, `Free` is routed to the
-   mapped-page allocator, and `UnmapMainMemory(ptr, 0)` fails: `MemTable entry not found` (game asserts are ignored traps).
+   `0x339054("WST_Global")`, a lookup in the DC (data-config) symbol registry. `WST_Global` is a symbol of
+   `/DC/PS3_BE/WAD_R_FX.DCB` (in `GAME.PSARC`) and **is not registered**: the registry object `DC_WAD_R_FX` is created
+   but never bound to its data (`+0x10`/`+0x14` stay 0), so every lookup (also `GBL_ProjectSettings`) returns NULL.
+3. Why it is not bound: the DCB parser (`0x3C93E8`, 509 iterations) keeps reading the **same first record**; the
+   stream read position (`0x2A8A94` -> `0x2A7EF8`, file object at `0x9998AC`) does not advance, so the type-12/13
+   handlers (`0x338C28`, `0x338D2C`) are never dispatched.
+4. A size-0 heap then corrupts its free list, `Free` is routed to the mapped-page allocator and
+   `UnmapMainMemory(ptr, 0)` fails: `MemTable entry not found` (game asserts are ignored traps).
 
-**Next step:** trace `0x338F28` / `0x338E70` and find who loads and registers the global WST asset set before `0x47924`
-(a silent PSARC/WAD read failure? the language archive `ENGLISH.PSARC` not mounted?).
+**Next step:** find why the stream read primitive `0x2A7EF8` returns the start of the DCB each time (compare with the
+`DEPENDENCYGRAPH.IFF` read, which works). Tools: `PPU_TRACE_FUNCS=all` + `PPU_TRACE_ADDRS`, `GOW_PEEK`
+(see [DEBUGGING.md](DEBUGGING.md)).
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
 
-Full chronological log (M0.1 to M0.9): [FEASIBILITY.pt-BR.md](FEASIBILITY.pt-BR.md).
+Full chronological log (M0.1 to M0.10): [FEASIBILITY.pt-BR.md](FEASIBILITY.pt-BR.md).

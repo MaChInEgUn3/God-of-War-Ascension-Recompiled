@@ -311,6 +311,74 @@ static bool alloc_guest_vm(void)
     return vm_base != nullptr;
 }
 
+#ifdef _WIN32
+/* GOW_SCAN=<hex bytes>: poll committed guest memory for a byte pattern and log each new
+ * hit once (guest EA + ms since start). Answers "did this data ever reach guest memory". */
+/* GOW_PEEK=<hex ea>,<n words>: log those big-endian words whenever they change (polled every 20 ms). */
+static DWORD WINAPI guest_peek_thread(LPVOID)
+{
+    const char* e = getenv("GOW_PEEK");
+    char* p = nullptr; uint32_t ea = (uint32_t)strtoul(e, &p, 16), n = (p && *p == ',') ? (uint32_t)strtoul(p + 1, nullptr, 0) : 4;
+    if (n > 32) n = 32;
+    uint32_t prev[32] = {0}; DWORD t0 = GetTickCount();
+    for (;;) {
+        Sleep(20);
+        uint32_t cur[32];
+        for (uint32_t i = 0; i < n; i++) {
+            const uint8_t* q = vm_base + ea + i * 4;
+            MEMORY_BASIC_INFORMATION mbi;
+            if (!VirtualQuery(q, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT) { cur[i] = 0; continue; }
+            cur[i] = (uint32_t)q[0] << 24 | (uint32_t)q[1] << 16 | (uint32_t)q[2] << 8 | q[3];
+        }
+        if (memcmp(cur, prev, n * 4)) {
+            fprintf(stderr, "[GOW_PEEK] t=%lums @%08X:", (unsigned long)(GetTickCount() - t0), ea);
+            for (uint32_t i = 0; i < n; i++) fprintf(stderr, " %08X", cur[i]);
+            fputc(10, stderr);
+            memcpy(prev, cur, sizeof prev);
+        }
+    }
+}
+
+static DWORD WINAPI guest_scan_thread(LPVOID)
+{
+    const char* hex = getenv("GOW_SCAN");
+    uint8_t pat[64]; size_t plen = 0;
+    for (; hex[0] && hex[1] && plen < sizeof pat; hex += 2) {
+        unsigned v; char b[3] = { hex[0], hex[1], 0 };
+        if (sscanf(b, "%x", &v) != 1) break;
+        pat[plen++] = (uint8_t)v;
+    }
+    if (!plen) return 0;
+    DWORD t0 = GetTickCount();
+    static uint32_t seen[64]; int nseen = 0;
+    for (;;) {
+        Sleep(250);
+        uint8_t* p = vm_base;
+        while (p < vm_base + VM_SIZE) {
+            MEMORY_BASIC_INFORMATION mbi;
+            if (!VirtualQuery(p, &mbi, sizeof mbi)) break;
+            if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS))) {
+                uint8_t* r = (uint8_t*)mbi.BaseAddress;
+                for (size_t i = 0; i + plen <= mbi.RegionSize; ) {
+                    uint8_t* q = (uint8_t*)memchr(r + i, pat[0], mbi.RegionSize - plen + 1 - i);
+                    if (!q) break;
+                    i = (size_t)(q - r) + 1;
+                    if (memcmp(q, pat, plen)) continue;
+                    uint32_t ea = (uint32_t)(q - vm_base);
+                    bool dup = false;
+                    for (int k = 0; k < nseen; k++) dup |= seen[k] == ea;
+                    if (!dup && nseen < 64) {
+                        seen[nseen++] = ea;
+                        fprintf(stderr, "[GOW_SCAN] hit ea=0x%08X t=%lums\n", ea, (unsigned long)(GetTickCount() - t0));
+                    }
+                }
+            }
+            p = (uint8_t*)mbi.BaseAddress + mbi.RegionSize;
+        }
+    }
+}
+#endif
+
 /* ---------------------------------------------------------------------------
  * Main
  * -----------------------------------------------------------------------*/
@@ -345,6 +413,10 @@ int main(int argc, char** argv)
     }
 
     { extern void ps3_sampler_start(void); ps3_sampler_start(); } /* PS3_SAMPLE=<ms> */
+#ifdef _WIN32
+    if (getenv("GOW_SCAN")) CreateThread(NULL, 0, guest_scan_thread, NULL, 0, NULL);
+    if (getenv("GOW_PEEK")) CreateThread(NULL, 0, guest_peek_thread, NULL, 0, NULL);
+#endif
 
     uint32_t entry = ppu_load_elf(argv[1]);
     if (!entry) {
