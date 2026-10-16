@@ -128,6 +128,12 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Novo ponto de parada:** um SPU (PM WWS, img 10) gira em `GETLLAR ea=0` em LS `0x4194`, e o RSX recebe um `GET_REPORT` com índice `1048575`; a thread principal espera um job set de renderização (`0x21600530`). Suspeita: um job com EA nulo (sincronização RSX/report).
 - **Ferramentas:** `SPU_IRQTRACE=1` agora reporta interrupções aninhadas com o shim gerado; `SPURS_WID_STATS=1` conta execuções por workload.
 
+### M0.13 — layout do CellSpurs2 corrigido; EDGE e RsxSync agendados (2026-10-16)
+- **NIDs sem implementação resolvidos:** `0xA73BF47E = _cellSpursWorkloadFlagReceiver`, `0xC765B995 = cellSpursGetWorkloadFlag` (calculado com `tools/nid_database.compute_nid`). Implementados: `GetWorkloadFlag` devolve `spurs+0x60` (`CellSpursWorkloadFlag`, palavra viva em `+0x6C`), `WorkloadFlagReceiver` grava o receptor (wid 18 = RsxSync).
+- **Layout real do cabeçalho do `CellSpurs`** (confirmado pelo código do job WWS): `0x72 sysSrvMessage`, `0x73 spuIdling`, **`0x74 flags1`** (`SF1_32_WORKLOADS = 0x40`), `0x76 nSpus`, **`0x77 wklFlagReceiver`**, **`0x78 wklSignal2`**. O HLE agora liga `SF1_32_WORKLOADS` no `CellSpurs2` e copia a primeira linha do `CellSpurs` para o `tempArea` do contexto do kernel (LS `0x100`), como o kernel real faz com GETLLAR na seleção de workload. Sem isso, o job que resolve o `wklInfo` do receptor (wid >= 16) devolvia EA 0 e girava em `GETLLAR(0)`.
+- **Resultado:** acabou o spin em EA 0; os 19 workloads rodam (dezenas de milhares de execuções de PM); o contador de conclusão do EDGE2 vai de 1 para 0.
+- **Novo ponto de parada:** no lote seguinte, os contadores de EDGE0 (wid 15, `0x99AAC8`) e EDGE1 (wid 16, `0x99AAC0`) ficam em 1; a thread principal espera em `0x3E7A14`. Ainda só 2 flips: o RSX quase não recebe comandos.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.

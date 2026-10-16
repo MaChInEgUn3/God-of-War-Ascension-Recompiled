@@ -33,7 +33,7 @@ index 94de794..1e21ebb 100644
      # cellPad and cellAudio select their SDL2 backends unconditionally off
      # Windows (see PAD_BACKEND_SDL2 / AUDIO_BACKEND_SDL2), so SDL2 is required
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 5e3b510..f3dac2e 100644
+index 5e3b510..c924071 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -68,7 +68,10 @@ typedef struct {
@@ -54,14 +54,14 @@ index 5e3b510..f3dac2e 100644
  
 +/* Second workload set (wid 16..31, CellSpurs2 only; RPCS3 cellSpurs.h layout):
 + * readyCount2 shares the 0x10 array, state2 is 0xC0, signal2 the be u16 at
-+ * 0x74, wklInfo2 starts at 0x1000, and current/max contention are packed
++ * 0x78, wklInfo2 starts at 0x1000, and current/max contention are packed
 + * 4-bit fields (low nibble = wid 0..15, high nibble = wid 16..31). GoW:A
 + * registers 18 workloads (EDGE2 and RsxSync are #16/#17). */
 +static inline u32 spurs_off_ready(u32 wid)  { return wid < 16 ? SPURS_WKL_READY1 + wid : SPURS_WKL_IDLE2 + (wid - 16); }
 +static inline u32 spurs_off_state(u32 wid)  { return wid < 16 ? SPURS_WKL_STATE1 + wid : 0xC0u + (wid - 16); }
 +static inline u32 spurs_off_info(u32 wid)   { return wid < 16 ? SPURS_WKL_INFO1 + wid * SPURS_WKL_INFO_SZ
 +                                                              : 0x1000u + (wid - 16) * SPURS_WKL_INFO_SZ; }
-+static inline u32 spurs_off_signal(u32 wid) { return wid < 16 ? SPURS_WKL_SIGNAL1 : 0x74u; }
++static inline u32 spurs_off_signal(u32 wid) { return wid < 16 ? SPURS_WKL_SIGNAL1 : 0x78u; }
 +static inline u32 spurs_sig_bit(u32 wid)    { return 0x8000u >> (wid & 15); }
 +static inline u8  spurs_nib_get(u32 ea, u32 arr, u32 wid)
 +{ u8 v = *(vm_base + ea + arr + (wid & 15)); return wid < 16 ? (u8)(v & 0x0F) : (u8)(v >> 4); }
@@ -103,7 +103,18 @@ index 5e3b510..f3dac2e 100644
      return NULL;
  }
  
-@@ -613,7 +652,7 @@ s32 cellSpursSetMaxContention(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -468,6 +507,10 @@ static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
+     memset(vm_base + spurs_ea, 0, SPURS_INST_SIZE);
+     *(vm_base + spurs_ea + SPURS_NSPUS) = (u8)si->nspus;
+     vm_write64(spurs_ea + SPURS_WKL_FLAG, 0xFFFFFFFFFFFFFFFFull); /* no receiver */
++    /* CellSpursWorkloadFlag {u64 unused0; u32 unused1; u32 flag} at 0x60: the live
++     * word is +0xC; wklFlagReceiver (u8) is 0x77. Real init: flag = -1, receiver = 0xFF. */
++    vm_write32(spurs_ea + SPURS_WKL_FLAG + 0xC, 0xFFFFFFFFu);
++    *(vm_base + spurs_ea + 0x77) = 0xFF;
+ 
+     if (!si->kernel_live) {
+         si->kernel_live = 1;
+@@ -613,7 +656,7 @@ s32 cellSpursSetMaxContention(CellSpurs* spurs, CellSpursWorkloadId wid,
      (void)maxContention;
  
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -112,7 +123,7 @@ index 5e3b510..f3dac2e 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      s_workloads[wid].maxContention = maxContention;
-@@ -625,7 +664,7 @@ s32 cellSpursSetPriorities(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -625,7 +668,7 @@ s32 cellSpursSetPriorities(CellSpurs* spurs, CellSpursWorkloadId wid,
  {
      if (!spurs || !priorities) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
      const u8* priorities_h = GUEST_PTR(priorities, const u8*);
@@ -121,7 +132,7 @@ index 5e3b510..f3dac2e 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      memcpy(s_workloads[wid].priority, priorities_h, CELL_SPURS_MAX_SPU);
-@@ -793,6 +832,85 @@ s32 cellSpursCreateTasksetWithAttribute(CellSpurs* spurs,
+@@ -793,6 +836,89 @@ s32 cellSpursCreateTasksetWithAttribute(CellSpurs* spurs,
      return cellSpursCreateTaskset(spurs, taskset, 0, NULL, 0);
  }
  
@@ -135,8 +146,12 @@ index 5e3b510..f3dac2e 100644
 +    if (rc == CELL_OK) {
 +        struct SpursInst* si = spurs_inst_find((u32)(uintptr_t)spurs);
 +        if (si) {
-+            si->is2 = 1;   /* CellSpurs2: 8 KB, second workload set at 0xC0/0x74/0x1000 */
++            si->is2 = 1;   /* CellSpurs2: 8 KB, second workload set at 0xC0/0x78/0x1000 */
 +            memset(vm_base + (u32)(uintptr_t)spurs + 0x1000, 0, 0x1000);
++            /* flags1 (u8 @0x74) |= SF1_32_WORKLOADS (0x40). Modules read it from the
++             * kernel's tempArea copy: GoW:A's WWS job resolving the flag receiver's
++             * wklInfo returned EA 0 for wid >= 16 without it and spun on GETLLAR(0). */
++            *(vm_base + (u32)(uintptr_t)spurs + 0x74) |= 0x40;
 +        }
 +    }
 +    return rc;
@@ -207,7 +222,7 @@ index 5e3b510..f3dac2e 100644
  s32 cellSpursDestroyTaskset(CellSpursTaskset* taskset)
  {
      taskset = GUEST_PTR(taskset, CellSpursTaskset*);
-@@ -1219,7 +1337,7 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1219,7 +1345,7 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
      if (!si)
          return CELL_SPURS_CORE_ERROR_STAT;
  
@@ -216,7 +231,7 @@ index 5e3b510..f3dac2e 100644
          if (!s_workloads[i].in_use) {
              s_workloads[i].in_use = 1;
              s_workloads[i].pm = pm;
-@@ -1238,16 +1356,17 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1238,16 +1364,17 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
              /* Publish the workload in the REAL BE instance so the game's
               * inlined kernel protocol (readyCount stores, signal bits, state
               * reads) and the policy module's own instance DMAs see it. */
@@ -238,7 +253,7 @@ index 5e3b510..f3dac2e 100644
              vm_write32(spurs_ea + SPURS_WKL_ENABLED,
                         vm_read32(spurs_ea + SPURS_WKL_ENABLED) | (0x80000000u >> i));
              *(vm_base + spurs_ea + SPURS_SYSSRV_MSG) = 0xFF;
-@@ -1425,7 +1544,7 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
+@@ -1425,7 +1552,7 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
  s32 cellSpursRemoveWorkload(CellSpurs* spurs, CellSpursWorkloadId wid)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -247,7 +262,7 @@ index 5e3b510..f3dac2e 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      s_workloads[wid].in_use = 0;
-@@ -1474,7 +1593,7 @@ typedef struct {
+@@ -1474,7 +1601,7 @@ typedef struct {
      int                 image_id;
      int                 resolved;   /* 0=not tried, 1=found, -1=missing */
  } WklPm;
@@ -256,7 +271,7 @@ index 5e3b510..f3dac2e 100644
  
  static WklPm* spurs_resolve_pm(u32 wid)
  {
-@@ -1484,6 +1603,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1484,6 +1611,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
      uint64_t fp = spu_workload_fingerprint(vm_base + (uint32_t)(uintptr_t)w->pm,
                                             w->sizePm);
      r->fn = spu_workload_find_img(fp, &r->image_id);
@@ -277,7 +292,7 @@ index 5e3b510..f3dac2e 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1582,25 +1715,25 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1582,25 +1723,25 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
           * even for wids the dispatch filter below would skip — the game pokes
           * these bytes with inlined atomics and this is our only tap. */
          {
@@ -312,7 +327,7 @@ index 5e3b510..f3dac2e 100644
              if (!s_workloads[wid].in_use || s_workloads[wid].spurs_ea != ea) continue;
  
              /* A SPURS policy module is a PERSISTENT SPU program. The real kernel
-@@ -1620,13 +1753,13 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1620,13 +1761,13 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
               *
               * readyCount/wklSignal are still honoured when a title DOES use them:
               * consume one unit so a kick-driven title paces the same as before. */
@@ -332,7 +347,7 @@ index 5e3b510..f3dac2e 100644
  
              WklPm* r = spurs_resolve_pm(wid);
              if (!r) continue;
-@@ -1639,7 +1772,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1639,7 +1780,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
               * ... up to 16th pass; an explicit kick (readyCount/signal) resets
               * it to every pass, so kick-driven latency is unchanged. */
              {
@@ -341,7 +356,7 @@ index 5e3b510..f3dac2e 100644
                  static u32 s_pass_no;                            /* shared pass counter is fine */
                  if (wid == 0) s_pass_no++;
                  if (kicked) s_idle[wid] = 0;
-@@ -1656,7 +1789,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1656,7 +1797,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                      fflush(stderr); } }
  
              /* Live workload arg from the real wklInfo (the game may update it). */
@@ -350,7 +365,7 @@ index 5e3b510..f3dac2e 100644
              /* Dispatch once per VIRTUAL SPU up to the workload's maxContention:
               * the WWS job manager keys its per-SPU ticket lane off the kernel
               * context's spuNum, and its command lists carry cross-lane BARRIER
-@@ -1665,7 +1798,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1665,7 +1806,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
               * deadlocked: LBP's post-intro loading froze with 8 ready jobs and
               * the lanes stuck at {1,0,...} against ticket 10+. Sequential
               * per-lane rounds converge where parallel SPUs would. */
@@ -359,7 +374,7 @@ index 5e3b510..f3dac2e 100644
              if (maxcont < 1) maxcont = 1;
              if (maxcont > 6) maxcont = 6;
              /* Do NOT exceed the workload's own contention: per-SPU rows in
-@@ -1691,7 +1824,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1691,7 +1832,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                if (s_fs == -2) { const char* e = getenv("SPURS_FORCE_SPUS");
                  s_fs = e ? atoi(e) : -1; }
                if (s_fs > 0) maxcont = (u8)(s_fs > 6 ? 6 : s_fs); }
@@ -368,7 +383,7 @@ index 5e3b510..f3dac2e 100644
              {
                  const uint8_t* pm = (const uint8_t*)vm_base + (uint32_t)(uintptr_t)s_workloads[wid].pm;
                  uint32_t sz = s_workloads[wid].sizePm;
-@@ -1718,7 +1851,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1718,7 +1859,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                      }
                  }
              }
@@ -377,7 +392,7 @@ index 5e3b510..f3dac2e 100644
              /* "Found work" heuristic: a module that did something polls the
               * kernel for MORE work before exiting (selectWorkload calls >0);
               * an idle module exits immediately with polls==0. Grow the idle
-@@ -1734,12 +1867,12 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1734,12 +1875,12 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
                               u32 value)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -392,7 +407,7 @@ index 5e3b510..f3dac2e 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1754,7 +1887,7 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1754,7 +1895,7 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  {
      if (!spurs || !old) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -401,7 +416,7 @@ index 5e3b510..f3dac2e 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      vm_write32((u32)(uintptr_t)old, s_workloads[wid].readyCount);
-@@ -1767,7 +1900,7 @@ s32 cellSpursReadyCountCompareAndSwap(CellSpurs* spurs,
+@@ -1767,7 +1908,7 @@ s32 cellSpursReadyCountCompareAndSwap(CellSpurs* spurs,
                                         u32* old, u32 compare, u32 value)
  {
      if (!spurs || !old) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -410,7 +425,7 @@ index 5e3b510..f3dac2e 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      vm_write32((u32)(uintptr_t)old, s_workloads[wid].readyCount);
-@@ -1802,7 +1935,7 @@ s32 cellSpursWakeUp(CellSpurs* spurs)
+@@ -1802,7 +1943,7 @@ s32 cellSpursWakeUp(CellSpurs* spurs)
       * are common -- the guest calls it whenever it adds work) does not spawn
       * another copy. */
      const uint32_t spurs_ea = (uint32_t)(uintptr_t)spurs;
@@ -419,7 +434,50 @@ index 5e3b510..f3dac2e 100644
          SpursWorkload* w = &s_workloads[i];
          if (!w->in_use || w->started || w->spurs_ea != spurs_ea) continue;
          if (!w->pm || !w->sizePm) continue;
-@@ -2984,7 +3117,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -2977,6 +3118,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+     return CELL_OK;
+ }
+ 
++#ifndef CELL_SPURS_POLICY_MODULE_ERROR_INVAL
++#define CELL_SPURS_POLICY_MODULE_ERROR_INVAL        0x80410802u
++#define CELL_SPURS_POLICY_MODULE_ERROR_PERM         0x80410809u
++#define CELL_SPURS_POLICY_MODULE_ERROR_BUSY         0x8041080Au
++#define CELL_SPURS_POLICY_MODULE_ERROR_ALIGN        0x80410810u
++#define CELL_SPURS_POLICY_MODULE_ERROR_NULL_POINTER 0x80410811u
++#endif
++
++/* cellSpursGetWorkloadFlag (NID 0xC765B995): *flag = &spurs->wklFlag. GoW:A hands the
++ * address to a WWS job that waits on the flag's lock line; unresolved, the out-param
++ * stayed 0 and the job spun on GETLLAR of EA 0 forever. */
++s32 cellSpursGetWorkloadFlag(u64 spurs_ea, u64 flag_pp)
++{
++    if (!spurs_ea || !flag_pp) return CELL_SPURS_POLICY_MODULE_ERROR_NULL_POINTER;
++    if (spurs_ea & 0x7F) return CELL_SPURS_POLICY_MODULE_ERROR_ALIGN;
++    vm_write32((u32)flag_pp, (u32)spurs_ea + SPURS_WKL_FLAG);
++    return CELL_OK;
++}
++
++/* _cellSpursWorkloadFlagReceiver (NID 0xA73BF47E): name (or release) the workload
++ * that receives the flag. Mirrors RPCS3: set requires no current receiver, clear
++ * requires the caller to be it; either way the flag word resets to -1. */
++s32 _cellSpursWorkloadFlagReceiver(u64 spurs_ea, u32 wid, u32 is_set)
++{
++    if (!spurs_ea) return CELL_SPURS_POLICY_MODULE_ERROR_NULL_POINTER;
++    if (spurs_ea & 0x7F) return CELL_SPURS_POLICY_MODULE_ERROR_ALIGN;
++    if (wid >= SPURS_MAXW || !s_workloads[wid].in_use) return CELL_SPURS_POLICY_MODULE_ERROR_INVAL;
++    u8* recv = vm_base + (u32)spurs_ea + 0x77;
++    if (is_set) { if (*recv != 0xFF) return CELL_SPURS_POLICY_MODULE_ERROR_BUSY; }
++    else        { if (*recv != (u8)wid) return CELL_SPURS_POLICY_MODULE_ERROR_PERM; }
++    vm_write32((u32)spurs_ea + SPURS_WKL_FLAG + 0xC, 0xFFFFFFFFu);
++    *recv = is_set ? (u8)wid : 0xFF;
++    printf("[cellSpurs] WorkloadFlagReceiver(wid=%u, set=%u)\n", wid, is_set);
++    return CELL_OK;
++}
++
+ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+ {
+     static int _n = 0;
+@@ -2984,7 +3161,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -428,7 +486,7 @@ index 5e3b510..f3dac2e 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3005,13 +3138,13 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3005,13 +3182,13 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -447,7 +505,7 @@ index 5e3b510..f3dac2e 100644
      return CELL_OK;
  }
  
-@@ -3294,6 +3427,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3294,6 +3471,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
@@ -876,6 +934,23 @@ index 424fb62..aa5a8a8 100644
  
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea);
+diff --git a/libs/video/rsx_commands.c b/libs/video/rsx_commands.c
+index d8506de..7f917e0 100644
+--- a/libs/video/rsx_commands.c
++++ b/libs/video/rsx_commands.c
+@@ -352,6 +352,12 @@ int rsx_process_method(rsx_state* state, u32 method, u32 data)
+      * for the frequency divisor (instancing). Captured for read_vp_vertex. */
+     if (method == 0x00001FC0) { state->frequency_divider_op = data; return 0; }
+ 
++    /* RSX_SEMLOG=1: every semaphore/context-DMA method (NV406E 0x60-0x6C, NV4097
++     * 0x1A0/0x1D6C-0x1D74/0x180-0x19C): which sync targets the title programs. */
++    { static int s_sl = -1; if (s_sl < 0) s_sl = getenv("RSX_SEMLOG") ? 1 : 0;
++      if (s_sl && ((method >= 0x0050 && method <= 0x006C) || (method >= 0x019C && method <= 0x01A4) ||
++                   (method >= 0x1D6C && method <= 0x1D74))) {
++          static int _n = 0; if (_n++ < 400) fprintf(stderr, "[rsx-sem] method=0x%04X data=0x%08X\n", method, data); } }
+     { static u32 s_sem_off = 0;
+       if (method == 0x1D6C) { s_sem_off = data; return 0; }
+       if (method == 0x1D70) {
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
 index 87ea864..b56f4c5 100644
 --- a/libs/video/rsx_vulkan_backend.c
@@ -1266,7 +1341,7 @@ index 718392f..9aedcc5 100644
      if (s) {
          uint32_t own = vm_read32(lwmutex + LWM_OWNER);
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 2a74e51..8031d5b 100644
+index 2a74e51..a1df219 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,9 +21,9 @@
@@ -1382,9 +1457,14 @@ index 2a74e51..8031d5b 100644
      /* Nest-safe: a job run synchronously from inside another SPU's execution
       * re-enters here on the same host thread. The halt target is per-thread,
       * so save the outer one and put it back on the way out -- otherwise the
-@@ -586,9 +586,9 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -584,12 +584,27 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+          * without a per-function probe. */
+         { static SPU_THREAD_LOCAL uint32_t t_ea; static SPU_THREAD_LOCAL unsigned long t_n;
            if (ea != t_ea) { t_ea = ea; t_n = 0; }
-           else if (++t_n == 4000000) {
+-          else if (++t_n == 4000000) {
++          else if (++t_n == (unsigned long)({ static long s_sn = -1;
++                       if (s_sn < 0) { const char* e = getenv("SPU_SPIN_N"); s_sn = e ? atol(e) : 4000000; }
++                       s_sn; })) {   /* SPU_SPIN_N=<n>: report threshold (default 4M) */
                const uint8_t* m = vm_base + ea;
 -              fprintf(stderr, "[spu-spin] img=%d pc=0x%05X lr=0x%05X GETLLAR ea=0x%08X x4M; line:"
 +              fprintf(stderr, "[spu-spin] tid=0x%X img=%d pc=0x%05X lr=0x%05X GETLLAR ea=0x%08X x4M; line:"
@@ -1392,9 +1472,23 @@ index 2a74e51..8031d5b 100644
 -                      ctx->image_id, (unsigned)(ctx->pc & SPU_LS_MASK), ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea,
 +                      (unsigned)ctx->spu_id, ctx->image_id, (unsigned)(ctx->pc & SPU_LS_MASK), ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea,
                        m[0],m[1],m[2],m[3], m[4],m[5],m[6],m[7], m[8],m[9],m[10],m[11], m[12],m[13],m[14],m[15]);
++              /* Who is spinning: LS code around pc (disassemble offline) + low GPRs. */
++              { static int s_once = 0;
++                if (s_once++ < 2) {
++                    uint32_t pc0 = ((uint32_t)ctx->pc & SPU_LS_MASK & ~3u);
++                    uint32_t lo = pc0 >= 0x80 ? pc0 - 0x80 : 0;
++                    fprintf(stderr, "[spu-spin]   code@0x%05X:", lo);
++                    for (uint32_t o = lo; o < lo + 0xC0 && o + 3 < SPU_LS_SIZE; o += 4)
++                        fprintf(stderr, " %02X%02X%02X%02X", ctx->ls[o], ctx->ls[o+1], ctx->ls[o+2], ctx->ls[o+3]);
++                    fputc(10, stderr);
++                    for (int g = 0; g < 16; g++)
++                        fprintf(stderr, "[spu-spin]   r%-2d %08X %08X %08X %08X%c", g,
++                                ctx->gpr[g]._u32[0], ctx->gpr[g]._u32[1], ctx->gpr[g]._u32[2], ctx->gpr[g]._u32[3], 10);
++                } }
            } }
          spu_lockline_unlock();
-@@ -745,10 +745,10 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+         /* SPU_LLARWATCH=<hex EA>: every GETLLAR of that line, with the LSA it
+@@ -745,10 +760,10 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
                        ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea); }
          ctx->resv_valid = 0;                           /* reservation consumed */
          spu_lockline_unlock();
@@ -1409,7 +1503,7 @@ index 2a74e51..8031d5b 100644
          return 1;
  
      case MFC_PUTLLUC_CMD:
-@@ -766,7 +766,7 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -766,7 +781,7 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
          ctx->resv_valid = 0; ctx->atomic_stat = 2;   /* PUTLLUC complete */
          spu_lockline_unlock();
          spu_taskset_line_committed(ea & ~127u);
@@ -1418,7 +1512,7 @@ index 2a74e51..8031d5b 100644
          return 1;
  
      default:
-@@ -1969,7 +1969,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -1969,7 +1984,10 @@ static int spu_smc_microstep(spu_context* ctx)
              pc += 4; continue;
          }
          if (op9 == 0x041 || op9 == 0x061) {                   /* stqa / lqa (abs) */
@@ -1430,7 +1524,7 @@ index 2a74e51..8031d5b 100644
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
              pc += 4; continue;
-@@ -2038,10 +2041,18 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2038,10 +2056,18 @@ static int spu_smc_microstep(spu_context* ctx)
                        " microstep set -- handing to the interpreter (steps=%d)\n",
                        ctx->image_id, pc, w, steps); }
          ctx->pc = pc;
@@ -1685,7 +1779,7 @@ index bdee01c..baa59b5 100644
 +    spu_interp_run(ctx, 0xA00u);
 +}
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..7246e13 100644
+index 4f82063..a1f375c 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -56,7 +56,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
@@ -1697,7 +1791,20 @@ index 4f82063..7246e13 100644
      static spu_context* s_pm_ctx[SPURS_PM_MAX_WKL][6];
      if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
      spu_context* ctx = s_pm_ctx[wid][spu_num];
-@@ -179,6 +179,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -133,6 +133,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+      * selectWorkload -- so it called our exit intercept for every poll and
+      * branched to 0 for every select. It also tests wklCurrentId (0x1DC) against
+      * 1, which only reads sensibly at the correct offset. */
++    /* tempArea (LS 0x100..0x17F): the real kernel's workload selection GETLLARs the
++     * first CellSpurs lock line into it, and modules read it afterwards (GoW:A's
++     * WWS jobs test bits around 0x170 -- wklSignal/wklFlagReceiver -- to pick the
++     * second workload set's wklInfo; left zero, they computed EA 0 and spun). */
++    { extern uint8_t* vm_base;
++      if (spurs_ea) memcpy(ls + 0x100, vm_base + spurs_ea, 0x80); }
+     KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
+     KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
+     KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
+@@ -179,6 +185,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static unsigned long s_runs = 0;
      unsigned long runno = ++s_runs;
      int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
@@ -1712,7 +1819,7 @@ index 4f82063..7246e13 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -265,18 +273,18 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -265,18 +279,18 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  

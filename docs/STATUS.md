@@ -20,11 +20,12 @@ ops (`bisled`, E/D bits, double precision, ...). The job pipeline advances and t
 now models `CellSpurs2` (32 workloads); GoW:A registers 19 (EDGE2 and RsxSync were never scheduled before).
 
 ## Current blocker
-An SPU (WWS PM, image 10) spins on `GETLLAR ea=0` at LS `0x4194`, the RSX sees `GET_REPORT idx=1048575`, and the main
-thread waits on a render job set (`0x21600530`, via `0x466E38`). Likely a job with a null EA (RSX report/label sync).
-Also open: NULL+0x40 reads in `0x37DE80`, unresolved NIDs `0xA73BF47E`, `0xC765B995`.
+All 19 SPURS workloads run (CellSpurs2 layout fixed: `flags1` at 0x74 with `SF1_32_WORKLOADS`, flag receiver at 0x77,
+signal2 at 0x78; `cellSpursGetWorkloadFlag`/`_cellSpursWorkloadFlagReceiver` implemented; kernel `tempArea` filled).
+EDGE2's job batch completes, but the next EDGE0 (wid 15) / EDGE1 (wid 16) batches never zero their completion counters
+(`0x99AAC8`/`0x99AAC0`); the main thread waits at `0x3E7A14`. Only 2 flips so far (RSX gets almost no commands).
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
 
-Full chronological log (M0.1 to M0.12): [FEASIBILITY.pt-BR.md](FEASIBILITY.pt-BR.md).
+Full chronological log (M0.1 to M0.13): [FEASIBILITY.pt-BR.md](FEASIBILITY.pt-BR.md).
