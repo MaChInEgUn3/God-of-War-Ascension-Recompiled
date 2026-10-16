@@ -134,6 +134,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Resultado:** acabou o spin em EA 0; os 19 workloads rodam (dezenas de milhares de execuções de PM); o contador de conclusão do EDGE2 vai de 1 para 0.
 - **Novo ponto de parada:** no lote seguinte, os contadores de EDGE0 (wid 15, `0x99AAC8`) e EDGE1 (wid 16, `0x99AAC0`) ficam em 1; a thread principal espera em `0x3E7A14`. Ainda só 2 flips: o RSX quase não recebe comandos.
 
+### M0.14 — formato das job lists WWS e a cadeia de sincronização EDGE/RsxSync (2026-10-16)
+- **Entradas de job list** (8 bytes, `{u32 cmd, u32 arg}`): `cmd` low-halfword 1 = job (`0x00A00001`/`0x00600001`, arg = EA do job), **2 = decrementar o contador de dependência em `arg`**, **5 = esperar o contador em `arg` zerar**, 3 = nop. Adicionadas pelo PPU via `0x467BE0`/`0x46757C` e família (`0x467984` = espera).
+- **Contadores de dependência:** `u32 (count<<16) | (wid<<8) | flags`; quando chegam a 0 o PM acorda o workload `wid` escrevendo o readyCount dele no `CellSpurs` (atômicos no PM em `0x397C`, chamados de `0x2698`/`0x311C`). Medido em `0x99AA80`: barreira `0x99AAA4` (5 → 0) acorda EDGE1 → EDGE2 → EDGE0; C4 (EDGE2) zera por comando tipo 2.
+- **Estruturas de workload WWS (data):** `[2]` índice da lista corrente, `[4..7]`/`[8..11]` por lista, `[12..15]` EAs das 4 job lists, `+0x40` linha de tickets `(publicados<<16 | consumidos)`. RsxSync (wid 18): 4 listas em `0x23E84180..`, tickets `0x000D0001` → **parado na entrada 1**, `(5, 0x2001ED1C)`.
+- **`0x2001ED1C`** é um contador criado por `func_003B3028` (marca `count=1` e acrescenta a espera ao RsxSync); IO = `0x0001ED1C` (EA `0x20000000` ↔ IO 0). **Nenhuma entrada tipo 2 e nenhum comando RSX na memória referenciam esse contador** (GOW_SCAN), então quem deveria zerá-lo ainda não apareceu — candidato: comando de semáforo do RSX emitido mais tarde no frame (o FIFO está drenado: put=get=`0xA80000`), ou um caminho do PPU que não roda porque a thread principal espera o EDGE0.
+- **Próximo passo:** achar quem libera os marcadores do RsxSync no hardware real (provável: RSX via `NV406E`/`NV4097` semaphore com contexto DMA de memória principal, ainda não implementado no HLE) e verificar se a espera da thread principal (`0x3E7A14`, contador EDGE0) é anterior a isso no frame. RPCS3 como oráculo para os valores em `0x2001ED1C` ao longo do tempo.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.

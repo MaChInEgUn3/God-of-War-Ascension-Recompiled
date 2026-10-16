@@ -1784,7 +1784,7 @@ index bdee01c..baa59b5 100644
 +    spu_interp_run(ctx, 0xA00u);
 +}
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..3f9182e 100644
+index 4f82063..90c285e 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -56,7 +56,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
@@ -1855,7 +1855,7 @@ index 4f82063..3f9182e 100644
  
      if (s_claimlog) {
          unsigned claims = g_spu_putllc_sync_hit - claim_before;
-@@ -303,12 +317,16 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -303,12 +317,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */
@@ -1874,7 +1874,10 @@ index 4f82063..3f9182e 100644
 +         * shows pipeline activity is logged up to 3000 per wid, however late. */
 +        int active = st_before != 0 || HW(0x12A0) != 0 || W(0x12C0) != 0 ||
 +                     W(0x12D0) != 0xFFFFFFFFu || W(0x12E0) != 0xFFFFFFFFu;
-+        if (s_pn < 8 || (active && ++s_act_wid[wid & 31] < 3000)) {
++        /* SPURS_PM_PIPE_WID=<n>: also sample every 64th run of that wid (idle or not). */
++        static long s_pw = -2; if (s_pw == -2) { const char* e = getenv("SPURS_PM_PIPE_WID"); s_pw = e ? atol(e) : -1; }
++        int sampled = (s_pw >= 0 && (long)wid == s_pw && (s_pn % 64) == 0);
++        if (s_pn < 8 || sampled || (active && ++s_act_wid[wid & 31] < 3000)) {
              fprintf(stderr, "[pm-pipe] wid=%u run#%lu first=%d halt_pc=0x%05X "
                      "loadState=%u->%u nextLoad=0x%X loadJob=0x%X runJob=0x%X storeJob=0x%X "
                      "lastStore=0x%X\n",
