@@ -33,7 +33,7 @@ index 94de794..1e21ebb 100644
      # cellPad and cellAudio select their SDL2 backends unconditionally off
      # Windows (see PAD_BACKEND_SDL2 / AUDIO_BACKEND_SDL2), so SDL2 is required
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 5e3b510..a69f76d 100644
+index 5e3b510..b3dba6f 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -439,10 +439,28 @@ static struct SpursInst {
@@ -164,7 +164,7 @@ index 5e3b510..a69f76d 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -3294,6 +3397,141 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3294,6 +3397,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
@@ -248,22 +248,39 @@ index 5e3b510..a69f76d 100644
 +        memcpy(tmp, src, csz);
 +        src = tmp;
 +        int hdr = ((src[0] & 0x0F) == 8) && ((((unsigned)src[0] << 8) | src[1]) % 31u == 0);
-+        n_out = hdr ? stbi_zlib_decode_buffer((char*)dst, (int)usz, (const char*)src, (int)csz)
-+                    : stbi_zlib_decode_noheader_buffer((char*)dst, (int)usz, (const char*)src, (int)csz);
-+        if (n_out <= 0 && usz < (1u << 16)) {
-+            /* Partial request: the element asks for only the first outCap bytes
-+             * of a larger block (e.g. a 64-byte header probe). Inflate the whole
-+             * block privately and hand back the requested prefix. */
-+            const int cap2 = 1 << 17;
-+            char* big = (char*)malloc((size_t)cap2);
-+            if (big) {
-+                int n2 = hdr ? stbi_zlib_decode_buffer(big, cap2, (const char*)src, (int)csz)
-+                             : stbi_zlib_decode_noheader_buffer(big, cap2, (const char*)src, (int)csz);
-+                if (n2 > 0) {
-+                    n_out = (n2 < (int)usz) ? n2 : (int)usz;
-+                    memcpy(dst, big, (size_t)n_out);
-+                }
-+                free(big);
++        /* w6 = eventBits<<16 | skip: the element asks for outCap bytes starting `skip` bytes into
++         * the decompressed block (FIOS streams a compressed PSARC entry this way; GoW:A reads its .dcb
++         * files in 0x40/0x10 slices). Ignoring skip hands back the block prefix every time. */
++        uint32_t skip = w[6] & 0xFFFFu;
++        n_out = 0;
++        if (skip == 0)
++            n_out = hdr ? stbi_zlib_decode_buffer((char*)dst, (int)usz, (const char*)src, (int)csz)
++                        : stbi_zlib_decode_noheader_buffer((char*)dst, (int)usz, (const char*)src, (int)csz);
++        if (n_out <= 0 && usz < (1u << 17)) {
++            /* Partial request (a slice of a larger block): inflate the whole block privately and
++             * hand back [skip, skip+outCap). One-entry cache: slices of one block arrive in a row. */
++#if defined(_MSC_VER)
++#  define ZSLICE_TLS __declspec(thread)
++#else
++#  define ZSLICE_TLS _Thread_local
++#endif
++            /* per thread: several guest threads push elements concurrently */
++            static ZSLICE_TLS char* s_blk = NULL; static ZSLICE_TLS int s_blk_n = 0;
++            static ZSLICE_TLS uint32_t s_key_ea = 0, s_key_csz = 0; static ZSLICE_TLS uint8_t s_key_head[16];
++            int hit = s_blk && s_key_ea == w[0] && s_key_csz == csz &&
++                      !memcmp(s_key_head, src, csz < 16 ? csz : 16);
++            if (!hit) {
++                const int cap2 = 1 << 17;
++                if (!s_blk) s_blk = (char*)malloc((size_t)cap2);
++                s_blk_n = s_blk ? (hdr ? stbi_zlib_decode_buffer(s_blk, cap2, (const char*)src, (int)csz)
++                                       : stbi_zlib_decode_noheader_buffer(s_blk, cap2, (const char*)src, (int)csz)) : 0;
++                s_key_ea = w[0]; s_key_csz = csz; memcpy(s_key_head, src, csz < 16 ? csz : 16);
++                if (s_blk_n <= 0) s_key_csz = 0;
++            }
++            if (s_blk_n > (int)skip) {
++                int avail = s_blk_n - (int)skip;
++                n_out = (avail < (int)usz) ? avail : (int)usz;
++                memcpy(dst, s_blk + skip, (size_t)n_out);
 +            }
 +        }
 +        ok = (n_out > 0 && n_out <= (int)usz);
@@ -297,7 +314,12 @@ index 5e3b510..a69f76d 100644
 +
 +    static int s_done = 0;
 +    s_done++;
-+    if (s_done <= 6 || (s_done % 2048) == 0)
++    static int s_zlog = -1;
++    if (s_zlog < 0) { const char* e = getenv("SPURS_ZLOG"); s_zlog = (e && *e && *e != '0') ? 1 : 0; }
++    if (s_zlog)   /* SPURS_ZLOG=1: every element, raw words included */
++        printf("[ZLIB] #%d in=%08X out=%08X csz=%u cap=%u w4=%08X w5=%08X w6=%08X w7=%08X -> %d\n",
++               s_done, w[0], w[1], csz, usz, w[4], w[5], w[6], w[7], n_out);
++    else if (s_done <= 6 || (s_done % 2048) == 0)
 +        printf("[cellSpurs] LFQueuePush: inflated %u -> %d bytes (#%d, counter now %u)\n",
 +               csz, n_out, s_done, left);
 +    return CELL_OK;

@@ -13,7 +13,7 @@ Lessons that cost days; keep them.
 * **Memory watch**: `GOW_GUARD=<hex ea>` arms the page guard (reports the writer function and chain).
 * **GCM**: `GCM_MEMTABLE=970F50` dumps the title's mapping table and allocator list at each map/unmap;
   `GCM_UNMAP_STACK=1`, `GCM_UNMAP_SCAN=<hex,hex>`, `GCM_UNMAP_DUMP=1`.
-* **SPURS**: `SPURS_TRACE=1`, `PS3_SCTRACE=1`, `GOW_LLE_DUMP=<s>` (live CellSpurs), `GOW_LLE_WATCH=1`, `PS3_HLE_ARGS=<nid>`.
+* **SPURS**: `SPURS_ZLOG=1` (every Edge Zlib inflate element, raw words), `SPURS_TRACE=1`, `PS3_SCTRACE=1`, `GOW_LLE_DUMP=<s>` (live CellSpurs), `GOW_LLE_WATCH=1`, `PS3_HLE_ARGS=<nid>`.
 * **Editing gotcha**: in tool-driven Python heredocs, an escaped newline inside a C string can turn into a real
   newline. Compile after every such edit.
 * **Run-time selectable tracer**: lift once with `PPU_TRACE_FUNCS=all`, then pick functions per run with
