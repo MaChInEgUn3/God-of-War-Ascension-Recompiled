@@ -272,6 +272,18 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - `GCM_WALK_SCAN`, `GCM_WALK_DUMP`, `GCM_WALK_ARMED` e `GCM_PUTRING`;
   - `SPURS_PM_HANG_LS` e `SPURS_PM_ENDLS_WID`.
 
+### M0.25 — forma C: tarefa de lote rodando duas vezes (2026-10-17)
+- `0x3A5AA4` espera `*(0x983168) == *(0x98317C)` (tarefas concluídas == total, com `!=` no laço). Na parada medida (run160), `+0x64 = 7`, `+0x68 = 6` e `+0x7C = 5`: a contagem **passou** do total, então a espera nunca termina.
+- Causa (HLE): o `cellSpursCreateTask` do PPU liga os bits enabled+ready do taskset (`spurs_taskset_add_task`) e só depois reivindica a tarefa no despacho.
+  - Nessa janela, a saída de outra tarefa do mesmo taskset (`spu_taskset_task_exited`) vê a tarefa pronta e a inicia.
+  - A tarefa termina rápido e limpa a marca de "rodando".
+  - Aí o despacho do criador não vê duplicata e roda a tarefa de novo.
+  - Acontece nos dois estágios: no último lote medido, o PPU criou o 2º estágio (ELF `0x681880`) direto.
+- Correção: `spu_taskset_claim()` reivindica a tarefa **antes** de ligar os bits, e o despacho vai como já reivindicado (`spu_workload_dispatch_claimed_task_async`). Se uma instância anterior no mesmo slot ainda estiver rodando, o criador não despacha; a saída dela inicia a nova.
+- Resultado (run161): nenhuma duplicata, o lote fecha exato (`+0x68 = +0x7C = 5`) e a execução vai a 2090 flips.
+- Nova parada (forma D, a mesma `0x352378 → 0x416A10` do run158): o PPU espera um job "RenJobSet" (registro `*(0x967438)`, grupo `0x966FB0`). A dependência `+0x24` (`0x21600684`) fica em **`0x0013`**, o mesmo valor da linha `0x00130013` da forma B. Provavelmente B e D são a mesma espera vista dos dois lados (WWS RenJobSet).
+- Ferramenta: `GCM_WALK_DUMP` aceita desreferência (`ea@off@off…`).
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.

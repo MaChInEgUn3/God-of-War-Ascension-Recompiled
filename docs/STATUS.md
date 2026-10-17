@@ -105,6 +105,11 @@ its end and `get` looked past `begin + 0x20000`. GoW:A's per-frame 64 KB blocks,
 hit that right after the 8 MB ring wraps, so the frame overwrote its own header. The wrap now applies only to
 SDK-style contexts (no callback, or ours). Runs now reach game frame ~358 (was ~194). New stop: main thread in
 `0x352378`/`0x416A10`.
+Update (M0.25): **shape C fixed.** A batch task could run twice: `CreateTask` set the taskset bits before claiming
+the task, so a concurrent task exit started it, it finished, and the creator dispatched it again. The count overshot
+(`+0x68 = 6` for 5 tasks), and `0x3A5AA4` waits with `!=`. Tasks are now claimed before their bits are set, and runs
+reach about 2090 flips. Remaining stop (shape D): the PPU job wait `0x352378 → 0x416A10` on a RenJobSet job. Its
+dependency halfword `0x21600684` stays at `0x0013`, the same value as shape B's row, so they are likely one wait.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

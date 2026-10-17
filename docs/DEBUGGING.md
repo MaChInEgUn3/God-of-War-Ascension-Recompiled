@@ -72,7 +72,8 @@ Lessons that cost days; keep them.
   entry); `jump` and `report-done` are the last JUMPs taken and main-memory GET_REPORTs executed; `armed report` lists
   RsxSync report slots (`GCM_WALK_ARMED`, default 0x2001ED00-0x2001EE20) whose `+0xC` halfword is still set, plus every
   GET_REPORT for them in the ring (old laps stay in memory: check the `jump` path before calling one "executed");
-  `GCM_WALK_DUMP=<ea>,<bytes>[;...]` dumps raw memory.
+  `GCM_WALK_DUMP=<ea>[@<off>...],<bytes>[;...]` dumps raw memory; each `@off` dereferences (`a = *(a + off)`), so
+  `967438@0@24,10` dumps the third dependency counter of the PPU job record `*(0x967438)`.
 * **Frame timeline knobs**: `GCM_REPLOG=1` logs every main-memory GET_REPORT the walker executes (`[report] io arg t`);
   `SPU_DMA_EA=<lo>-<hi>,<lo2>-<hi2>` takes a second range and `SPU_DMA_EA_MAX=<n>` (decimal) lifts the 300000-line cap;
   `GCM_WALK_FIND=<vlo>-<vhi>[@<ealo>-<eahi>]` lists words with values in a range at the `[walk]` report; the report

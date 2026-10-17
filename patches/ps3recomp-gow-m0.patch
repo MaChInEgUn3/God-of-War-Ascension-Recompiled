@@ -33,7 +33,7 @@ index 94de794..1e21ebb 100644
      # cellPad and cellAudio select their SDL2 backends unconditionally off
      # Windows (see PAD_BACKEND_SDL2 / AUDIO_BACKEND_SDL2), so SDL2 is required
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 5e3b510..98d9824 100644
+index 5e3b510..390e524 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -68,7 +68,10 @@ typedef struct {
@@ -281,29 +281,53 @@ index 5e3b510..98d9824 100644
  s32 cellSpursDestroyTaskset(CellSpursTaskset* taskset)
  {
      taskset = GUEST_PTR(taskset, CellSpursTaskset*);
-@@ -1007,11 +1173,17 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
-                  * as the guest EA (the SPU job's DMA uses guest EAs / r3). */
-                 const uint8_t* host_elf = GUEST_PTR(elf, const uint8_t*);
-                 size_t sz = spu_elf_image_size(host_elf, 2u * 1024 * 1024);
+@@ -928,7 +1094,13 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
+ 
+             /* Register the task in the REAL BE taskset: writes task_info[slot]
+              * (args/elf/context/ls_pattern) + sets enabled+ready bits so the PM's
+-             * SELECT_TASK picks it. Slot index i = the SPURS taskId (bitset bit). */
++             * SELECT_TASK picks it. Slot index i = the SPURS taskId (bitset bit).
++             * Claim the task first (see spu_taskset_claim): once the bits are set,
++             * a concurrent task exit may start it. */
++            extern int spu_taskset_claim(uint32_t, uint32_t);
++            const uint8_t* host_elf = elf ? GUEST_PTR(elf, const uint8_t*) : NULL;
++            const size_t elf_sz = host_elf ? spu_elf_image_size(host_elf, 2u * 1024 * 1024) : 0;
++            const int claimed = elf_sz ? spu_taskset_claim(taskset_ea, i) : 0;
+             spurs_taskset_add_task(taskset_ea, i, (uint64_t)elf_ea,
+                                    (uint64_t)context_ea, task_arg, task_lsp);
+             /* Bridge to the image-22 dispatch so build_context uses this taskset+task. */
+@@ -1001,17 +1173,19 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
+              * suits create+join task patterns; a workload/taskset whose SPU job
+              * waits on concurrent PPU-side signals will want the async lv2
+              * SPU-thread path instead — wired when a title exercises it. */
+-            if (elf) {
+-                /* elf/context are guest effective addresses; translate the image
+-                 * pointer to host memory for fingerprint+load, but keep context
+-                 * as the guest EA (the SPU job's DMA uses guest EAs / r3). */
+-                const uint8_t* host_elf = GUEST_PTR(elf, const uint8_t*);
+-                size_t sz = spu_elf_image_size(host_elf, 2u * 1024 * 1024);
 -                if (sz)
-+                if (sz) {
-                     /* Async: SPURS tasks are persistent workers — running them
+-                    /* Async: SPURS tasks are persistent workers — running them
 -                     * inline would block this PPU thread forever (deadlock). */
 -                    spu_workload_dispatch_async(host_elf, (uint32_t)sz,
 -                                                (uint32_t)(uintptr_t)context);
-+                     * inline would block this PPU thread forever (deadlock).
-+                     * Name the task explicitly: an SPU thread's task exit can
-+                     * rewrite the single-slot globals (and start this very task)
-+                     * between here and the dispatch. */
-+                    extern int spu_workload_dispatch_task_async(const uint8_t*, uint32_t, uint32_t,
-+                                                                uint32_t, uint32_t);
-+                    spu_workload_dispatch_task_async(host_elf, (uint32_t)sz,
-+                                                     (uint32_t)(uintptr_t)context, taskset_ea, i);
-+                }
++            if (claimed) {
++                /* elf/context are guest effective addresses; the image pointer is
++                 * translated to host memory for fingerprint+load, but context stays
++                 * the guest EA (the SPU job's DMA uses guest EAs / r3).
++                 * Async: SPURS tasks are persistent workers — running them inline
++                 * would block this PPU thread forever (deadlock). Name the task
++                 * explicitly: an SPU thread's task exit can rewrite the single-slot
++                 * globals between here and the dispatch. Not claimed = a previous
++                 * instance in this slot is still running; its exit starts this one. */
++                extern int spu_workload_dispatch_claimed_task_async(const uint8_t*, uint32_t, uint32_t,
++                                                                    uint32_t, uint32_t);
++                spu_workload_dispatch_claimed_task_async(host_elf, (uint32_t)elf_sz,
++                                                         (uint32_t)(uintptr_t)context, taskset_ea, i);
              }
              return CELL_OK;
          }
-@@ -1219,7 +1391,7 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1219,7 +1393,7 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
      if (!si)
          return CELL_SPURS_CORE_ERROR_STAT;
  
@@ -312,7 +336,7 @@ index 5e3b510..98d9824 100644
          if (!s_workloads[i].in_use) {
              s_workloads[i].in_use = 1;
              s_workloads[i].pm = pm;
-@@ -1238,16 +1410,17 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1238,16 +1412,17 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
              /* Publish the workload in the REAL BE instance so the game's
               * inlined kernel protocol (readyCount stores, signal bits, state
               * reads) and the policy module's own instance DMAs see it. */
@@ -334,7 +358,7 @@ index 5e3b510..98d9824 100644
              vm_write32(spurs_ea + SPURS_WKL_ENABLED,
                         vm_read32(spurs_ea + SPURS_WKL_ENABLED) | (0x80000000u >> i));
              *(vm_base + spurs_ea + SPURS_SYSSRV_MSG) = 0xFF;
-@@ -1425,7 +1598,7 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
+@@ -1425,7 +1600,7 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
  s32 cellSpursRemoveWorkload(CellSpurs* spurs, CellSpursWorkloadId wid)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -343,7 +367,7 @@ index 5e3b510..98d9824 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      s_workloads[wid].in_use = 0;
-@@ -1474,7 +1647,7 @@ typedef struct {
+@@ -1474,7 +1649,7 @@ typedef struct {
      int                 image_id;
      int                 resolved;   /* 0=not tried, 1=found, -1=missing */
  } WklPm;
@@ -352,7 +376,7 @@ index 5e3b510..98d9824 100644
  
  static WklPm* spurs_resolve_pm(u32 wid)
  {
-@@ -1484,6 +1657,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1484,6 +1659,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
      uint64_t fp = spu_workload_fingerprint(vm_base + (uint32_t)(uintptr_t)w->pm,
                                             w->sizePm);
      r->fn = spu_workload_find_img(fp, &r->image_id);
@@ -373,7 +397,7 @@ index 5e3b510..98d9824 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1582,25 +1769,25 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1582,25 +1771,25 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
           * even for wids the dispatch filter below would skip — the game pokes
           * these bytes with inlined atomics and this is our only tap. */
          {
@@ -408,7 +432,7 @@ index 5e3b510..98d9824 100644
              if (!s_workloads[wid].in_use || s_workloads[wid].spurs_ea != ea) continue;
  
              /* A SPURS policy module is a PERSISTENT SPU program. The real kernel
-@@ -1620,13 +1807,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1620,13 +1809,17 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
               *
               * readyCount/wklSignal are still honoured when a title DOES use them:
               * consume one unit so a kick-driven title paces the same as before. */
@@ -433,7 +457,7 @@ index 5e3b510..98d9824 100644
  
              WklPm* r = spurs_resolve_pm(wid);
              if (!r) continue;
-@@ -1639,7 +1830,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1639,7 +1832,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
               * ... up to 16th pass; an explicit kick (readyCount/signal) resets
               * it to every pass, so kick-driven latency is unchanged. */
              {
@@ -442,7 +466,7 @@ index 5e3b510..98d9824 100644
                  static u32 s_pass_no;                            /* shared pass counter is fine */
                  if (wid == 0) s_pass_no++;
                  if (kicked) s_idle[wid] = 0;
-@@ -1656,7 +1847,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1656,7 +1849,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                      fflush(stderr); } }
  
              /* Live workload arg from the real wklInfo (the game may update it). */
@@ -451,7 +475,7 @@ index 5e3b510..98d9824 100644
              /* Dispatch once per VIRTUAL SPU up to the workload's maxContention:
               * the WWS job manager keys its per-SPU ticket lane off the kernel
               * context's spuNum, and its command lists carry cross-lane BARRIER
-@@ -1665,7 +1856,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1665,7 +1858,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
               * deadlocked: LBP's post-intro loading froze with 8 ready jobs and
               * the lanes stuck at {1,0,...} against ticket 10+. Sequential
               * per-lane rounds converge where parallel SPUs would. */
@@ -460,7 +484,7 @@ index 5e3b510..98d9824 100644
              if (maxcont < 1) maxcont = 1;
              if (maxcont > 6) maxcont = 6;
              /* Do NOT exceed the workload's own contention: per-SPU rows in
-@@ -1691,7 +1882,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1691,7 +1884,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                if (s_fs == -2) { const char* e = getenv("SPURS_FORCE_SPUS");
                  s_fs = e ? atoi(e) : -1; }
                if (s_fs > 0) maxcont = (u8)(s_fs > 6 ? 6 : s_fs); }
@@ -469,7 +493,7 @@ index 5e3b510..98d9824 100644
              {
                  const uint8_t* pm = (const uint8_t*)vm_base + (uint32_t)(uintptr_t)s_workloads[wid].pm;
                  uint32_t sz = s_workloads[wid].sizePm;
-@@ -1718,7 +1909,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
+@@ -1718,7 +1911,7 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
                      }
                  }
              }
@@ -478,7 +502,7 @@ index 5e3b510..98d9824 100644
              /* "Found work" heuristic: a module that did something polls the
               * kernel for MORE work before exiting (selectWorkload calls >0);
               * an idle module exits immediately with polls==0. Grow the idle
-@@ -1734,12 +1925,12 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1734,12 +1927,12 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
                               u32 value)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -493,7 +517,7 @@ index 5e3b510..98d9824 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1754,7 +1945,7 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1754,7 +1947,7 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  {
      if (!spurs || !old) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -502,7 +526,7 @@ index 5e3b510..98d9824 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      vm_write32((u32)(uintptr_t)old, s_workloads[wid].readyCount);
-@@ -1767,7 +1958,7 @@ s32 cellSpursReadyCountCompareAndSwap(CellSpurs* spurs,
+@@ -1767,7 +1960,7 @@ s32 cellSpursReadyCountCompareAndSwap(CellSpurs* spurs,
                                         u32* old, u32 compare, u32 value)
  {
      if (!spurs || !old) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -511,7 +535,7 @@ index 5e3b510..98d9824 100644
      if (!s_workloads[wid].in_use) return CELL_SPURS_CORE_ERROR_SRCH;
  
      vm_write32((u32)(uintptr_t)old, s_workloads[wid].readyCount);
-@@ -1802,7 +1993,7 @@ s32 cellSpursWakeUp(CellSpurs* spurs)
+@@ -1802,7 +1995,7 @@ s32 cellSpursWakeUp(CellSpurs* spurs)
       * are common -- the guest calls it whenever it adds work) does not spawn
       * another copy. */
      const uint32_t spurs_ea = (uint32_t)(uintptr_t)spurs;
@@ -520,7 +544,7 @@ index 5e3b510..98d9824 100644
          SpursWorkload* w = &s_workloads[i];
          if (!w->in_use || w->started || w->spurs_ea != spurs_ea) continue;
          if (!w->pm || !w->sizePm) continue;
-@@ -2977,6 +3168,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -2977,6 +3170,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -563,7 +587,7 @@ index 5e3b510..98d9824 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -2984,7 +3211,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -2984,7 +3213,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -572,7 +596,7 @@ index 5e3b510..98d9824 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3005,13 +3232,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3005,13 +3234,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -603,7 +627,7 @@ index 5e3b510..98d9824 100644
      return CELL_OK;
  }
  
-@@ -3294,6 +3533,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3294,6 +3535,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
@@ -818,7 +842,7 @@ index b7dfd50..3a00f55 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index ac0a7a8..0d23895 100644
+index ac0a7a8..e12249d 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -20,6 +20,7 @@
@@ -878,7 +902,7 @@ index ac0a7a8..0d23895 100644
  /* Backlog past which the drain stops honouring one-flip-per-tick and
   * catches up instead. Sized well above a frame's command list so a
   * title that keeps up never sees this path. */
-@@ -1367,6 +1382,278 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
+@@ -1367,6 +1382,282 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
      *getoff = land;
  }
  
@@ -1141,11 +1165,15 @@ index ac0a7a8..0d23895 100644
 +                      vm_read32(a - 4), v, vm_read32(a + 4), vm_read32(a + 8));
 +          }
 +      } }
-+    /* GCM_WALK_DUMP=<ea>,<bytes>[;<ea>,<bytes>...] (hex): raw guest memory at the report. */
++    /* GCM_WALK_DUMP=<ea>[@<off>...],<bytes>[;...] (hex): raw guest memory at the report.
++     * Each "@off" dereferences: a = *(a + off), so "967438@0@1C" dumps at *(*(0x967438) + 0x1C). */
 +    { const char* e = getenv("GCM_WALK_DUMP");
 +      while (e && *e) {
-+          char* p; u32 a = (u32)strtoul(e, &p, 16) & ~0xFu, n = 0x40;
++          char* p; u32 a = (u32)strtoul(e, &p, 16), n = 0x40;
++          while (*p == '@') { u32 off = (u32)strtoul(p + 1, &p, 16); a = vm_read32(a + off); }
 +          if (*p == ',') n = (u32)strtoul(p + 1, &p, 16);
++          fprintf(stderr, "[walk]   dump @%08X (%.*s)\n", a, (int)(p - e), e);
++          a &= ~0xFu;
 +          for (u32 r = a; r < a + n; r += 16)
 +              fprintf(stderr, "[walk]   dump %08X: %08X %08X %08X %08X\n", r, vm_read32(r), vm_read32(r + 4),
 +                      vm_read32(r + 8), vm_read32(r + 12));
@@ -1157,7 +1185,7 @@ index ac0a7a8..0d23895 100644
  static void gcm_fifo_dump_around(u32 getoff)
  {
      static int d = 0;
-@@ -1539,7 +1826,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1539,7 +1830,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * that does read the context (the ring-recycle heuristic) is separately guarded
       * by s_gcm_ctx_out_ea, which stays 0 on that path. */
      if (!s_gcm_context_ea && !s_gcm_syscall_mode) return;
@@ -1166,7 +1194,7 @@ index ac0a7a8..0d23895 100644
  
      /* Walk the FIFO exactly like the RSX: chase the guest-written `put` (an IO
       * offset in the control register), decoding method headers and following
-@@ -1655,6 +1942,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1655,6 +1946,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
              break;
          }
          u32 w = vm_read32(ea);
@@ -1174,7 +1202,7 @@ index ac0a7a8..0d23895 100644
          /* Only remember offsets BELOW put -- those are positions in the
           * ring the title is writing. A park in another region is where the
           * walker gave up, not how far it got through the ring. */
-@@ -1722,15 +2010,26 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1722,15 +2014,26 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
                if (tgt == s_fifo_getoff) {
@@ -1202,7 +1230,7 @@ index ac0a7a8..0d23895 100644
                s_fifo_getoff = tgt; }
              continue;
          }
-@@ -1789,8 +2088,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1789,8 +2092,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      u32 m = (type == 0) ? method + i * 4 : method;
                      u32 v = vm_read32(dea);
                      u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
@@ -1219,7 +1247,7 @@ index ac0a7a8..0d23895 100644
                      if (m == 0x64u)      s_sema_offset = v;
                      else if (m == 0x6Cu) vm_write32(la, v);
                      else if (m == 0x68u && vm_read32(la) != v) {
-@@ -1803,7 +2108,23 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1803,7 +2112,23 @@ static void gcm_rsx_process_fifo_unlocked(void)
              if (blk) { sem_blocked = 1; break; }
          }
                  }
@@ -1244,7 +1272,7 @@ index ac0a7a8..0d23895 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -1936,7 +2257,32 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1936,7 +2261,32 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -1278,7 +1306,7 @@ index ac0a7a8..0d23895 100644
                          const u32 v = vm_read32(dea), idx = (v & 0xFFFFFFu) / 16u;
                          { static int rn = 0; if (rn++ < 6) printf("[GET_REPORT] type=%u idx=%u%c", v >> 24, idx, 10); }
                          if (idx < CELL_GCM_MAX_REPORT_COUNT) {
-@@ -1997,7 +2343,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1997,7 +2347,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -1298,7 +1326,7 @@ index ac0a7a8..0d23895 100644
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
-@@ -2360,7 +2717,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2360,7 +2721,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * it spins on `ref` for good. Safe when the walker has left the head of
       * the ring well behind, which is the region the guest writes next. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -1316,7 +1344,7 @@ index ac0a7a8..0d23895 100644
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
          vm_write32(ctx + 8, begin);
-@@ -2637,14 +3003,101 @@ static u32 gcm_io_alloc(u32 size)
+@@ -2637,14 +3007,101 @@ static u32 gcm_io_alloc(u32 size)
      if (s_io_alloc_next == 0)
          s_io_alloc_next = (s_config.ioSize + 0xFFFFFu) & ~0xFFFFFu;
      if (s_io_alloc_next < 0x100000u) s_io_alloc_next = 0x100000u;
@@ -1418,7 +1446,7 @@ index ac0a7a8..0d23895 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -2684,6 +3137,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2684,6 +3141,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -1426,7 +1454,7 @@ index ac0a7a8..0d23895 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -2692,6 +3146,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2692,6 +3150,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -1434,7 +1462,7 @@ index ac0a7a8..0d23895 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -2727,6 +3182,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2727,6 +3186,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -1451,7 +1479,7 @@ index ac0a7a8..0d23895 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -2744,8 +3209,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -2744,8 +3213,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -2875,7 +2903,7 @@ index bdee01c..ebd8860 100644
 +    spu_interp_run(ctx, 0xA00u);
 +}
 diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
-index 6a19d5b..dcae882 100644
+index 6a19d5b..0fa51bd 100644
 --- a/runtime/spu/spu_workload.c
 +++ b/runtime/spu/spu_workload.c
 @@ -391,6 +391,9 @@ static void spu_taskset_mark(uint32_t taskset_ea, uint32_t t, int on)
@@ -2990,7 +3018,7 @@ index 6a19d5b..dcae882 100644
      /* LBP_SYNC_ACK: taskset sync-lane bookkeeping. On real SPURS the taskset
       * POLICY MODULE advances the per-SPU progress lanes (sync+0x40+16*row:
       * ticket u16 @+0, consumer lanes @+2..) as tasks are processed; our HLE
-@@ -1161,14 +1219,56 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
+@@ -1161,14 +1219,80 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
                  "after %us (no signal)\n", taskId, taskset_ea, secs); fflush(stderr); }
      spu_serial_acquire();       /* resume: re-take the serial lock */
      { extern unsigned long long ps3_ms_now(void);
@@ -3028,6 +3056,30 @@ index 6a19d5b..dcae882 100644
 +    return spu_dispatch_task_impl(image, image_size, args_ea, taskset_ea, taskid, 0);
 +}
 +
++/* Claim a task BEFORE its guest enabled/ready bits are set. Claiming at dispatch
++ * time is too late: a concurrent task exit can see the bits, start the task, and
++ * the task can finish (clearing its running mark) before the creator dispatches
++ * it, so it ran twice (GoW:A froze in 0x3A5AA4 with the batch count overshot).
++ * Returns 1 if claimed -- dispatch with spu_workload_dispatch_claimed_task_async
++ * -- or 0 if a previous instance is still running; its exit starts this one. */
++int spu_taskset_claim(uint32_t taskset_ea, uint32_t taskid)
++{
++    if (!taskset_ea || taskid >= 128) return 1;
++    int ok = 1;
++    ts_lock();
++    uint8_t* r = ts_running(taskset_ea);
++    const uint8_t m = (uint8_t)(0x80u >> (taskid & 7));
++    if (r) { if (r[taskid / 8] & m) ok = 0; else r[taskid / 8] |= m; }
++    ts_unlock();
++    return ok;
++}
++
++int spu_workload_dispatch_claimed_task_async(const uint8_t* image, uint32_t image_size,
++                                             uint32_t args_ea, uint32_t taskset_ea, uint32_t taskid)
++{
++    return spu_dispatch_task_impl(image, image_size, args_ea, taskset_ea, taskid, 2);
++}
++
 +static int spu_dispatch_task_impl(const uint8_t* image, uint32_t image_size, uint32_t args_ea,
 +                                  uint32_t taskset_ea, uint32_t taskid, int claimed)
  {
@@ -3048,15 +3100,16 @@ index 6a19d5b..dcae882 100644
  
      uint64_t fp = spu_workload_fingerprint(image, image_size);
      spu_lifted_entry_fn fn = NULL;
-@@ -1199,6 +1299,7 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
+@@ -1199,6 +1323,8 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
            } }
          fprintf(stderr, "[spu_workload] async dispatch MISS fp=0x%016llX size=%u\n",
                  (unsigned long long)fp, image_size);
-+        if (!claimed && taskset_ea && taskid < 128) spu_taskset_mark(taskset_ea, taskid, 0);
++        /* claimed == 1 is the exit scan, which holds ts_lock and keeps the mark. */
++        if (claimed != 1 && taskset_ea && taskid < 128) spu_taskset_mark(taskset_ea, taskid, 0);
          return 0;
      }
  
-@@ -1210,8 +1311,7 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
+@@ -1210,8 +1336,7 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
       * set the globals for THIS task). Reading them later in the async thread races
       * the next CreateTask overwriting the single-slot globals -- with two audio
       * tasks that made both run task 1's descriptor. */
