@@ -40,9 +40,14 @@
   * 16: stage-2 batch tasks `0x681880`, created SPU-side by the stage-1 finalizer.
   
   The Edge Zlib task `0x6A3380` is HLE'd.
+* WWS job modules: the 33 modules embedded in the EBOOT (`0xC0DEC0DE` header) are carved by
+  `analysis/extract_gow_jobmods.py` and lifted by ps3recomp's `lift_jobmods.py` at LS `0x4000` (image ids
+  200-232). The policy module stages each job at LS `0x4000` (`LS[0x1320]`), and dispatch picks the lifted module
+  whose 16-byte header matches. `spu/jobmod_extra.json` adds the entries reached only through computed branches.
 * `port/main.cpp` also sets title defaults for runtime knobs: `GCM_PARK_WAIT=1`, `GCM_SEMA_ACQUIRE=1`,
   `GCM_FIFO_CIRCLE_PASSES=0` and `VK_TEX_OFF=1` (until guest shaders exist). It also hosts the `GOW_CLOCK_WATCH`
-  frame-clock watchdog.
+  frame-clock watchdog, plus the `GOW_HEARTBEAT` and `GOW_MAIN_PROF` probes; `SPURS_PM_HANG=10` is on by
+  default.
 * `patches/`: fixes against upstream (envp/envc, SPURS v2 wrappers, `sys_lwcond_t` layout, 64-bit file sizes,
   Edge Zlib HLE in `_cellSpursLFQueuePushBody`, GCM IO allocator, syscall 14 range, `sys_mmapper_allocate_address`
   first-fit at `0x20000000`) plus diagnostics (function-entry tracer in the lifter, MemTable dump, stack scan).

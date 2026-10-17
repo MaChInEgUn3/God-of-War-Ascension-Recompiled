@@ -12,6 +12,12 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    (about 50 s, about 190 MB of C++). Regenerate the NID table:
    `gen_hle_nids.py --all --out local/recompiled/ppu_hle_nids.cpp`.
 4. SPU images: `python analysis/make_spu_port.py <elf> spu/images.json port <ps3recomp>` (generates `port/spu/`, git-ignored).
+   WWS job modules (33, embedded in the EBOOT):
+   `python analysis/extract_gow_jobmods.py <elf> local/spu/jobmods`, then
+   `JOBMOD_EXTRA_FUNCS_JSON=spu/jobmod_extra.json python <ps3recomp>/tools/lift_jobmods.py --jobmods local/spu/jobmods
+   --out port/spu --register port/spu/jobmods_register.c --symbol-prefix gow` (image ids 200-232, matched at run
+   time by the 16-byte module header). `spu/jobmod_extra.json` lists entries reached only indirectly; refresh it
+   with `SPU_INTERP_MISS=1` runs and `analysis/interp_miss_to_extra.py` (see DEBUGGING.md).
 5. `scripts\cfg.bat`, then `scripts\build.bat` (first build about 7 min and about 8 GB RAM; incremental builds take
    seconds unless the lifted header changes).
 6. Run `port\build_vk\MyGameRecomp.exe local\vfs\PS3_GAME\USRDIR\EBOOT.elf` (needs `SDL2.dll` next to the exe;

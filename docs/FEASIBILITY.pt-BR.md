@@ -320,6 +320,24 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Os módulos de job que a PM carrega em tempo de execução não têm lift. O casador de overlays (`resident_ovl`, `tools/extract_jobmods.py`/`lift_jobmods.py`) foi feito para a PM do LBP (imagem 2), não para a do GoW (imagem 10).
   - **Próxima frente (M3): extrair, fazer o lift e casar os módulos de job WWS do GoW.** Isso rende uma ordem de grandeza; paralelizar o kernel renderia no máximo 2×.
 
+### M0.27 — lift dos 33 módulos de job WWS (2026-10-17)
+- O EBOOT embute **33 módulos** de job sem compressão, com o mesmo cabeçalho do LBP: `4×ila | entryOffset (+0x10) | imageSize (+0x14) | … | 0xC0DEC0DE (+0x20)`. A imagem inicializada tem `imageSize − 32` (o resto é bss).
+  - `analysis/extract_gow_jobmods.py` recorta os módulos.
+  - O `lift_jobmods.py` do ps3recomp faz o lift em LS `0x4000`, com imagens 200–232.
+- `SPU_JOBMOD_LOG=1` confirmou que a PM do GoW (imagem 10) põe todo job em `0x4000` (`LS[0x1320]`). O casador de assinatura, antes restrito à imagem 2 (LBP), vale agora para qualquer PM (`policy_mode`).
+- **Entradas indiretas:**
+  - O interpretador ainda pegava os alvos de branch computado (tabelas e ponteiros de função) que a detecção de funções não vê.
+  - `SPU_INTERP_MISS=1` ordena esses alvos pelo tempo interpretado, por (wid, imagem, alvo).
+  - `analysis/interp_miss_to_extra.py` converte o resultado em `spu/jobmod_extra.json`, que entra no lift via `JOBMOD_EXTRA_FUNCS_JSON`.
+  - Armadilha: o micro-stepper avança algumas instruções antes de passar para o interpretador. O alvo certo é o pc de entrada, não o da passagem (a 1ª rodada adicionou endereços deslocados).
+- **Resultado (run182):**
+  - wid 8 (BrBDblBufWrkld) caiu de 35% para **11%** da thread do kernel, com 0% interpretado.
+  - O kernel caiu de ~70% para ~50%.
+  - O jogo foi de ~1,5 para **~2,8 frames/s**.
+- **Ainda interpretado:**
+  - RenderJobs (w13, 96%; módulo 221) e MeshProcJobs (w14; módulo 222): falta mais uma rodada de entradas.
+  - EDGE (~54%) em alvos **fora** da imagem do módulo 225 (`0x111C0`–`0x11CF0`, iguais nos três EDGE). É código que o job carrega à parte num endereço fixo de LS; precisa ser identificado e ter lift próprio.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.

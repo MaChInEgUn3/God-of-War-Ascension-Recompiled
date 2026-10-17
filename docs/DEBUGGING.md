@@ -47,6 +47,11 @@ Lessons that cost days; keep them.
   the share of that workload's time spent in the SPU interpreter (runtime-loaded job code with no lift).
   `GOW_MAIN_PROF=<s>` samples the main PPU thread's guest call chain every 2 ms and prints the top chains
   (`ra <innermost return address> in <caller fn> <- <its caller>`), i.e. where each frame waits.
+* **Interpreted job code**: `SPU_JOBMOD_LOG=1` prints each distinct (code base `LS[0x1320]`, module header) a
+  policy module jumps into with no lifted module. `SPU_INTERP_MISS=1` ranks unresolved branch targets by interpreted
+  time every 20 s (`wid img pc n ms`). A target inside a module's image is a missing entry: feed the log to
+  `analysis/interp_miss_to_extra.py` and re-lift. A target past the image is code the module does not contain.
+  The micro-stepper advances a few instructions before handing off, so only the entry pc is a valid target.
 * **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
   then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on

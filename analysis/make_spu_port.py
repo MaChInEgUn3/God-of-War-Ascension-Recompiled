@@ -57,9 +57,13 @@ for im in imgs:
                                "--base", hex(base), "--entry", hex(entry), "--out", elf],
                               stdout=subprocess.DEVNULL)
     prefix = f"{name}_"
-    subprocess.check_call([py, os.path.join(sdk, "tools", "spu_lifter.py"),
-                           "--auto-functions", elf, "--symbol-prefix", prefix, "-o", d],
-                          stdout=subprocess.DEVNULL)
+    cmd = [py, os.path.join(sdk, "tools", "spu_lifter.py"),
+           "--auto-functions", elf, "--symbol-prefix", prefix, "-o", d]
+    # Optional "extra": LS addresses reached only indirectly (interrupt returns,
+    # computed branches) -- found with the runtime's SPU_INTERP_MISS histogram.
+    if im.get("extra"):
+        cmd += ["--extra-funcs", ",".join(im["extra"])]
+    subprocess.check_call(cmd, stdout=subprocess.DEVNULL)
     for fn in ("spu_recomp.c", "spu_recomp.h"):
         p = os.path.join(d, fn)
         t = open(p, encoding="utf8").read()

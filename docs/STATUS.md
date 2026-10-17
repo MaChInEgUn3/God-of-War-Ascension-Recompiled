@@ -119,6 +119,12 @@ has 64 slots. A run went 560 s and 3020 flips with no stall; a 30-minute run nev
 counter reached 901 in 570 s (~1.5 frames/s). Profile: the single host thread that runs every SPURS policy module
 is ~74% busy (BrBDblBufWrkld 30%, EDGE0/1/2 ~11% each), so the next limit is that serial kernel. Frames are still
 black (no guest shaders: glslang is not installed).
+Update (M0.27): 90-94% of the WWS job time ran in the SPU interpreter, because the job modules the policy module
+loads at run time had no lift. The 33 modules embedded in the EBOOT are now carved, lifted at LS `0x4000` (images
+200-232) and matched by header, with extra entries for computed-branch targets (`spu/jobmod_extra.json`). Result:
+BrBDblBufWrkld went from 35% to 11% of the kernel thread (0% interpreted), and the game runs at ~2.8 frames/s (was
+~1.5). Still interpreted: RenderJobs and MeshProcJobs (missing entries), and EDGE code loaded outside the module image
+(LS `0x111C0-0x11CF0`).
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

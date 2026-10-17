@@ -2213,7 +2213,7 @@ index 718392f..9aedcc5 100644
      if (s) {
          uint32_t own = vm_read32(lwmutex + LWM_OWNER);
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 2a74e51..13e7b07 100644
+index 2a74e51..00f6660 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,9 +21,9 @@
@@ -2457,7 +2457,15 @@ index 2a74e51..13e7b07 100644
          return 1;
  
      default:
-@@ -1969,7 +2009,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -1892,6 +1932,7 @@ void spu_spurs_taskset_syscall(spu_context* ctx)   /* non-static: also called by
+ static int spu_smc_microstep(spu_context* ctx)
+ {
+     uint32_t pc = ctx->pc & SPU_LS_MASK & ~3u;
++    const uint32_t pc_entry = pc;   /* the unresolved branch target (SPU_INTERP_MISS) */
+     for (int steps = 0; steps < 4096; steps++) {
+         uint32_t w = ((uint32_t)ctx->ls[pc] << 24) | ((uint32_t)ctx->ls[pc+1] << 16) |
+                      ((uint32_t)ctx->ls[pc+2] << 8) | ctx->ls[pc+3];
+@@ -1969,7 +2010,10 @@ static int spu_smc_microstep(spu_context* ctx)
              pc += 4; continue;
          }
          if (op9 == 0x041 || op9 == 0x061) {                   /* stqa / lqa (abs) */
@@ -2469,7 +2477,7 @@ index 2a74e51..13e7b07 100644
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
              pc += 4; continue;
-@@ -2038,10 +2081,37 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2038,10 +2082,89 @@ static int spu_smc_microstep(spu_context* ctx)
                        " microstep set -- handing to the interpreter (steps=%d)\n",
                        ctx->image_id, pc, w, steps); }
          ctx->pc = pc;
@@ -2477,6 +2485,27 @@ index 2a74e51..13e7b07 100644
 -         * no lifted entry, and a job's return would otherwise run on through
 -         * the caller's code (GH3's song-freeze; see drain_ret_pc). */
 -        return spu_interp_run_until(ctx, pc, ctx->drain_ret_pc) ? 1 : 0;
++        /* SPU_INTERP_MISS=1: interpreter time by (workload, image or resident overlay,
++         * branch target), top 40 every 20 s -- unresolved branch targets ranked by what
++         * interpreting from them costs. A target inside a lifted module's image is a
++         * missing function entry (feed it back to the lifter); one past the image is
++         * code the module does not contain (runtime-loaded or generated). */
++        enum { NM = 4096 };
++        static uint32_t mk[NM]; static int mi[NM], mw[NM]; static unsigned mc[NM]; static long long mt[NM];
++        static SRWLOCK ml = SRWLOCK_INIT;
++        static int s_im = -1; if (s_im < 0) s_im = getenv("SPU_INTERP_MISS") ? 1 : 0;
++        int miss_slot = -1;
++        if (s_im) {
++            const int im = (pc_entry >= 0x4000 && ctx->resident_ovl) ? ctx->resident_ovl : ctx->image_id;
++            const int wid = ctx->policy_mode ? ctx->ls[0x1DF] : -1;
++            AcquireSRWLockExclusive(&ml);
++            unsigned h = (pc_entry * 2654435761u ^ (unsigned)im * 40503u ^ (unsigned)(wid + 1) * 977u) % NM;
++            for (unsigned q = 0; q < NM; q++, h = (h + 1) % NM) {
++                if (mc[h] && mk[h] == pc_entry && mi[h] == im && mw[h] == wid) { mc[h]++; miss_slot = (int)h; break; }
++                if (!mc[h]) { mk[h] = pc_entry; mi[h] = im; mw[h] = wid; mc[h] = 1; mt[h] = 0; miss_slot = (int)h; break; }
++            }
++            ReleaseSRWLockExclusive(&ml);
++        }
 +        /* SPU_INTERP_STATS=1: interpreter hand-offs and steps per image, every
 +         * 20000 hand-offs -- how much of an image runs interpreted, and from where. */
 +        { static int s_is = -1; if (s_is < 0) s_is = getenv("SPU_INTERP_STATS") ? 1 : 0;
@@ -2499,7 +2528,38 @@ index 2a74e51..13e7b07 100644
 +        /* Stop at the drain's return point too: it sits mid-function, so it is
 +         * no lifted entry, and a job's return would otherwise run on through
 +         * the caller's code (GH3's song-freeze; see drain_ret_pc). */
-+        if (!spu_interp_run_until(ctx, pc, ctx->drain_ret_pc)) return 0;
++        uint32_t interp_r;
++        if (miss_slot >= 0) {
++            LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
++            interp_r = spu_interp_run_until(ctx, pc, ctx->drain_ret_pc);
++            QueryPerformanceCounter(&t1);
++            static LARGE_INTEGER s_f, s_w0;
++            AcquireSRWLockExclusive(&ml);
++            mt[miss_slot] += t1.QuadPart - t0.QuadPart;
++            if (!s_f.QuadPart) { QueryPerformanceFrequency(&s_f); s_w0 = t1; }
++            if (t1.QuadPart - s_w0.QuadPart >= 20 * s_f.QuadPart) {
++                long long tot = 0;
++                for (int k = 0; k < NM; k++) tot += mt[k];
++                fprintf(stderr, "[interp-miss] %.1f ms interpreted in 20 s, top targets:\n",
++                        1000.0 * tot / s_f.QuadPart);
++                static unsigned char shown[NM];
++                memset(shown, 0, sizeof shown);
++                for (int r = 0; r < 40; r++) {
++                    int bb = -1;
++                    for (int k = 0; k < NM; k++)
++                        if (mc[k] && !shown[k] && (bb < 0 || mt[k] > mt[bb])) bb = k;
++                    if (bb < 0 || !mt[bb]) break;
++                    shown[bb] = 1;
++                    fprintf(stderr, "[interp-miss]   wid=%d img=%d pc=0x%05X n=%u %.1fms%s\n", mw[bb], mi[bb], mk[bb],
++                            mc[bb], 1000.0 * mt[bb] / s_f.QuadPart, spu_lookup(mk[bb], mi[bb]) ? " (lifted entry exists)" : "");
++                }
++                memset(mc, 0, sizeof mc); memset(mt, 0, sizeof mt);
++                s_w0 = t1;
++                fflush(stderr);
++            }
++            ReleaseSRWLockExclusive(&ml);
++        } else interp_r = spu_interp_run_until(ctx, pc, ctx->drain_ret_pc);
++        if (!interp_r) return 0;
 +        /* Rejoined lifted code (or the drain return point) still running: re-arm the
 +         * trampoline like the branch cases above do. Without it the dispatch loop saw
 +         * no next step and the whole policy-module run ended mid-handler (GoW:A: the
@@ -2511,7 +2571,44 @@ index 2a74e51..13e7b07 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2598,6 +2668,35 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2340,12 +2463,35 @@ void spu_indirect_branch(spu_context* ctx)
+      * ila header identifies which of the 89 lifted job modules it is; match it and
+      * mark that overlay resident so the module's lifted functions dispatch. The
+      * module arrives via a DMA LIST, so the single-GET note_get hook never fired. */
+-    if (!fn && ctx->image_id == 2 && ctx->pc >= 0x4000 && ctx->pc < 0x3E000) {
++    /* Any WWS job-manager PM, not only LBP's image 2 (GoW:A's is image 10). */
++    if (!fn && (ctx->image_id == 2 || ctx->policy_mode) && ctx->pc >= 0x4000 && ctx->pc < 0x3E000) {
+         uint32_t codeBase = ((uint32_t)ctx->ls[0x1320] << 24) | ((uint32_t)ctx->ls[0x1321] << 16) |
+                             ((uint32_t)ctx->ls[0x1322] << 8) | ctx->ls[0x1323];
+         if (codeBase + 16 <= SPU_LS_SIZE) {
+             extern int spu_overlay_match_sig(const uint8_t hdr[16]);
+             int img = spu_overlay_match_sig(&ctx->ls[codeBase]);
++            /* SPU_JOBMOD_LOG=1: each distinct (codeBase, module header) a PM jumps
++             * into with no lifted module -- which job modules run interpreted and
++             * at which LS base they are staged (the base a lift has to use). */
++            { static int s_jl = -1; if (s_jl < 0) s_jl = getenv("SPU_JOBMOD_LOG") ? 1 : 0;
++              if (s_jl && !img) {
++                  static uint32_t seen[128][2]; static int ns; static SRWLOCK lk = SRWLOCK_INIT;
++                  const uint8_t* h = &ctx->ls[codeBase];
++                  const uint32_t w0 = (uint32_t)h[0] << 24 | h[1] << 16 | h[2] << 8 | h[3];
++                  const uint32_t w1 = (uint32_t)h[4] << 24 | h[5] << 16 | h[6] << 8 | h[7];
++                  AcquireSRWLockExclusive(&lk);
++                  int f = 0;
++                  for (int k = 0; k < ns; k++) if (seen[k][0] == codeBase && seen[k][1] == w0) { f = 1; break; }
++                  if (!f && ns < 128) {
++                      seen[ns][0] = codeBase; seen[ns][1] = w0; ns++;
++                      fprintf(stderr, "[jobmod] img=%d codeBase=0x%05X pc=0x%05X (entry+0x%X) hdr=%08X %08X "
++                              "%02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X\n",
++                              ctx->image_id, codeBase, ctx->pc & SPU_LS_MASK, (ctx->pc & SPU_LS_MASK) - codeBase,
++                              w0, w1, h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15],
++                              h[16], h[17], h[18], h[19]);
++                  }
++                  ReleaseSRWLockExclusive(&lk);
++              } }
+             if (img) {
+                 if (ctx->resident_ovl != img) {
+                     ctx->resident_ovl = img;
+@@ -2598,6 +2744,35 @@ void spu_indirect_branch(spu_context* ctx)
              fflush(stderr);
          }
      }
@@ -2547,7 +2644,7 @@ index 2a74e51..13e7b07 100644
      /* No lifted function at this PC: it may be RUNTIME-GENERATED code (the
       * WWS jobmanager writes a save/restore stub above its static
       * image and calls it). Interpret the live LS bytes; on success the next
-@@ -2612,9 +2711,16 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2612,9 +2787,16 @@ void spu_indirect_branch(spu_context* ctx)
        static int _bt0[BT0_MAX_IMG];
        unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
                       ? (unsigned)ctx->image_id : 0;
@@ -3608,6 +3705,35 @@ index bcb1df4..b55684f 100644
      } else if (addr >= 0x40000000u && addr < 0x50000000u) {
          rc = 0;                                   /* sys_memory window */
      } else if (addr >= 0xC0000000u && addr < 0xD0000000u) {
+diff --git a/tools/lift_jobmods.py b/tools/lift_jobmods.py
+index d2e6b07..64c4b87 100644
+--- a/tools/lift_jobmods.py
++++ b/tools/lift_jobmods.py
+@@ -57,6 +57,14 @@ CODE_END = {
+ EXTRA_FUNCS = [a.strip() for a in
+                os.environ.get("LBP_JOBMOD_EXTRA_FUNCS", "").split(",") if a.strip()]
+ 
++# Per-module extra entries when the resident module IS known (the runtime's
++# SPU_INTERP_MISS histogram names the overlay image): $JOBMOD_EXTRA_FUNCS_JSON
++# points at {"<module name>": ["0x...", ...]}.
++EXTRA_BY_MODULE = {}
++if os.environ.get("JOBMOD_EXTRA_FUNCS_JSON"):
++    with open(os.environ["JOBMOD_EXTRA_FUNCS_JSON"]) as _f:
++        EXTRA_BY_MODULE = json.load(_f)
++
+ 
+ def manual_link_targets(raw, base=BASE):
+     """Return targets built into the link register by hand:
+@@ -169,7 +177,8 @@ def main():
+         if name in CODE_END:
+             cmd += ["--code-end", hex(CODE_END[name])]
+         # Only offer addresses that fall inside THIS module's image.
+-        inside = [a for a in EXTRA_FUNCS if BASE <= int(a, 0) < BASE + len(raw)]
++        inside = [a for a in EXTRA_FUNCS + EXTRA_BY_MODULE.get(name, [])
++                  if BASE <= int(a, 0) < BASE + len(raw)]
+         # The module's first function starts right after the 0x30-byte header
+         # (`4 ila | entry | size | 0 | 0 | C0DEC0DE | 0 | 0 | n`). Usually it is
+         # reached by a branch and found anyway, but in two modules it is a bare
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
 index 66c65e5..4d9776b 100644
 --- a/tools/ppu_lifter.py
