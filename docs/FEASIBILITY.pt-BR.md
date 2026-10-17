@@ -346,6 +346,15 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - 11 fragmentos de código do EBOOT (`0x71AB60`, `0x71E7D0`, `0x721F00`, `0x725150`, `0x7282A0`, `0x7298F0`, `0x729F40`…, de 0xC0 a 0x7C0 bytes) vão empacotados a partir de LS `0x11090`. Cada um cai em 1 a 5 endereços.
   - Plano: um lift por posicionamento, registrado como região (EA de origem, endereço LS). Hoje o casamento é só por EA, e os 4 slots de `resident_code` não bastam.
 - Com o kernel a ~99%, as próximas alavancas são os fragmentos do EDGE e um kernel com 2 threads (o "Big" tem `nSpus=2`).
+- **Fragmentos do EDGE com lift (run187):**
+  - `analysis/lift_edge_frags.py` faz o lift de 45 posicionamentos (19 fragmentos; imagens 300–344).
+  - O runtime registra cada um por (EA, LSA) com `spu_overlay_register_region_at` e marca como residente nesse GET exato. `resident_code` foi de 4 para 16 slots.
+  - Resultado: o EDGE ficou com 0% interpretado e o jogo foi a **~8,3 frames/s**.
+- **Retorno do interpretador ao código lifted (run189):**
+  - O interpretador só tentava voltar ao código lifted usando a imagem do contexto (a PM, imagem 10), nunca o módulo ou os fragmentos residentes. Um único alvo sem entrada custava o resto do job interpretado; por isso cada rodada de colheita revelava só o alvo seguinte.
+  - `spu_lifted_lookup` agora segue a mesma ordem do despacho: spans residentes, tarefa, overlay e imagem.
+  - Resultado: tempo interpretado de ~1,5 s para **0,1 s a cada 20 s**, MeshProcJobs de 8% para 1% do kernel e **~8,6 frames/s**.
+  - O kernel continua a ~100%, agora quase todo em código lifted (wid 8 35%, EDGE 16% cada). A próxima alavanca é a segunda thread de kernel.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

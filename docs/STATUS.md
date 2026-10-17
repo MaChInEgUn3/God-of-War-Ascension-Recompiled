@@ -129,6 +129,10 @@ The limit then turned out to be latency: the port's SPURS kernel slept 1 ms betw
 of dependent jobs across workloads. `SPURS_PASS_GREEDY=1` (a port default now) skips the pause after a productive pass:
 **~6.2 game frames/s** (was ~2.9), with the kernel thread ~99% busy. Next levers: lift the EDGE code fragments (11
 EBOOT blobs staged at LS `0x11090+`), and a second kernel thread (the "Big" instance has `nSpus=2`).
+Update: the EDGE fragments are lifted, one image per (source EA, LS placement), and the interpreter now rejoins lifted
+code in the resident job module or fragment, not only in the policy module. Interpreted SPU time fell to ~0.1 s per
+20 s, and the game runs at **~8.6 frames/s**. The kernel thread is ~100% busy in lifted code (BrBDblBufWrkld 35%,
+EDGE0/1/2 16% each); a second kernel thread is next.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

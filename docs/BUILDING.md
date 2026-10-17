@@ -18,6 +18,10 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    --out port/spu --register port/spu/jobmods_register.c --symbol-prefix gow` (image ids 200-232, matched at run
    time by the 16-byte module header). `spu/jobmod_extra.json` lists entries reached only indirectly; refresh it
    with `SPU_INTERP_MISS=1` runs and `analysis/interp_miss_to_extra.py` (see DEBUGGING.md).
+   EDGE code fragments (EBOOT blobs the EDGE jobs stage at LS `0x11090+`, one lift per placement): run with
+   `SPU_LSA_GETLOG=10000-3E000 SPU_LSA_GETLOG_EA=10000-820000 SPU_INTERP_MISS=1`, then
+   `python analysis/lift_edge_frags.py <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
+   `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted.
 5. `scripts\cfg.bat`, then `scripts\build.bat` (first build about 7 min and about 8 GB RAM; incremental builds take
    seconds unless the lifted header changes).
 6. Run `port\build_vk\MyGameRecomp.exe local\vfs\PS3_GAME\USRDIR\EBOOT.elf` (needs `SDL2.dll` next to the exe;

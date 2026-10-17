@@ -44,6 +44,9 @@
   `analysis/extract_gow_jobmods.py` and lifted by ps3recomp's `lift_jobmods.py` at LS `0x4000` (image ids
   200-232). The policy module stages each job at LS `0x4000` (`LS[0x1320]`), and dispatch picks the lifted module
   whose 16-byte header matches. `spu/jobmod_extra.json` adds the entries reached only through computed branches.
+* EDGE code fragments: the EDGE jobs pack small EBOOT code blobs from LS `0x11090`, each at one of a few addresses.
+  `analysis/lift_edge_frags.py` lifts one image per (source EA, LSA) placement (ids 300+); the runtime marks it
+  resident on that exact GET (`spu_overlay_register_region_at`, up to 16 resident spans per context).
 * `port/main.cpp` also sets title defaults for runtime knobs: `GCM_PARK_WAIT=1`, `GCM_SEMA_ACQUIRE=1`,
   `GCM_FIFO_CIRCLE_PASSES=0` and `VK_TEX_OFF=1` (until guest shaders exist). It also hosts the `GOW_CLOCK_WATCH`
   frame-clock watchdog, plus the `GOW_HEARTBEAT` and `GOW_MAIN_PROF` probes; `SPURS_PM_HANG=10` and
