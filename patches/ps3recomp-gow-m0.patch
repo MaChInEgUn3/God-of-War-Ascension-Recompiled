@@ -33,7 +33,7 @@ index 94de794..1e21ebb 100644
      # cellPad and cellAudio select their SDL2 backends unconditionally off
      # Windows (see PAD_BACKEND_SDL2 / AUDIO_BACKEND_SDL2), so SDL2 is required
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 5e3b510..c7ba739 100644
+index 5e3b510..a121b29 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -68,7 +68,10 @@ typedef struct {
@@ -525,7 +525,7 @@ index 5e3b510..c7ba739 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3005,13 +3211,13 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3005,13 +3211,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -541,10 +541,22 @@ index 5e3b510..c7ba739 100644
 +    *(vm_base + base + 0x24) = wid < 16 ? *(vm_base + se + SPURS_WKL_IDLE2 + wid) : 0; /* idleSpuRequest */
 +    u32 sig = vm_read32(se + spurs_off_signal(wid)) >> 16;
 +    *(vm_base + base + 0x25) = (sig & spurs_sig_bit(wid)) ? 1 : 0;         /* hasSignal    */
++    /* SPURS_WINFO_LOG=1: what the title polls (GoW:A waits for readyCount==0 &&
++     * contention==0 to call a workload idle). Logs value changes per wid. */
++    { static int s_wl = -1; if (s_wl < 0) s_wl = getenv("SPURS_WINFO_LOG") ? 1 : 0;
++      static u32 s_last[SPURS_MAXW]; static int s_n = 0;
++      if (s_wl && wid < SPURS_MAXW) {
++          u32 v = (u32)*(vm_base + base + 0x20) << 16 | (u32)*(vm_base + base + 0x23) << 8 | 1u;
++          if (v != s_last[wid] && s_n++ < 400) {
++              s_last[wid] = v;
++              fprintf(stderr, "[winfo] wid=%u contention=%u readyCount=%u\n", wid,
++                      *(vm_base + base + 0x20), *(vm_base + base + 0x23));
++          }
++      } }
      return CELL_OK;
  }
  
-@@ -3294,6 +3500,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3294,6 +3512,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
@@ -1795,13 +1807,26 @@ index 7ac619f..b311e88 100644
  void spu_lockline_unlock(void) { _InterlockedExchange(&g_lockline, 0); }
  #else
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..c3cf430 100644
+index 90f3221..4ab52a6 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
-@@ -1359,7 +1359,20 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1359,7 +1359,33 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
++    /* SPU_DMA_EA=<lo>-<hi> (hex): every PUT-class DMA whose [ea, ea+size) overlaps the range,
++     * with image, pc, running wid (LS 0x1DF in a PM run) and the first data words. */
++    { static int s_de = -1; static uint32_t s_lo, s_hi;
++      if (s_de < 0) { const char* e = getenv("SPU_DMA_EA"); s_de = 0;
++          if (e) { char* p; s_lo = (uint32_t)strtoul(e, &p, 16);
++                   s_hi = (p && *p == '-') ? (uint32_t)strtoul(p + 1, 0, 16) : s_lo + 4; s_de = 1; } }
++      static int s_dn = 0;
++      if (s_de && (cmd & 0xF0u) == 0x20u && (uint32_t)ea < s_hi && (uint32_t)ea + size > s_lo && s_dn++ < 300000) {
++          const uint8_t* d = spu->ls + (lsa & 0x3FFF0u);
++          fprintf(stderr, "[ea-dma] img=%d wid=%u pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%08llX size=0x%X data=%02X%02X%02X%02X %02X%02X%02X%02X\n",
++                  spu->image_id, spu->policy_mode ? spu->ls[0x1DF] : 255u, spu->pc & 0x3FFFF, cmd, lsa,
++                  (unsigned long long)ea, size, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
++      } }
 +    /* SPU_DMA_IMG=<n>: every DMA of image n (cmd, lsa, ea, size), up to 200000. */
 +    { static int s_di = -2; if (s_di == -2) { const char* e = getenv("SPU_DMA_IMG"); s_di = e ? atoi(e) : -1; }
 +      static int s_dc = 0;
@@ -2100,10 +2125,69 @@ index 6a19d5b..102c964 100644
  }
  
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..90c285e 100644
+index 4f82063..92d43dc 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
-@@ -56,7 +56,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -30,6 +30,58 @@
+ 
+ extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
+ 
++/* SPURS_PM_HANG=<sec>: report policy-module runs that have not returned after
++ * <sec> seconds (a stuck run holds its kernel poll thread, so every workload of
++ * that SPURS instance stops). Every 2 s while stuck: wid, lane, pc, lr, r3..r5 and
++ * the LS words at pc -- a moving pc is a loop, a fixed one a blocked op.
++ * Racy reads of the live context by design; diagnostic only. */
++#ifdef _WIN32
++#include <windows.h>
++#define SPURS_HANG_SLOTS 64
++static struct { spu_context* volatile ctx; volatile unsigned long long t0; unsigned wid, lane; } s_hang[SPURS_HANG_SLOTS];
++static int s_hang_sec = -1;
++static DWORD WINAPI spurs_pm_hang_thread(LPVOID p)
++{
++    (void)p;
++    for (;;) {
++        Sleep(2000);
++        unsigned long long now = GetTickCount64();
++        for (int i = 0; i < SPURS_HANG_SLOTS; i++) {
++            spu_context* c = s_hang[i].ctx;
++            if (!c || now - s_hang[i].t0 < (unsigned long long)s_hang_sec * 1000ull) continue;
++            uint32_t pc = (uint32_t)c->pc & SPU_LS_MASK & ~3u;
++            const uint8_t* L = c->ls;
++            fprintf(stderr, "[pm-hang] wid=%u lane=%u running %llus pc=0x%05X lr=0x%05X r3=%08X r4=%08X r5=%08X "
++                    "status=0x%X evstat=0x%X evmask=0x%X int=%d stallstat=0x%X srr0=0x%05X "
++                    "ls[pc]=%02X%02X%02X%02X %02X%02X%02X%02X\n",
++                    s_hang[i].wid, s_hang[i].lane, (now - s_hang[i].t0) / 1000ull, pc,
++                    c->gpr[0]._u32[0] & SPU_LS_MASK, c->gpr[3]._u32[0], c->gpr[4]._u32[0],
++                    c->gpr[5]._u32[0], (unsigned)c->status, c->event_status, c->event_mask,
++                    c->int_enable, (unsigned)c->list_stall_stat, c->srr0 & SPU_LS_MASK,
++                    L[pc], L[pc+1], L[pc+2], L[pc+3], L[pc+4], L[pc+5], L[pc+6], L[pc+7]);
++            fflush(stderr);
++        }
++    }
++}
++static void spurs_pm_hang_begin(spu_context* ctx, unsigned wid, unsigned lane)
++{
++    if (s_hang_sec < 0) { const char* e = getenv("SPURS_PM_HANG"); s_hang_sec = e ? atoi(e) : 0;
++        if (s_hang_sec > 0) { HANDLE h = CreateThread(NULL, 0, spurs_pm_hang_thread, NULL, 0, NULL); if (h) CloseHandle(h); } }
++    if (s_hang_sec <= 0) return;
++    for (int i = 0; i < SPURS_HANG_SLOTS; i++)
++        if (!s_hang[i].ctx) { s_hang[i].wid = wid; s_hang[i].lane = lane; s_hang[i].t0 = GetTickCount64();
++                              s_hang[i].ctx = ctx; return; }
++}
++static void spurs_pm_hang_end(spu_context* ctx)
++{
++    if (s_hang_sec <= 0) return;
++    for (int i = 0; i < SPURS_HANG_SLOTS; i++) if (s_hang[i].ctx == ctx) { s_hang[i].ctx = 0; return; }
++}
++#else
++static void spurs_pm_hang_begin(spu_context* c, unsigned w, unsigned l) { (void)c; (void)w; (void)l; }
++static void spurs_pm_hang_end(spu_context* c) { (void)c; }
++#endif
++
+ /* Counters the intercepts in spu_channels.c maintain for the CURRENT run
+  * (single writer per run; reads are diagnostic). */
+ volatile unsigned g_spurs_pm_polls = 0;   /* selectWorkload calls this run */
+@@ -56,7 +108,7 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * never progress its claim/stage pipeline). Image + context init happen
       * once; re-entries keep LS and only refresh the entry registers and the
       * (possibly game-updated) kernel-context fields. */
@@ -2112,7 +2196,7 @@ index 4f82063..90c285e 100644
      static spu_context* s_pm_ctx[SPURS_PM_MAX_WKL][6];
      if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
      spu_context* ctx = s_pm_ctx[wid][spu_num];
-@@ -133,6 +133,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -133,6 +185,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * selectWorkload -- so it called our exit intercept for every poll and
       * branched to 0 for every select. It also tests wklCurrentId (0x1DC) against
       * 1, which only reads sensibly at the correct offset. */
@@ -2125,7 +2209,7 @@ index 4f82063..90c285e 100644
      KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
      KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
      KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
-@@ -179,6 +185,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -179,6 +237,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static unsigned long s_runs = 0;
      unsigned long runno = ++s_runs;
      int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
@@ -2140,7 +2224,7 @@ index 4f82063..90c285e 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -265,18 +279,18 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -265,18 +331,20 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -2156,7 +2240,9 @@ index 4f82063..90c285e 100644
 -                    ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[3]._u32[0], ctx->host_depth);
 -            for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
 -            fprintf(stderr, "\n"); fflush(stderr); } }
++    spurs_pm_hang_begin(ctx, wid, spu_num);
 +    const int pm_halted = spu_run_with_halt(entry, ctx);
++    spurs_pm_hang_end(ctx);
 +    /* A lane's run should only end through exitToKernel. Anything else strands
 +     * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
 +    if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
@@ -2171,7 +2257,7 @@ index 4f82063..90c285e 100644
  
      if (s_claimlog) {
          unsigned claims = g_spu_putllc_sync_hit - claim_before;
-@@ -303,12 +317,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -303,12 +371,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */
@@ -2216,7 +2302,7 @@ index bcb1df4..b55684f 100644
          rc = 0;                                   /* sys_memory window */
      } else if (addr >= 0xC0000000u && addr < 0xD0000000u) {
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index 66c65e5..6c36f6f 100644
+index 66c65e5..4d9776b 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
 @@ -20,6 +20,12 @@ import time
@@ -2250,3 +2336,22 @@ index 66c65e5..6c36f6f 100644
          # Instructions in [start, end), located via a cached sorted index so
          # this is O(log N + span) rather than a full O(N) scan per call.
          range_insns = self._range_insns(instructions, start, end)
+@@ -774,10 +784,16 @@ class PPULifter:
+         # stores went through a stale pointer (missing/torn cube polygons).
+         # Track each callee-save register's first redefinition and only accept
+         # saves that precede it.
++        # A definition can sit INSIDE a braced block (`{ uint64_t _a = ...;
++        # ctx->gpr[24] = _r; ... }` is how addic/addc/subfc lower), so match the
++        # assignment anywhere on the line. Anchoring at line start missed GoW:A's
++        # `addic r24,r25,0x6C` in func_0037DE80; its later mid-function spill
++        # `std r24,0x78(r1)` then passed as a prologue save, the reload became the
++        # ENTRY r24 (0), a size computation read NULL+0x40, a buffer came out too
++        # small and the memcpy behind it overran a heap free node.
+         _first_def = {}
+         for _i, _l in enumerate(func.body_lines):
+-            _dm = re.match(r'\s*ctx->gpr\[(\d+)\] = ', _l)
+-            if _dm:
++            for _dm in re.finditer(r'ctx->gpr\[(\d+)\] = (?!=)', _l):
+                 _r = int(_dm.group(1))
+                 if _r not in _first_def:
+                     _first_def[_r] = _i

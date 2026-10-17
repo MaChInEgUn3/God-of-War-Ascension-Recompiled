@@ -353,6 +353,54 @@ static DWORD WINAPI guest_peek_thread(LPVOID)
     }
 }
 
+/* GOW_HEAPWALK=<hex sentinel>: walk the game heap's circular free list (next at +4,
+ * size at +0) every 50 ms and report the first link that leaves the list: a next of
+ * 0 or outside [sentinel-256MB, sentinel+256MB), or a walk longer than 1M nodes.
+ * Prints the node holding the bad link, its predecessor and their words. */
+static DWORD WINAPI guest_heapwalk_thread(LPVOID)
+{
+    enum { MAXS = 8 };
+    uint32_t sv[MAXS]; int ns = 0;          /* GOW_HEAPWALK=<hex>[,<hex>...] */
+    for (const char* e = getenv("GOW_HEAPWALK"); e && *e && ns < MAXS; ) {
+        char* p = nullptr; sv[ns++] = (uint32_t)strtoul(e, &p, 16);
+        e = (p && *p == ',') ? p + 1 : nullptr;
+    }
+    auto rd = [](uint32_t ea) -> uint32_t {
+        const uint8_t* q = vm_base + ea;
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(q, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT) return 0xDEADDEADu;
+        return (uint32_t)q[0] << 24 | (uint32_t)q[1] << 16 | (uint32_t)q[2] << 8 | q[3];
+    };
+    DWORD t0 = GetTickCount(); int reported[MAXS] = {0}, ok[MAXS] = {0};
+    for (;;) {
+        Sleep(50);
+        for (int k = 0; k < ns; k++) {
+            const uint32_t s = sv[k];
+            uint32_t prev = s, n = rd(s + 4), steps = 0;
+            if ((n == 0xDEADDEADu || n == 0) && !ok[k]) continue;   /* heap not built yet */
+            while (n != s && steps < 1000000) {
+                if (n == 0 || n == 0xDEADDEADu || n + 0x10000000u < s || n > s + 0x10000000u) break;
+                prev = n; n = rd(n + 4); steps++;
+            }
+            if (n == s) { if (!ok[k]) fprintf(stderr, "[heapwalk] t=%lums heap 0x%08X list ok (%u free nodes)\n",
+                                              (unsigned long)(GetTickCount() - t0), s, steps);
+                          ok[k] = 1; continue; }
+            /* re-walk once: the game mutates the list concurrently */
+            Sleep(5);
+            uint32_t p2 = s, n2 = rd(s + 4), st2 = 0;
+            while (n2 != s && st2 < 1000000) {
+                if (n2 == 0 || n2 == 0xDEADDEADu || n2 + 0x10000000u < s || n2 > s + 0x10000000u) break;
+                p2 = n2; n2 = rd(n2 + 4); st2++;
+            }
+            if (n2 == s || p2 != prev) continue;
+            if (reported[k]++ < 3)
+                fprintf(stderr, "[heapwalk] t=%lums heap 0x%08X BAD link after %u nodes: node 0x%08X -> next 0x%08X "
+                        "(node words %08X %08X %08X %08X)\n", (unsigned long)(GetTickCount() - t0), s, steps,
+                        prev, n, rd(prev), rd(prev + 4), rd(prev + 8), rd(prev + 12));
+        }
+    }
+}
+
 static DWORD WINAPI guest_scan_thread(LPVOID)
 {
     const char* hex = getenv("GOW_SCAN");
@@ -441,6 +489,7 @@ int main(int argc, char** argv)
 #ifdef _WIN32
     gow_mlaa_hle_register();   /* after the SPU ctors: replaces the lifted MLAA tasks */
     if (getenv("GOW_SCAN")) CreateThread(NULL, 0, guest_scan_thread, NULL, 0, NULL);
+    if (getenv("GOW_HEAPWALK")) CreateThread(NULL, 0, guest_heapwalk_thread, NULL, 0, NULL);
     if (getenv("GOW_PEEK")) CreateThread(NULL, 0, guest_peek_thread, NULL, 0, NULL);
 #endif
 

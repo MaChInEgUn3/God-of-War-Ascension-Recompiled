@@ -34,6 +34,17 @@ Lessons that cost days; keep them.
   workload n's PM runs), `SPU_DMA_IMG=<n>` (every DMA of SPU image n), `SPU_INTERP_STATS=1` (interpreter hand-offs and
   steps per image), `SPU_WAITLOG=1` (WAIT_SIGNAL exits; the enter line also shows `cpu=`/`lockwait=`/`atomics=`
   since the last exit, which separates compute from blocking).
+* **Heap / memory corruption**: `GOW_HEAPWALK=<hex sentinel>[,...]` (port) walks a game heap's circular free list
+  (size +0, next +4) every 50 ms and reports the first link that leaves it; `SPU_DMA_EA=<lo>-<hi>` logs every SPU
+  PUT-class DMA overlapping a range; `GOW_GUARD=<ea>` then names the writer (`CLEARED` lines carry a guest
+  backtrace); `PS3_NULL_READ_STACK=1` adds the guest stack to `[null-read]` (its `guest-fn` is the last traced
+  function, not necessarily the reader).
+* **Stuck SPURS workloads**: `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
+  (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc);
+  `SPURS_WINFO_LOG=1` logs what `cellSpursGetWorkloadInfo` returns (contention/readyCount changes per wid).
+* **Lifter regression to remember**: callee-saved restore folding (`_cs_N`) must never apply to a mid-function
+  spill/reload pair; if a function computes garbage right after a reload from the stack, check its lifted C for
+  `ctx->gpr[N] = _cs_N` at that point.
 * **MLAA**: `GOW_MLAA=lifted` runs the real MLAA tasks (image 14) instead of the HLE in `port/gow_mlaa_hle.c`.
 * **SPURS tasks**: `SPURS_TASK2_STUB=1` restores the old accept-only `cellSpursCreateTask2`. SPU `BRANCH-TO-0` lines now
   print `ls[pc-4]`/`ls[pc]`/`r3`: a `stopd` (`0x280xxxxx`) or `stop` word there is a job assert, not a missing lift.

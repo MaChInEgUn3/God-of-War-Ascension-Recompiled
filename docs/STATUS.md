@@ -44,6 +44,11 @@ Update (M0.17): EDGE was waiting (list cmd 2) for counters that the SPU MLAA tas
 NV406E SEMAPHORE_ACQUIRE (`GCM_SEMA_ACQUIRE=1`, port default) and the MLAA taskset is served by HLE at signal time
 (`port/gow_mlaa_hle.c`; **frames are not anti-aliased**; `GOW_MLAA=lifted` restores the real, ~100x too slow, tasks).
 Batches flow and EDGE0/1/2 run jobs. Current stop: `func_00397328` loops on NULL+0/NULL+4; still 2 flips.
+Update (M0.18): that loop was heap corruption caused by a **PPU lifter bug** (a mid-function spill of a callee-saved
+register was mistaken for a prologue save, so its reload returned the entry value; 18 functions affected, fixed in
+`ppu_lifter.py`, relift required). No NULL reads or heap damage remain. Current stop: the WWS policy-module run of
+wid 7 never returns. It loops waiting for DMA tag 5, a stall-and-notify list whose SN interrupt is taken but never
+acknowledged; the main thread waits for that workload to go idle.
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
