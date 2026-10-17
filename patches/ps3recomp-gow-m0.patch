@@ -1864,7 +1864,7 @@ index acbaf12..f9ae67d 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index bf75dc8..41e8cf3 100644
+index bf75dc8..81fb230 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -1051,6 +1051,7 @@ static volatile uint32_t  s_guard_ea   = 0;   /* guest ea being watched */
@@ -1980,7 +1980,7 @@ index bf75dc8..41e8cf3 100644
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
       * it lands. PPU_WWATCH answers "who writes this address"; when a bad value is
       * copied from node to node down a list, that only ever catches the copy.
-@@ -2120,6 +2208,18 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
+@@ -2120,6 +2208,49 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
  #endif
  }
  
@@ -1996,10 +1996,41 @@ index bf75dc8..41e8cf3 100644
 +    fprintf(stderr, "[GSTACK:%s] no registered PPU context with tid=%u\n", tag ? tag : "?", tid);
 +}
 +
++/* The guest call chain of the PPU thread with this tid, for a sampling profiler:
++ * up to max {function base, return address} pairs from the back chain (innermost
++ * caller first). Racy by design -- a snapshot of a running thread. Returns the
++ * count, or -1 if no context has that tid. */
++extern "C" int ppu_thread_chain(unsigned tid, uint32_t* fn, uint32_t* ra_out, int max)
++{
++    ppu_context* ctx = nullptr;
++    long n = g_resv_ctx_n; if (n > PPU_RESV_MAX) n = PPU_RESV_MAX;
++    for (long i = 0; i < n && !ctx; i++)
++        if (g_resv_ctxs[i] && (unsigned)g_resv_ctxs[i]->thread_id == tid) ctx = g_resv_ctxs[i];
++    if (!ctx || !vm_base) return -1;
++    int k = 0;
++    uint32_t f = (uint32_t)ctx->gpr[1];
++    for (int d = 0; d < 24 && k < max; d++) {
++        if (!ppu_dump_readable(f, 8)) break;
++        uint32_t t; memcpy(&t, vm_base + f + 4, 4);
++        const uint32_t prev = __builtin_bswap32(t);
++        if (prev <= f || !ppu_dump_readable(prev + 0x14, 4)) break;
++        memcpy(&t, vm_base + prev + 0x14, 4);
++        const uint32_t ra = __builtin_bswap32(t);
++        if (ra >= 0x10000 && ra < ppu_code_hi()) {
++            uint32_t bg = 0;
++            for (uint64_t q = 0; q < function_table_count; q++) {
++                const uint32_t aa = function_table[q].addr; if (aa <= ra && aa > bg) bg = aa; }
++            fn[k] = bg; ra_out[k] = ra; k++;
++        }
++        f = prev;
++    }
++    return k;
++}
++
  extern "C" void ppu_dump_guest_stack(ppu_context* ctx, const char* tag)
  {
      if (!ctx || !vm_base) return;
-@@ -2434,6 +2534,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2434,6 +2565,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
          fprintf(stderr,"%s\n",ln); } } }
  #endif
      uint32_t addr = (uint32_t)ctx->ctr;
@@ -2025,7 +2056,7 @@ index bf75dc8..41e8cf3 100644
      /* PS3_CALLTRACE=N: log the first N indirect calls (target + r3/r4) --
       * generic visibility into vtable/callback dispatch (e.g. which job body a
       * JobManager worker runs). */
-@@ -3061,13 +3180,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3061,13 +3211,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
      case 330: {   /* sys_mmapper_allocate_address(u64 size, u64 flags,
                     * u64 alignment, u32* alloc_addr) -> reserve guest VA range */
          static uint32_t s_next_va = 0x11000000u;   /* just past the loaded image */
@@ -2055,7 +2086,7 @@ index bf75dc8..41e8cf3 100644
          if (out) vm_write32(out, va);
          ctx->gpr[3] = 0;
          return;
-@@ -3805,6 +3936,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
+@@ -3805,6 +3967,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
           * an empty boot device before deadlocking on a data.toc it never loaded. */
          ctx.gpr[3] = argc_n;                        /* argc */
          ctx.gpr[4] = argv_base;                     /* argv */
@@ -2068,7 +2099,7 @@ index bf75dc8..41e8cf3 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -3915,3 +4052,81 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -3915,3 +4083,81 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -2861,10 +2892,21 @@ index 931d3b3..fbeffa2 100644
              spu_task_launch_check(ctx, (void*)fn);
              if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) {
 diff --git a/runtime/spu/spu_interp.c b/runtime/spu/spu_interp.c
-index bdee01c..ebd8860 100644
+index bdee01c..ac5e70a 100644
 --- a/runtime/spu/spu_interp.c
 +++ b/runtime/spu/spu_interp.c
-@@ -114,6 +114,27 @@ static int spu_step(spu_context* ctx) {
+@@ -9,6 +9,10 @@
+ #include "spu_helpers.h"
+ #include <stdio.h>
+ #include <stdlib.h>
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#endif
+ 
+ /* Channel ABI (runtime/spu/spu_channels.c); the lifter emits these same protos
+  * into each generated spu_recomp.h — declared here to stay header-independent. */
+@@ -114,6 +118,27 @@ static int spu_step(spu_context* ctx) {
      spu_ins d; spu_decode1(insn, pc, &d);
      uint32_t next = pc + 4;
  
@@ -2892,7 +2934,7 @@ index bdee01c..ebd8860 100644
      switch (d.op) {
      /* immediates / loads */
      case SPU_il: DST = spu_splat_u32((uint32_t)(int32_t)I); break;
-@@ -263,7 +284,30 @@ static int spu_step(spu_context* ctx) {
+@@ -263,7 +288,30 @@ static int spu_step(spu_context* ctx) {
      case SPU_mpys:  DST = spu_mpys(A,B); break;
      case SPU_mpyhh: DST = spu_mpyhh(A,B); break;
      case SPU_mpyhhu:DST = spu_mpyhhu(A,B); break;
@@ -2924,7 +2966,7 @@ index bdee01c..ebd8860 100644
      /* rotate / shift extras */
      case SPU_rothm:    DST = spu_rothm(A,B); break;
      case SPU_rotqmbi:  DST = spu_rotqmbi(A,B); break;
-@@ -288,7 +332,10 @@ static int spu_step(spu_context* ctx) {
+@@ -288,7 +336,10 @@ static int spu_step(spu_context* ctx) {
      case SPU_brhz: if ((PREF(DST) & 0xFFFF) == 0) next = d.tgt; break;
      case SPU_brhnz:if ((PREF(DST) & 0xFFFF) != 0) next = d.tgt; break;
      case SPU_bi:   next = PREF(A) & 0x3FFFC; break;
@@ -2936,7 +2978,7 @@ index bdee01c..ebd8860 100644
      case SPU_iret: next = ctx->srr0 & 0x3FFFC; break;
      case SPU_biz:  if (PREF(DST) == 0) next = PREF(A) & 0x3FFFC; break;
      case SPU_binz: if (PREF(DST) != 0) next = PREF(A) & 0x3FFFC; break;
-@@ -309,8 +356,9 @@ static int spu_step(spu_context* ctx) {
+@@ -309,8 +360,9 @@ static int spu_step(spu_context* ctx) {
                     ctx->pc = pc; ctx->stop_code = 0x1000; ctx->status = SPU_STATUS_STOPPED_BY_HALT; return 1; }
          break; }
      default:
@@ -2948,7 +2990,35 @@ index bdee01c..ebd8860 100644
          ctx->pc = pc; ctx->status = SPU_STATUS_STOPPED_BY_HALT; return 1;
      }
      ctx->pc = next;
-@@ -360,6 +408,26 @@ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t sto
+@@ -343,7 +395,27 @@ uint32_t spu_interp_run(spu_context* ctx, uint32_t start_lsa) {
+     return spu_interp_run_until(ctx, start_lsa, 0);
+ }
+ 
++/* Wall time this host thread spent in the interpreter (QPC ticks; nested runs are
++ * counted once). Read by SPURS_PM_PROF to split a module run into lifted and
++ * interpreted time. */
++SPU_THREAD_LOCAL long long g_spu_interp_ticks;
++static SPU_THREAD_LOCAL int s_interp_depth;
++static uint32_t spu_interp_run_until_impl(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa);
+ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa) {
++#ifdef _WIN32
++    if (s_interp_depth++) { uint32_t r = spu_interp_run_until_impl(ctx, start_lsa, stop_lsa); s_interp_depth--; return r; }
++    LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
++    uint32_t r = spu_interp_run_until_impl(ctx, start_lsa, stop_lsa);
++    QueryPerformanceCounter(&t1);
++    g_spu_interp_ticks += t1.QuadPart - t0.QuadPart;
++    s_interp_depth--;
++    return r;
++#else
++    return spu_interp_run_until_impl(ctx, start_lsa, stop_lsa);
++#endif
++}
++
++static uint32_t spu_interp_run_until_impl(spu_context* ctx, uint32_t start_lsa, uint32_t stop_lsa) {
+     ctx->pc = start_lsa & 0x3FFFC;
+     ctx->status = SPU_STATUS_RUNNING;
+     uint64_t steps = 0;
+@@ -360,6 +432,26 @@ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t sto
      static int _g1in=0;
      uint32_t ring[64]; int rc=0, rn=0;
      for (;;) {
@@ -2975,7 +3045,7 @@ index bdee01c..ebd8860 100644
          /* Match the lifted path: only synthetic HLE tasks may bypass the
           * resident policy. Real tasksets also store 0xA70 in their API table.
           * Preserve the legacy CRI return convention while invoking the HLE. */
-@@ -454,3 +522,10 @@ void spu_dispatch(spu_context* ctx, uint32_t target) {
+@@ -454,3 +546,10 @@ void spu_dispatch(spu_context* ctx, uint32_t target) {
          target = next;
      }
  }
@@ -3267,7 +3337,7 @@ index 6a19d5b..9aedf0b 100644
       * descriptor at eaContext+0x10 = {0x40-marker handle, workload EAs}; the
       * async SPU thread reading it later would race the PPU stack. word1 is
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..4742a35 100644
+index 4f82063..be4f069 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -30,6 +30,90 @@
@@ -3408,7 +3478,7 @@ index 4f82063..4742a35 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -265,18 +366,66 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -265,18 +366,73 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -3426,7 +3496,9 @@ index 4f82063..4742a35 100644
 -            fprintf(stderr, "\n"); fflush(stderr); } }
 +    spurs_pm_hang_begin(ctx, wid, spu_num);
 +#ifdef _WIN32
++    extern SPU_THREAD_LOCAL long long g_spu_interp_ticks;
 +    LARGE_INTEGER prof_t0; QueryPerformanceCounter(&prof_t0);
++    const long long prof_i0 = g_spu_interp_ticks;
 +#endif
 +    const int pm_halted = spu_run_with_halt(entry, ctx);
 +#ifdef _WIN32
@@ -3434,6 +3506,7 @@ index 4f82063..4742a35 100644
 +     * runs took, as a share of the window. All of an instance's modules run on
 +     * one host thread, so the shares add up to how busy that thread is. */
 +    { static int s_pp = -1; static LARGE_INTEGER s_f, s_w0; static double s_acc[SPURS_PM_MAX_WKL];
++      static double s_int[SPURS_PM_MAX_WKL];
 +      static unsigned s_runs[SPURS_PM_MAX_WKL]; static SRWLOCK s_pl = SRWLOCK_INIT;
 +      if (s_pp < 0) { const char* e = getenv("SPURS_PM_PROF"); s_pp = e ? atoi(e) : 0;
 +                      QueryPerformanceFrequency(&s_f); QueryPerformanceCounter(&s_w0); }
@@ -3441,6 +3514,7 @@ index 4f82063..4742a35 100644
 +          LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
 +          AcquireSRWLockExclusive(&s_pl);
 +          s_acc[wid] += (double)(t1.QuadPart - prof_t0.QuadPart) / (double)s_f.QuadPart;
++          s_int[wid] += (double)(g_spu_interp_ticks - prof_i0) / (double)s_f.QuadPart;
 +          s_runs[wid]++;
 +          const double win = (double)(t1.QuadPart - s_w0.QuadPart) / (double)s_f.QuadPart;
 +          if (win >= s_pp) {
@@ -3449,9 +3523,12 @@ index 4f82063..4742a35 100644
 +              for (unsigned w = 0; w < SPURS_PM_MAX_WKL; w++) {
 +                  if (!s_runs[w]) continue;
 +                  tot += s_acc[w];
-+                  if (p < (int)sizeof buf - 40)
++                  /* w<wid>=<share of window>%/<runs>[i<share of that time interpreted>%] */
++                  if (p < (int)sizeof buf - 48)
 +                      p += snprintf(buf + p, sizeof buf - p, " w%u=%.0f%%/%u", w, 100.0 * s_acc[w] / win, s_runs[w]);
-+                  s_acc[w] = 0; s_runs[w] = 0;
++                  if (s_int[w] > 0 && p < (int)sizeof buf - 16)
++                      p += snprintf(buf + p, sizeof buf - p, "i%.0f%%", 100.0 * s_int[w] / s_acc[w]);
++                  s_acc[w] = 0; s_int[w] = 0; s_runs[w] = 0;
 +              }
 +              fprintf(stderr, "%s total=%.0f%%\n", buf, 100.0 * tot / win);
 +              s_w0 = t1;
@@ -3487,7 +3564,7 @@ index 4f82063..4742a35 100644
  
      if (s_claimlog) {
          unsigned claims = g_spu_putllc_sync_hit - claim_before;
-@@ -303,12 +452,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -303,12 +459,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */

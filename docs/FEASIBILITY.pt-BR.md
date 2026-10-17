@@ -310,6 +310,15 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - as tarefas de lote custam 2,7 ms (img15) e 7 ms (img16), sem espera de lock.
   - O gargalo seguinte é o kernel serial: no hardware, essas cargas rodam em SPUs paralelas.
 - Padrões novos na porta: `SPURS_PM_HANG=10` e `GOW_HEARTBEAT=<s>` (opcional).
+- **Onde vai o tempo do frame (runs 172–173):**
+  - **Thread principal** (`GOW_MAIN_PROF`, amostra a cada 2 ms):
+    - 53% em `0x3E8388`, o `bl 0x3E799C` da função de frame, esperando o EDGE;
+    - 22% em `0x416A4C`, esperando o job RenJobSet;
+    - ~13% em outras esperas (`0x3B35B4`, `0x443E9C`).
+    - Ou seja, o frame está preso às SPUs.
+  - **SPU** (`SPURS_PM_PROF`, agora com a fração interpretada): **90–94% do tempo dos jobs WWS roda no interpretador SPU**. São 90% no wid 8, 94% no EDGE e 98% no RenderJobs.
+  - Os módulos de job que a PM carrega em tempo de execução não têm lift. O casador de overlays (`resident_ovl`, `tools/extract_jobmods.py`/`lift_jobmods.py`) foi feito para a PM do LBP (imagem 2), não para a do GoW (imagem 10).
+  - **Próxima frente (M3): extrair, fazer o lift e casar os módulos de job WWS do GoW.** Isso rende uma ordem de grandeza; paralelizar o kernel renderia no máximo 2×.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

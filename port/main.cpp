@@ -251,8 +251,53 @@ static DWORD WINAPI heartbeat(LPVOID arg)
     return 0;
 }
 
+/* GOW_MAIN_PROF=<s>: sample the main PPU thread's guest call chain every 2 ms and
+ * print, every s seconds, the most frequent chains (innermost caller first) with
+ * their share of samples -- where a frame's time goes (waiting on SPU work vs
+ * game code). */
+extern "C" int ppu_thread_chain(unsigned tid, uint32_t* fn, uint32_t* ra, int max);
+static DWORD WINAPI main_prof(LPVOID arg)
+{
+    const ULONGLONG win = (ULONGLONG)(uintptr_t)arg;
+    enum { NB = 512, DEPTH = 3 };
+    static uint32_t key[NB][DEPTH]; static unsigned cnt[NB];
+    ULONGLONG w0 = GetTickCount64(); unsigned total = 0, fail = 0;
+    for (;;) {
+        Sleep(2);
+        uint32_t fn[DEPTH] = {0, 0, 0}, ra[DEPTH];
+        const int n = ppu_thread_chain(1, fn, ra, DEPTH);
+        if (n > 0) fn[0] = ra[0];   /* innermost level by call site: which callee of fn[1] */
+        total++;
+        if (n <= 0) fail++;
+        else {
+            int b = -1;
+            for (int i = 0; i < NB; i++) {
+                if (cnt[i] && key[i][0] == fn[0] && key[i][1] == fn[1] && key[i][2] == fn[2]) { b = i; break; }
+                if (!cnt[i] && b < 0) b = i;
+            }
+            if (b >= 0) { if (!cnt[b]) memcpy(key[b], fn, sizeof fn); cnt[b]++; }
+        }
+        if (GetTickCount64() - w0 >= win) {
+            fprintf(stderr, "[main-prof] %u samples (%u%% no chain):\n", total, total ? 100 * fail / total : 0);
+            for (int r = 0; r < 10; r++) {
+                int best = -1;
+                for (int i = 0; i < NB; i++) if (cnt[i] && (best < 0 || cnt[i] > cnt[best])) best = i;
+                if (best < 0) break;
+                fprintf(stderr, "[main-prof]   %5.1f%%  ra %08X in %08X <- %08X\n", 100.0 * cnt[best] / total,
+                        key[best][0], key[best][1], key[best][2]);
+                cnt[best] = 0;
+            }
+            memset(cnt, 0, sizeof cnt); total = fail = 0; w0 = GetTickCount64();
+            fflush(stderr);
+        }
+    }
+    return 0;
+}
+
 static DWORD WINAPI frame_clock(LPVOID)
 {
+    { const char* m = getenv("GOW_MAIN_PROF");
+      if (m && atoi(m) > 0) CreateThread(NULL, 0, main_prof, (LPVOID)(uintptr_t)(atoi(m) * 1000), 0, NULL); }
     { const char* w = getenv("GOW_CLOCK_WATCH");
       if (w && atoi(w) > 0) CreateThread(NULL, 0, clock_watch, (LPVOID)(uintptr_t)(atoi(w) * 1000), 0, NULL); }
     { const char* h = getenv("GOW_HEARTBEAT");
