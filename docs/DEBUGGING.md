@@ -40,7 +40,11 @@ Lessons that cost days; keep them.
   backtrace); `PS3_NULL_READ_STACK=1` adds the guest stack to `[null-read]` (its `guest-fn` is the last traced
   function, not necessarily the reader).
 * **Stuck SPURS workloads**: `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
-  (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc);
+  (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
+  then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on
+  cross-function branches, so pc names the last function entered, not the exact instruction. The port runs all of
+  an instance's modules on one host thread: one stuck run stops every workload (`[spurs-pm] poll` lines stop).
+  A `[SPU] more than N contexts hold an MFC engine` line means contexts share tag state: fix that first;
   `SPURS_WINFO_LOG=1` logs what `cellSpursGetWorkloadInfo` returns (contention/readyCount changes per wid).
 * **SPU DMA lists / interrupts**: `SPU_LIST_TAG=<n>` traces list ISSUE (with the first two elements and LS word 0),
   stall ACKs and tag updates for tag n, and reports any DMA during a PM run that changes LS word 0 (the WWS
@@ -106,8 +110,11 @@ Lessons that cost days; keep them.
   and the candidates of the start scan (`[taskset-kick]`). `[taskset] ... not dispatched twice` marks a duplicate
   dispatch that was suppressed. A task ELF field with low bits set (e.g. `0x00681884`) was written by SPU-side
   `cellSpursCreateTask` (flags; the ELF is at `& ~0xF`).
-* **SPU atomics on one line**: `SPU_ATOM_EA=<ea> SPU_ATOM_EA_MAX=0 SPU_ATOM_FULL=1`. PUTLLC lines carry RAM and
+* **SPU atomics on one line**: `SPU_ATOM_EA=<ea>[,<ea>...] SPU_ATOM_EA_MAX=0 SPU_ATOM_FULL=1` (up to 4 lines;
+  `SPU_ATOM_FULL=2` prints the whole line, `SPU_ATOM_PUTONLY=1` skips GETLLAR polls). PUTLLC lines carry RAM and
   STORE, so a diff shows which word each job changed (used to prove a decrement was never issued rather than lost).
+  WWS list row `+0x70` = `{u16 next index, u16 index}` plus one in-flight job slot per SPU lane (`FFFF` = idle),
+  written only by the policy module (GoW:A PM: `pc 0x2540` allocates, `pc 0x35E0` completes).
 * **Port defaults that hide GoW:A-specific walker traps**: `GCM_FIFO_CIRCLE_PASSES=0` (no "circling" resync to the
   fixed `put`), `VK_TEX_OFF=1` (no CPU texture decode until guest shaders exist). Override them on the command line.
 * **`lr` in `[wwsjob]` lines** is `r0` at the moment of entry, not a link: a job resumed by `bi` after an API

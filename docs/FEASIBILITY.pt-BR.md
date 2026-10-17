@@ -284,6 +284,25 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - Nova parada (forma D, a mesma `0x352378 → 0x416A10` do run158): o PPU espera um job "RenJobSet" (registro `*(0x967438)`, grupo `0x966FB0`). A dependência `+0x24` (`0x21600684`) fica em **`0x0013`**, o mesmo valor da linha `0x00130013` da forma B. Provavelmente B e D são a mesma espera vista dos dois lados (WWS RenJobSet).
 - Ferramenta: `GCM_WALK_DUMP` aceita desreferência (`ea@off@off…`).
 
+### M0.26 — as paradas variáveis eram motores MFC compartilhados (2026-10-17)
+- As formas B, D e o buraco EDGE eram a mesma coisa vista de lados diferentes.
+- **A linha `+0x70` das listas WWS** é `{u16 próximo índice, u16 índice}` mais um slot de job em voo por SPU (`FFFF` = livre). Quem escreve é só a própria PM (`pc 0x2540` aloca o job; `pc 0x35E0` conclui). Ninguém "publica" o ticket.
+- **O kernel SPURS da porta** roda as PMs de uma instância numa só thread do host. Quando uma execução de PM não retorna, todas as cargas de trabalho param. Medido no run164: as linhas `[spurs-pm] poll` param de vez logo depois de o EDGE1 começar o job `0x12`.
+- `SPURS_PM_HANG=4` mostrou a PM presa:
+  - no run166, wid 8 (BrBDblBufWrkld) estava no tratador de interrupção (`0x2390`), esperando que a tag de uma lista com stall-and-notify concluísse;
+  - no run167, wid 17 (EDGE2) estava no laço principal com `loadJobState = 3`, esperando a tag 1.
+  - Nos dois casos não havia lista estacionada (`parked = 0`) e a tag não estava concluída.
+- Causa (runtime):
+  - `mfc_for(ctx)` tinha **8 slots** de motor MFC indexados pelo ponteiro do contexto.
+  - Os contextos de job e de tarefa (na pilha) e os de PM (persistentes, um por wid/lane) nunca devolviam o slot. Logo depois do boot aparecia "more than 8 contexts hold an MFC engine at once; the rest share one", e daí em diante quase todo SPU dividia **um** `tag_completed`.
+  - A lista estacionada de um contexto deixava a tag "incompleta" para outro, que girava esperando com o kernel parado.
+- Correção:
+  - `spu_coh_unregister` (fim de todo contexto transitório) agora devolve o motor;
+  - a PM que recria o contexto ("fresh PM context") também devolve o motor;
+  - a tabela tem 64 slots, com cache por thread.
+- Resultado (run168): nenhuma parada em 560 s, 3020 flips e ainda rodando no fim.
+- Ferramentas: `SPU_ATOM_EA` aceita até 4 linhas (`a,b,c,d`) e `SPU_ATOM_PUTONLY=1`; o `[pm-hang]` mostra `tagmask`, `tagstat` e as listas estacionadas.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.
