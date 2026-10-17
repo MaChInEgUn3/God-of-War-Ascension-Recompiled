@@ -1503,7 +1503,7 @@ index 718392f..9aedcc5 100644
      if (s) {
          uint32_t own = vm_read32(lwmutex + LWM_OWNER);
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 2a74e51..08c1b1a 100644
+index 2a74e51..d83d689 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,9 +21,9 @@
@@ -1733,7 +1733,7 @@ index 2a74e51..08c1b1a 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2598,6 +2648,21 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2598,6 +2648,35 @@ void spu_indirect_branch(spu_context* ctx)
              fflush(stderr);
          }
      }
@@ -1742,20 +1742,34 @@ index 2a74e51..08c1b1a 100644
 +     * (kernel ctx wklCurrentId @0x1DC) -- which jobs actually start, per workload. */
 +    { static int s_wj = -1; if (s_wj < 0) s_wj = getenv("SPU_WWSJOB") ? 1 : 0;
 +      const uint32_t p = ctx->pc & SPU_LS_MASK, lr = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
++      /* ...and each call from job code into the PM (JobApi): pc in the PM image,
++       * link inside the staged job. The result shows as r3 on the next entry. */
++      if (s_wj && ctx->image_id == 10 && ctx->policy_mode && p >= 0xA00 && p < 0x3700 &&
++          lr >= 0x4000 && lr < 0x3E000) {
++          static int _a[256];
++          const uint8_t* L = ctx->ls;
++          if (_a[L[0x1DF]]++ < 60)
++              fprintf(stderr, "[wwsapi] wid=%u call pc=0x%05X from=0x%05X r3=%08X.%08X r4=%08X r5=%08X r6=%08X r7=%08X\n",
++                      L[0x1DF], p, lr, ctx->gpr[3]._u32[0], ctx->gpr[3]._u32[1], ctx->gpr[4]._u32[0],
++                      ctx->gpr[5]._u32[0], ctx->gpr[6]._u32[0], ctx->gpr[7]._u32[0]);
++      }
 +      if (s_wj && ctx->image_id == 10 && ctx->policy_mode && p >= 0x4000 && p < 0x3E000 && lr < 0x4000) {
 +          static int _n[256];
 +          const uint8_t* L = ctx->ls;
 +          if (_n[L[0x1DF]]++ < 40) {
 +              fprintf(stderr, "[wwsjob] wid=%u enter pc=0x%05X lr=0x%05X r3=%08X r4=%08X r5=%08X "
-+                      "code=%02X%02X%02X%02X%02X%02X%02X%02X\n",
++                      "code=%02X%02X%02X%02X%02X%02X%02X%02X loadJob@12D0=%02X%02X%02X%02X runJob@12E0=%02X%02X%02X%02X "
++                      "state@12A0=%02X%02X%02X%02X\n",
 +                      L[0x1DF], p, lr, ctx->gpr[3]._u32[0], ctx->gpr[4]._u32[0], ctx->gpr[5]._u32[0],
-+                      L[p], L[p+1], L[p+2], L[p+3], L[p+4], L[p+5], L[p+6], L[p+7]);
++                      L[p], L[p+1], L[p+2], L[p+3], L[p+4], L[p+5], L[p+6], L[p+7],
++                      L[0x12D0], L[0x12D1], L[0x12D2], L[0x12D3], L[0x12E0], L[0x12E1], L[0x12E2], L[0x12E3],
++                      L[0x12A0], L[0x12A1], L[0x12A2], L[0x12A3]);
 +          }
 +      } }
      /* No lifted function at this PC: it may be RUNTIME-GENERATED code (the
       * WWS jobmanager writes a save/restore stub above its static
       * image and calls it). Interpret the live LS bytes; on success the next
-@@ -2612,9 +2677,16 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2612,9 +2691,16 @@ void spu_indirect_branch(spu_context* ctx)
        static int _bt0[BT0_MAX_IMG];
        unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
                       ? (unsigned)ctx->image_id : 0;
