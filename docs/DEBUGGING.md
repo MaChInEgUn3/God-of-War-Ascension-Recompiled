@@ -52,6 +52,11 @@ Lessons that cost days; keep them.
   time every 20 s (`wid img pc n ms`). A target inside a module's image is a missing entry: feed the log to
   `analysis/interp_miss_to_extra.py` and re-lift. A target past the image is code the module does not contain.
   The micro-stepper advances a few instructions before handing off, so only the entry pc is a valid target.
+* **Where blobs land in local store**: `SPU_LSA_GETLOG=<lo>-<hi>` (hex LS) prints each distinct (lsa, ea, size)
+  GET into that range with the workload and the first words (GoW:A: EDGE code fragments at LS `0x11090+`).
+* **SPURS kernel pacing**: `SPURS_PASS_SLEEP=<ms>` (default 1) is the pause between kernel passes;
+  `SPURS_PASS_GREEDY=1` (GoW:A port default) skips it after a pass that found work; `SPURS_IDLE_MAX=<n>` caps the
+  idle back-off (log2 passes, default 4).
 * **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
   then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on

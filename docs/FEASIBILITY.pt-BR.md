@@ -337,6 +337,15 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Ainda interpretado:**
   - RenderJobs (w13, 96%; módulo 221) e MeshProcJobs (w14; módulo 222): falta mais uma rodada de entradas.
   - EDGE (~54%) em alvos **fora** da imagem do módulo 225 (`0x111C0`–`0x11CF0`, iguais nos três EDGE). É código que o job carrega à parte num endereço fixo de LS; precisa ser identificado e ter lift próprio.
+- **Segunda rodada de entradas (run184):** o RenderJobs caiu para 31% interpretado e o jogo foi a ~2,9 frames/s.
+  - Mesmo assim, a thread principal ainda esperava 76% do tempo, com o kernel só ~50% ocupado: o limite era **latência, não processamento**.
+  - O kernel da porta dorme 1 ms entre passadas. Cada frame é uma cadeia de jobs dependentes entre cargas (MeshProc → EDGE → RsxSync…), e cada salto esperava um tique.
+  - `SPURS_PASS_GREEDY=1` pula a pausa logo após uma passada que achou trabalho. Medido entre t=60 s e t=120 s: **2,95 → 6,25 frames/s** (o kernel vai a ~99%). `SPURS_IDLE_MAX=0` (sem recuo de ociosidade) não ajudou.
+  - Agora é padrão da porta (no runtime continua desligado, para outros títulos). Também há `SPURS_PASS_SLEEP=<ms>`.
+- **Código que o EDGE carrega fora do módulo** (`SPU_LSA_GETLOG=10C00-12400`):
+  - 11 fragmentos de código do EBOOT (`0x71AB60`, `0x71E7D0`, `0x721F00`, `0x725150`, `0x7282A0`, `0x7298F0`, `0x729F40`…, de 0xC0 a 0x7C0 bytes) vão empacotados a partir de LS `0x11090`. Cada um cai em 1 a 5 endereços.
+  - Plano: um lift por posicionamento, registrado como região (EA de origem, endereço LS). Hoje o casamento é só por EA, e os 4 slots de `resident_code` não bastam.
+- Com o kernel a ~99%, as próximas alavancas são os fragmentos do EDGE e um kernel com 2 threads (o "Big" tem `nSpus=2`).
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

@@ -611,6 +611,10 @@ int main(int argc, char** argv)
      * host thread, so one stuck run stops every workload; name it when it happens
      * (SPURS_PM_HANG=0 turns the report off). */
     if (!getenv("SPURS_PM_HANG")) _putenv_s("SPURS_PM_HANG", "10");
+    /* SPURS_PASS_GREEDY=1: no 1 ms pause after a kernel pass that found work. Each
+     * frame is a chain of dependent jobs across workloads; a timer tick per hop
+     * halved the frame rate (measured 2.95 -> 6.25 game frames/s). */
+    if (!getenv("SPURS_PASS_GREEDY")) _putenv_s("SPURS_PASS_GREEDY", "1");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole
