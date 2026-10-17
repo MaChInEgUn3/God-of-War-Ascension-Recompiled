@@ -181,8 +181,59 @@ static void present_guest_frame(void)
     InterlockedIncrement(&g_frames_presented);
 }
 
+/* GOW_CLOCK_WATCH=<s>: the frame clock records which step it is in; a watchdog
+ * names the step when the clock makes no progress for s seconds (a blocked
+ * guest vblank/flip handler or present stops every FIFO drain with it). */
+extern "C" void cellGcm_walk_report(void);
+extern "C" volatile int g_rsx_phase;
+#if defined(PS3RECOMP_RSX_VULKAN)
+extern "C" volatile int g_vk_fence_waiting;
+#else
+static volatile int g_vk_fence_waiting = -1;
+#endif
+static volatile LONG g_clock_phase = 0, g_clock_beats = 0;
+static const char* const k_clock_phase[] = { "sleep", "TickVBlank", "TickFlip", "present(tick)",
+    "process_fifo(tick)", "present(outer)", "process_fifo(outer)", "pump", "present(flip)" };
+#define CLOCK_PHASE(p) (g_clock_phase = (p), InterlockedIncrement(&g_clock_beats))
+static DWORD WINAPI clock_watch(LPVOID arg)
+{
+    const DWORD ms = (DWORD)(uintptr_t)arg;
+    LONG last = -1; int reported = 0;
+    unsigned last_flip = ~0u; int flip_reported = 0;
+    for (;;) {
+        Sleep(ms);
+        /* Flips stopped while the clock still beats: report the walker once. */
+        unsigned fc = cellGcm_flip_request_count();
+        if (fc == last_flip && fc) {
+            if (!flip_reported++) {
+                fprintf(stderr, "[clock-watch] no flip for %lu ms (count %u)\n", (unsigned long)ms, fc);
+                cellGcm_walk_report();
+            }
+        } else flip_reported = 0;
+        last_flip = fc;
+        LONG b = g_clock_beats;
+        if (b == last) {
+            if (!reported++) {
+                LONG p = g_clock_phase;
+                fprintf(stderr, "[clock-watch] frame clock stuck for %lu ms in %s\n", (unsigned long)ms,
+                        p >= 0 && p < (LONG)(sizeof k_clock_phase / sizeof *k_clock_phase) ? k_clock_phase[p] : "?");
+                fflush(stderr);
+                if (p == 4 || p == 6) {
+                    cellGcm_walk_report();
+                    fprintf(stderr, "[clock-watch] rsx_phase=0x%X vk_fence_waiting=%d\n",
+                            g_rsx_phase, g_vk_fence_waiting);
+                }
+            }
+        } else reported = 0;
+        last = b;
+    }
+    return 0;
+}
+
 static DWORD WINAPI frame_clock(LPVOID)
 {
+    { const char* w = getenv("GOW_CLOCK_WATCH");
+      if (w && atoi(w) > 0) CreateThread(NULL, 0, clock_watch, (LPVOID)(uintptr_t)(atoi(w) * 1000), 0, NULL); }
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "ps3recomp";
 
@@ -194,12 +245,15 @@ static DWORD WINAPI frame_clock(LPVOID)
     ULONGLONG next_tick = GetTickCount64();
 
     for (;;) {
+        CLOCK_PHASE(0);
         Sleep(4);
         ULONGLONG now = GetTickCount64();
 
         int fired = 0;
         while ((long long)(now - next_tick) >= 0 && fired < 240) {
+            CLOCK_PHASE(1);
             cellGcmTickVBlank();
+            CLOCK_PHASE(2);
             cellGcmTickFlip();
             /* Present a pending flip BEFORE draining any further. The flip
              * fires at a get==put frame boundary on the guest thread, so the
@@ -207,12 +261,14 @@ static DWORD WINAPI frame_clock(LPVOID)
              * after the drain races the guest's next-frame writes and shows a
              * mixed one. */
             if (rsx_ok && cellGcm_take_flip_pending()) {
+                CLOCK_PHASE(3);
                 present_guest_frame();
                 last_flip = cellGcm_flip_request_count();
             }
             /* Drain the FIFO every tick. This is what writes the RSX sync-fence
              * labels the game's per-frame logic blocks on, so it has to keep
              * advancing at 60 Hz even while present() throttles. */
+            CLOCK_PHASE(4);
             if (rsx_ok) cellGcm_rsx_process_fifo();
             next_tick += 16;             /* ~60 Hz */
             fired++;
@@ -225,11 +281,14 @@ static DWORD WINAPI frame_clock(LPVOID)
          * The real RSX writes them in microseconds. */
         if (rsx_ok) {
             if (cellGcm_take_flip_pending()) {
+                CLOCK_PHASE(5);
                 present_guest_frame();
                 last_flip = cellGcm_flip_request_count();
             }
+            CLOCK_PHASE(6);
             cellGcm_rsx_process_fifo();
 
+            CLOCK_PHASE(7);
             if (rsx_backend_pump() != 0) {
                 rsx_ok = 0;              /* window closed */
                 continue;
@@ -238,6 +297,7 @@ static DWORD WINAPI frame_clock(LPVOID)
              * drain mid-frame and flash a partial one. Before the first flip
              * present freely, so the window is not blank during boot. */
             unsigned fc = cellGcm_flip_request_count();
+            CLOCK_PHASE(8);
             if (fc != last_flip) {
                 present_guest_frame();
                 last_flip = fc;
@@ -470,6 +530,15 @@ int main(int argc, char** argv)
      * SPU post-process tasks release their label; running ahead let RsxSync post
      * the next batch over the tasks' control block and a batch was lost. */
     if (!getenv("GCM_SEMA_ACQUIRE")) _putenv_s("GCM_SEMA_ACQUIRE", "1");
+    /* GCM_FIFO_CIRCLE_PASSES=0: the walker legitimately spends whole drains
+     * inside GoW:A's FIFO (JUMP chains waiting for a patch); the "circling"
+     * resync to `put` threw the rest of the frame away and the game froze. */
+    if (!getenv("GCM_FIFO_CIRCLE_PASSES")) _putenv_s("GCM_FIFO_CIRCLE_PASSES", "0");
+    /* VK_TEX_OFF=1 until guest shaders exist (glslang missing): the Vulkan
+     * backend decodes the whole mip chain on the CPU at every BEGIN that has a
+     * dirty texture unit, and GoW:A re-sends its texture state per draw, so one
+     * drain took minutes and froze the frame clock. Set VK_TEX_OFF=0 to decode. */
+    if (!getenv("VK_TEX_OFF")) _putenv_s("VK_TEX_OFF", "1");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

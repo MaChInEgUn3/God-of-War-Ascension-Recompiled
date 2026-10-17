@@ -32,7 +32,9 @@
 * `port/gow_mlaa_hle.c`: HLE of the SPU MLAA taskset (ELF `0x68F580`, image 14). Each batch is served at the
   moment the RsxSync job signals the tasks (title line-commit hook): RSX label = batch number, then the per-frame
   counter decrement (and the workload kick at zero). No anti-aliasing; `GOW_MLAA=lifted` runs the real tasks.
-* `port/main.cpp` also sets title defaults for runtime knobs: `GCM_PARK_WAIT=1`, `GCM_SEMA_ACQUIRE=1`.
+* `port/main.cpp` also sets title defaults for runtime knobs: `GCM_PARK_WAIT=1`, `GCM_SEMA_ACQUIRE=1`,
+  `GCM_FIFO_CIRCLE_PASSES=0` and `VK_TEX_OFF=1` (until guest shaders exist). It also hosts the `GOW_CLOCK_WATCH`
+  frame-clock watchdog.
 * `patches/`: fixes against upstream (envp/envc, SPURS v2 wrappers, `sys_lwcond_t` layout, 64-bit file sizes,
   Edge Zlib HLE in `_cellSpursLFQueuePushBody`, GCM IO allocator, syscall 14 range, `sys_mmapper_allocate_address`
   first-fit at `0x20000000`) plus diagnostics (function-entry tracer in the lifter, MemTable dump, stack scan).

@@ -62,8 +62,9 @@ static void mlaa_task_batch(uint32_t task)
             }
         }
     }
-    static volatile long s_n;
-    if (InterlockedIncrement(&s_n) <= 60)
+    static volatile long s_n; static long s_cap = -1;
+    if (s_cap < 0) s_cap = getenv("GOW_MLAA_LOG") ? 0x7FFFFFFF : 60;   /* GOW_MLAA_LOG=1: every task share */
+    if (InterlockedIncrement(&s_n) <= s_cap)
         fprintf(stderr, "[mlaa-hle] task %u batch %u label 0x%08X counter 0x%08X: %08X -> %08X\n",
                 task, batch, label, cnt, before, after);
 }

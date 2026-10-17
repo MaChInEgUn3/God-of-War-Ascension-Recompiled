@@ -53,6 +53,17 @@ Lessons that cost days; keep them.
   operands first. The interpreter got this wrong for `bisl` (M0.20); suspect it whenever a job "returns" from an
   API call that never ran (no PM-side trace, result = whatever was in `r3` before).
 * **Frame count**: `GCM_FLIPCOUNT=1` logs every flip with a timestamp.
+* **Frozen frame clock / walker** (port): `GOW_CLOCK_WATCH=<s>` names the frame-clock step that made no progress for
+  s seconds. While draining, it adds `[clock-watch] rsx_phase=` (1 clear, 2..5 BEGIN flush, 0x100+n
+  `bind_texture(n)`, 6/7 draws) and `vk_fence_waiting` (GPU wait or CPU work). When flips stop, it prints a
+  `[walk]` report: get/put/ref/ref queue, the last 16 decoded FIFO words, the words at get, and what the ring holds now
+  after the last decoded word. `GCM_SEMALOG=1` logs every new ACQUIRE blocking point without the rest of
+  `GCM_RECDBG` (which slows the walker enough to hide timing stalls).
+* **Port defaults that hide GoW:A-specific walker traps**: `GCM_FIFO_CIRCLE_PASSES=0` (no "circling" resync to the
+  fixed `put`), `VK_TEX_OFF=1` (no CPU texture decode until guest shaders exist). Override them on the command line.
+* **`lr` in `[wwsjob]` lines** is `r0` at the moment of entry, not a link: a job resumed by `bi` after an API
+  call shows whatever it had loaded into `r0` (e.g. the API table word).
+* **MLAA HLE log**: `GOW_MLAA_LOG=1` logs every task share (label, counter before/after), not only the first 60.
 * **MLAA**: `GOW_MLAA=lifted` runs the real MLAA tasks (image 14) instead of the HLE in `port/gow_mlaa_hle.c`.
 * **SPURS tasks**: `SPURS_TASK2_STUB=1` restores the old accept-only `cellSpursCreateTask2`. SPU `BRANCH-TO-0` lines now
   print `ls[pc-4]`/`ls[pc]`/`r3`: a `stopd` (`0x280xxxxx`) or `stop` word there is a job assert, not a missing lift.

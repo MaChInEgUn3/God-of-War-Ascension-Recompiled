@@ -57,6 +57,17 @@ register), and the SPU interpreter wrote the link before reading the target, so 
 `spu_interp.c` and, for future lifts, in `spu_lifter.py`. The wid 7 PM run returns and the game reaches **about 740
 flips in 48 s** (was 2). Current stop: the flips cease around 48 s and the main thread spins on `0x20A9AE94`
 (lr `0x467B2C`, WWS job completion).
+Update (M0.21): that spin is the normal per-frame job-list wait; the stops are on the RSX side.
+* The Vulkan backend CPU-decoded whole mip chains on every BEGIN, so a single FIFO drain took minutes. The port now
+  defaults to `VK_TEX_OFF=1`, which is sound while guest shaders are off.
+* The walker's "circling" resync jumped to GoW:A's fixed `put` and discarded frames. The port now defaults to
+  `GCM_FIFO_CIRCLE_PASSES=0`.
+
+With both, a run reaches about 1300 to 1600 flips. The remaining stops vary from run to run:
+* a JUMP park that is never patched;
+* the walker stalled on an ordinary method.
+
+See FEASIBILITY M0.21.
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.

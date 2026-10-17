@@ -183,6 +183,18 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Resultado:** `SPURS_PM_HANG=3` não reporta nada, o wid 7 chega a contention 0, e a contagem vai de 2 para cerca de 740 flips em 48 s (`GCM_FLIPCOUNT=1`, ~15 por segundo). A MLAA atende até o lote 12.
 - **Nova parada (~48 s):** os flips cessam e a thread principal gira em `[HOTREAD] 0x20A9AE94` (lr `0x467B2C`), a mesma espera de conclusão de job WWS da M0.10.
 
+### M0.21 — as paradas de ~50 s ficam no lado do RSX, não nos jobs (2026-10-17)
+- O `HOTREAD 0x20A9AE94` é só a espera normal, a cada frame, da lista de jobs de `Wws_Job/HighestPrio6` (data `0x20A9AF00`; `0x466E38` compara o mínimo dos contadores por SPU em `+0x40+16*idx` com o fim da lista). A lista segue sendo preenchida e concluída depois do último flip.
+- **Parada 1, o thread do frame clock preso no decode de textura.** Com `GOW_CLOCK_WATCH=3`, o drain do FIFO ficou minutos dentro de `bind_texture(0)` (`g_rsx_phase=0x100`) sem esperar a GPU (`vk_fence_waiting=0`). O backend Vulkan decodifica na CPU a cadeia mip inteira, até 4096², a cada `BEGIN` com unidade suja, e o GoW reenvia o estado de textura a cada draw. Sem drain, o RSX fica parado num `ACQUIRE` cujo label já foi liberado (`label 0x520 = 0x7F` com `want = 0x7F`), e tudo congela. **Port:** `VK_TEX_OFF=1` por padrão enquanto não houver shaders guest (glslang); `VK_TEX_OFF=0` volta a decodificar. Pendente: um cache que pule o decode quando o estado da unidade não muda.
+- **Parada 2, o resync "circling".** Quando 4 drains seguidos esgotam o orçamento de palavras, o walker pula para o `put` (`FIFO resync (circling)`). No GoW, o `put` fica fixo em `0xA80000` e o RSX é controlado por parks de JUMP, então isso jogava fora o resto do frame (`get == put`, RSX ocioso). **Port:** `GCM_FIFO_CIRCLE_PASSES=0` por padrão. Uma solução melhor seria tratar como park um JUMP que volta a um offset já visitado no mesmo drain.
+- Com as duas mudanças, chega a cerca de 1300–1600 flips em 36–56 s. A variância entre execuções é grande.
+- **Paradas restantes, ainda em investigação:**
+  - um self-JUMP de park (`0x38C030`, logo depois de um `SET_REFERENCE 0x86`) com o próximo segmento já escrito e nunca liberado;
+  - o walker parado em `0x280520`, num método comum, sem park nem semáforo.
+  
+  O próximo passo é descobrir quem aplica o patch de um park num frame que funciona (`SPU_DMA_EA` sobre o anel, mais o write watch da PPU) e o que esse agente espera na parada.
+- Ferramentas novas: `GOW_CLOCK_WATCH=<s>` (fase do frame clock; mais `[walk]` quando o clock trava ou os flips param), `GCM_SEMALOG=1`, `GOW_MLAA_LOG=1`, `VK_TEX_OFF`.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.
