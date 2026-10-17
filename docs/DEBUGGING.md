@@ -65,6 +65,12 @@ Lessons that cost days; keep them.
   report then lists recent kicks and the `GET_REPORT`s within ±0x14000 of get (offset range
   `GCM_WALK_REPORT=<lo>-<hi>`, default 0x1E000-0x20000, the RsxSync report slots).
   The runtime hooks behind it (`g_spu_put_observer`, `g_ppu_jump_store_observer`) are NULL unless a library installs them.
+* **Where is the main thread when flips stop?** `GOW_CLOCK_WATCH=<s>` prints three `[GSTACK:stall-main]` guest stacks
+  (`ppu_dump_thread_stack(1, ...)`); identical sp/lr = blocked. This beat a day of reasoning about pipeline cycles.
+* **SPURS tasksets**: `SPU_TS_COMMITLOG=<taskset ea>` logs the bitsets at each SPU commit to that taskset's header line
+  and the candidates of the start scan (`[taskset-kick]`). `[taskset] ... not dispatched twice` marks a duplicate
+  dispatch that was suppressed. A task ELF field with low bits set (e.g. `0x00681884`) was written by SPU-side
+  `cellSpursCreateTask` (flags; the ELF is at `& ~0xF`).
 * **SPU atomics on one line**: `SPU_ATOM_EA=<ea> SPU_ATOM_EA_MAX=0 SPU_ATOM_FULL=1`. PUTLLC lines carry RAM and
   STORE, so a diff shows which word each job changed (used to prove a decrement was never issued rather than lost).
 * **Port defaults that hide GoW:A-specific walker traps**: `GCM_FIFO_CIRCLE_PASSES=0` (no "circling" resync to the

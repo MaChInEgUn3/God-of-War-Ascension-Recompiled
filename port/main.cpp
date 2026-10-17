@@ -185,6 +185,7 @@ static void present_guest_frame(void)
  * names the step when the clock makes no progress for s seconds (a blocked
  * guest vblank/flip handler or present stops every FIFO drain with it). */
 extern "C" void cellGcm_walk_report(void);
+extern "C" void ppu_dump_thread_stack(unsigned tid, const char* tag);
 extern "C" volatile int g_rsx_phase;
 #if defined(PS3RECOMP_RSX_VULKAN)
 extern "C" volatile int g_vk_fence_waiting;
@@ -209,6 +210,8 @@ static DWORD WINAPI clock_watch(LPVOID arg)
                 fprintf(stderr, "[clock-watch] no flip for %lu ms (count %u)\n", (unsigned long)ms, fc);
                 cellGcm_walk_report();
             }
+            /* ...and where the main thread is, three snapshots one period apart. */
+            if (flip_reported <= 3) ppu_dump_thread_stack(1, "stall-main");
         } else flip_reported = 0;
         last_flip = fc;
         LONG b = g_clock_beats;

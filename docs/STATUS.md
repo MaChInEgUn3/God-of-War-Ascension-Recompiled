@@ -76,6 +76,15 @@ Update (M0.22): the remaining stop is a three-way wait:
 Ruled out by measurement: fence publication, a lost atomic update, and an SPU DMA re-parking a released segment. Next:
 who writes the batch-slot owner bytes (`0x99B480+i`) and the frame counter (`0x99B4BC`), and when, compared with the
 kick.
+Update (M0.23): a stack snapshot of the main thread corrected this. The frame actually waited, in `0x3A5AA4`, for a
+two-stage SPU task batch: 5 tasks of the ELF at `0x699000`, whose finalizer creates 5 tasks of the ELF at `0x681880`
+SPU-side. Fixes:
+* both ELFs lifted (SPU images 15 and 16);
+* tasks are no longer dispatched twice (claim under the taskset lock, explicit taskset/id);
+* taskset `size` (`0x2900` for Taskset2) and event-flag id fields are set, so the SPU-side `cellSpursCreateTask` works;
+* SPU-created tasks are started when the taskset header line is committed (the ELF field flags are masked off).
+
+The batch now completes. Next stop: the main thread in `func_00416A10` (via `0x35E8EC`, frame function `+0x2C4`).
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.

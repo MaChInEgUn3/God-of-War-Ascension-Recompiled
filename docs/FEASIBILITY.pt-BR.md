@@ -209,10 +209,33 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - O job B do frame F sinaliza à MLAA o lote F+1, com o contador de F+1.
   - Em cada segmento k, os reports `R_a(k)` (`+0x47D4`) e `R_b(k)` (`+0x7B30`) ficam dentro do próprio segmento. Assim o lote k+1 só fecha depois de `R_a(k+1)`, que fica no segmento k+1.
 - **Na parada:** o RSX está no park de início do segmento k+1, já parcialmente escrito pela PPU (os parks internos dele já foram liberados), e o RsxSync espera um report desse segmento. A PPU, no início da iteração, espera o contador com count 1 que depende desse mesmo job A. Como o hardware não trava, algum elo da emulação está errado: provavelmente a associação slot/frame (`0x99B480`, `0x99B4BC`) ou a ordem entre a marcação do slot e a espera. O próximo passo é ver quem escreve os bytes de dono `0x99B480+i` e o contador `0x99B4BC`, e quando, comparando com o kick.
+- **Correção da leitura acima (M0.23):** a espera de lote termina. O watchdog com pilha mostrou a thread principal parada em outro ponto (ver M0.23).
 - Ferramentas novas:
   - `GCM_PARKLOG=1`: `[park]`, `[park-patch]`, `[kick]`, `[park-reset]`, e os kicks recentes no `[walk]`;
   - os ganchos de runtime `g_spu_put_observer` (PUTs SPU) e `g_ppu_jump_store_observer` (stores PPU de palavras JUMP);
   - no `[walk]`, a varredura de `GET_REPORT` em torno do `get` (`GCM_WALK_REPORT=<lo>-<hi>`).
+
+### M0.23 — tarefas SPU de dois estágios: 2 ELFs novos e 4 correções no HLE de tasksets (2026-10-17)
+- **A parada de fato.** A pilha guest da thread principal no watchdog (`GOW_CLOCK_WATCH`, `ppu_dump_thread_stack`) mostrou `0x3A5AA4` dormindo (`sys_timer_usleep`) até `*(0x983168) == *(0x98317C)`, chamada de `func_00343608` ← `0x368C64` ← `0x369020` ← `0x36968C` ← função de frame. O bloco `0x983100` é um lote de trabalho com dois estágios:
+  - **Estágio 1:** `0x3A5270` cria 5 tarefas com o ELF SPU `0x699000` no taskset `0x20024900`. Cada uma faz o trabalho e incrementa `+0x64`, que começa em 1. A que vê o valor antigo igual ao total (`+0x7C`) é a finalizadora.
+  - **Estágio 2:** a finalizadora cria, **pelo lado SPU** (`cellSpursCreateTask` da libspurs SPU, em LS `0xC260`), 5 tarefas com o ELF `0x681880` no taskset `0x20021F80` (`+0x74`/`+0x78`). Essas tarefas incrementam `+0x68`, que a PPU espera chegar ao total.
+- **Correções:**
+  1. **Dois ELFs SPU novos liftados:** `gowtask1` (`0x699000`, 41796 B, imagem 15) e `gowtask2` (`0x681880`, 56484 B, imagem 16), em `spu/images.json`. Sem eles, o despacho dava MISS e as tarefas nunca rodavam.
+  2. **Despacho duplicado de tarefa:**
+     - `spurs_taskset_add_task` liga enabled+ready antes do despacho do `CreateTask`, e o bit "running" só era marcado quando a thread começava;
+     - uma `task_exited` concorrente (em thread SPU) iniciava a mesma tarefa de novo, e as globais `g_ydkj_real_taskset_ea/taskid` trocavam o id entre threads;
+     - com isso, `+0x64`/`+0x68` passavam do total e a igualdade exata nunca acontecia.
+     
+     Agora `spu_workload_dispatch_task_async(image, size, args, taskset, taskid)` reivindica a tarefa (bit running) sob `ts_lock` antes de despachar, e o `CreateTask` passa `taskset`/`id` explícitos.
+  3. **Campos do taskset para a API SPU:** `+0x1890 size` passa a ser `0x1900` (v1) ou `0x2900` (`cellSpursCreateTaskset2`), em vez do tamanho da struct do host, e `+0x1898/+0x189C` (ids de event flag) recebem valores não nulos. A criação SPU recusava o taskset com `0x80410909`.
+  4. **Tarefas criadas pelo SPU passam a ser iniciadas:**
+     - `cellSpursCreateTaskset` registra o taskset (`spu_taskset_register`);
+     - um PUTLLC no cabeçalho de um taskset registrado inicia as tarefas enabled+(ready|pending) que não estão rodando (`spu_taskset_line_committed` → varredura de `task_exited`);
+     - o campo ELF que o SPU grava traz flags nos bits baixos (`0x00681884`), que agora são mascarados.
+- **Resultado:** `+0x68` chega a 5, a espera da thread principal termina e o jogo segue. As tarefas liftadas são lentas, então os flips ficam espaçados. Nova parada: thread principal em `func_00416A10+0x3C` ← `0x352378` ← `0x354718` ← `0x355BD0` ← `0x366B3C` ← `0x35E8EC` ← função de frame `+0x2C4`.
+- Ferramentas novas:
+  - `SPU_TS_COMMITLOG=<taskset ea>`: bitsets a cada commit no cabeçalho do taskset, mais as candidatas de cada varredura;
+  - a pilha da thread principal (`[GSTACK:stall-main]`) quando os flips param.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

@@ -32,6 +32,14 @@
 * `port/gow_mlaa_hle.c`: HLE of the SPU MLAA taskset (ELF `0x68F580`, image 14). Each batch is served at the
   moment the RsxSync job signals the tasks (title line-commit hook): RSX label = batch number, then the per-frame
   counter decrement (and the workload kick at zero). No anti-aliasing; `GOW_MLAA=lifted` runs the real tasks.
+* `spu/images.json` lists the lifted SPU images:
+  * 10: WWS policy module;
+  * 11–13: libsre kernel and policy modules;
+  * 14: MLAA tasks `0x68F580`;
+  * 15: stage-1 batch tasks `0x699000`;
+  * 16: stage-2 batch tasks `0x681880`, created SPU-side by the stage-1 finalizer.
+  
+  The Edge Zlib task `0x6A3380` is HLE'd.
 * `port/main.cpp` also sets title defaults for runtime knobs: `GCM_PARK_WAIT=1`, `GCM_SEMA_ACQUIRE=1`,
   `GCM_FIFO_CIRCLE_PASSES=0` and `VK_TEX_OFF=1` (until guest shaders exist). It also hosts the `GOW_CLOCK_WATCH`
   frame-clock watchdog.
