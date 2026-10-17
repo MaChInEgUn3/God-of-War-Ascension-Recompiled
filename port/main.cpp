@@ -233,10 +233,30 @@ static DWORD WINAPI clock_watch(LPVOID arg)
     return 0;
 }
 
+/* GOW_HEARTBEAT=<s>: every s seconds, the flip count and GoW:A's game frame
+ * counter (u32 at 0x9710C8), so a long run that never stalls still says how far
+ * the game got. */
+static DWORD WINAPI heartbeat(LPVOID arg)
+{
+    const DWORD ms = (DWORD)(uintptr_t)arg;
+    const ULONGLONG t0 = GetTickCount64();
+    for (;;) {
+        Sleep(ms);
+        const uint8_t* p = vm_base ? vm_base + 0x9710C8u : nullptr;
+        const unsigned frame = p ? ((unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]) : 0;
+        fprintf(stderr, "[heartbeat] t=%llus flips=%u game_frame=%u\n",
+                (unsigned long long)((GetTickCount64() - t0) / 1000), cellGcm_flip_request_count(), frame);
+        fflush(stderr);
+    }
+    return 0;
+}
+
 static DWORD WINAPI frame_clock(LPVOID)
 {
     { const char* w = getenv("GOW_CLOCK_WATCH");
       if (w && atoi(w) > 0) CreateThread(NULL, 0, clock_watch, (LPVOID)(uintptr_t)(atoi(w) * 1000), 0, NULL); }
+    { const char* h = getenv("GOW_HEARTBEAT");
+      if (h && atoi(h) > 0) CreateThread(NULL, 0, heartbeat, (LPVOID)(uintptr_t)(atoi(h) * 1000), 0, NULL); }
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "ps3recomp";
 
@@ -542,6 +562,10 @@ int main(int argc, char** argv)
      * dirty texture unit, and GoW:A re-sends its texture state per draw, so one
      * drain took minutes and froze the frame clock. Set VK_TEX_OFF=0 to decode. */
     if (!getenv("VK_TEX_OFF")) _putenv_s("VK_TEX_OFF", "1");
+    /* SPURS_PM_HANG=10: the port runs a SPURS instance's policy modules on one
+     * host thread, so one stuck run stops every workload; name it when it happens
+     * (SPURS_PM_HANG=0 turns the report off). */
+    if (!getenv("SPURS_PM_HANG")) _putenv_s("SPURS_PM_HANG", "10");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

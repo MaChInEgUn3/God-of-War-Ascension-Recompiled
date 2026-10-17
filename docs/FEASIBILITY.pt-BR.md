@@ -302,6 +302,14 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - a tabela tem 64 slots, com cache por thread.
 - Resultado (run168): nenhuma parada em 560 s, 3020 flips e ainda rodando no fim.
 - Ferramentas: `SPU_ATOM_EA` aceita até 4 linhas (`a,b,c,d`) e `SPU_ATOM_PUTONLY=1`; o `[pm-hang]` mostra `tagmask`, `tagstat` e as listas estacionadas.
+- **Confirmação:**
+  - run169: 30 min sem parada permanente, 4540 flips;
+  - run170, com o contador de frames do jogo (`*(0x9710C8)`, via `GOW_HEARTBEAT`): frame **901** aos 570 s. Passou com folga a barreira antiga (~358), a ~1,3–1,6 frames/s e 1 flip por frame.
+- **Perfil (run171, `SPURS_PM_PROF=20 SPU_TASK_PROF=20`):**
+  - a thread única do kernel SPURS fica **~74% ocupada**: wid 8 (BrBDblBufWrkld) 30% (~165 execuções/s, ~1,8 ms cada) e EDGE0/1/2 ~11% cada; o resto é ≤3%;
+  - as tarefas de lote custam 2,7 ms (img15) e 7 ms (img16), sem espera de lock.
+  - O gargalo seguinte é o kernel serial: no hardware, essas cargas rodam em SPUs paralelas.
+- Padrões novos na porta: `SPURS_PM_HANG=10` e `GOW_HEARTBEAT=<s>` (opcional).
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

@@ -39,7 +39,12 @@ Lessons that cost days; keep them.
   PUT-class DMA overlapping a range; `GOW_GUARD=<ea>` then names the writer (`CLEARED` lines carry a guest
   backtrace); `PS3_NULL_READ_STACK=1` adds the guest stack to `[null-read]` (its `guest-fn` is the last traced
   function, not necessarily the reader).
-* **Stuck SPURS workloads**: `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
+* **Progress and profile**: `GOW_HEARTBEAT=<s>` prints `t`, the flip count and the game frame counter
+  (`*(0x9710C8)`) every s seconds, so a run that never stalls still says how far it got. `SPURS_PM_PROF=<s>` prints
+  each workload's share of wall time in policy-module runs (`w<wid>=<pct>%/<runs>`, and the total = how busy the
+  single kernel thread is); `SPU_TASK_PROF=<s>` prints per task image the count, average time and share spent
+  waiting for the taskset LS lock.
+* **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
   then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on
   cross-function branches, so pc names the last function entered, not the exact instruction. The port runs all of

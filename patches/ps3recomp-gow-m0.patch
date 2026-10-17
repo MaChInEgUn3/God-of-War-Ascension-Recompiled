@@ -2987,10 +2987,18 @@ index bdee01c..ebd8860 100644
 +    spu_interp_run(ctx, 0xA00u);
 +}
 diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
-index 6a19d5b..0fa51bd 100644
+index 6a19d5b..9aedf0b 100644
 --- a/runtime/spu/spu_workload.c
 +++ b/runtime/spu/spu_workload.c
-@@ -391,6 +391,9 @@ static void spu_taskset_mark(uint32_t taskset_ea, uint32_t t, int on)
+@@ -252,6 +252,7 @@ typedef struct {
+     int                 have_r3;
+     uint32_t            taskset_ea;   /* captured race-free at dispatch (globals get clobbered) */
+     uint32_t            taskid;
++    long long           prof_t0, prof_t1;   /* SPU_TASK_PROF: thread start, LS lock taken */
+ } spu_async_job;
+ 
+ /* ---- Persistent per-taskset local store (LBP_PERSIST_LS) ------------------
+@@ -391,6 +392,9 @@ static void spu_taskset_mark(uint32_t taskset_ea, uint32_t t, int on)
      ts_unlock();
  }
  
@@ -3000,7 +3008,7 @@ index 6a19d5b..0fa51bd 100644
  static void spu_taskset_task_exited(uint32_t taskset_ea, uint32_t done_task)
  {
      extern uint8_t* vm_base;
-@@ -398,6 +401,8 @@ static void spu_taskset_task_exited(uint32_t taskset_ea, uint32_t done_task)
+@@ -398,6 +402,8 @@ static void spu_taskset_task_exited(uint32_t taskset_ea, uint32_t done_task)
      ts_lock();
      uint8_t* ts = vm_base + taskset_ea;
      uint8_t* run = ts_running(taskset_ea);
@@ -3009,7 +3017,7 @@ index 6a19d5b..0fa51bd 100644
      if (done_task < 128) {
          uint8_t m = (uint8_t)(0x80u >> (done_task & 7));
          ts[0x10 + done_task / 8] &= (uint8_t)~m;
-@@ -414,15 +419,22 @@ static void spu_taskset_task_exited(uint32_t taskset_ea, uint32_t done_task)
+@@ -414,21 +420,31 @@ static void spu_taskset_task_exited(uint32_t taskset_ea, uint32_t done_task)
                         ((uint32_t)ti[0x16] << 8) | ti[0x17];
          uint32_t ctx = ((uint32_t)ti[0x1C] << 24) | ((uint32_t)ti[0x1D] << 16) |
                         ((uint32_t)ti[0x1E] << 8) | ti[0x1F];
@@ -3034,7 +3042,62 @@ index 6a19d5b..0fa51bd 100644
      }
      ts_unlock();
  }
-@@ -1051,8 +1063,39 @@ void spu_taskset_signal_task(uint32_t taskset_ea, uint32_t taskId)
+ 
+ static void spu_async_run(spu_async_job* j)
+ {
++#ifdef _WIN32
++    { LARGE_INTEGER t; QueryPerformanceCounter(&t); j->prof_t0 = j->prof_t1 = t.QuadPart; }
++#endif
+     spu_taskset_mark(j->taskset_ea, j->taskid, 1);
+     /* Persistent per-taskset LS: acquire (+serialize) the taskset's LS, or fall
+      * back to a fresh per-dispatch LS when disabled / no taskset. */
+@@ -440,6 +456,7 @@ static void spu_async_run(spu_async_job* j)
+     if (ts_slot) {
+ #ifdef _WIN32
+         AcquireSRWLockExclusive(&ts_slot->lock);   /* serialize this taskset */
++        { LARGE_INTEGER t; QueryPerformanceCounter(&t); j->prof_t1 = t.QuadPart; }
+ #else
+         pthread_mutex_lock(&ts_slot->lock);
+ #endif
+@@ -782,6 +799,37 @@ static void spu_async_run(spu_async_job* j)
+         pthread_mutex_unlock(&ts_slot->lock);
+ #endif
+     }
++#ifdef _WIN32
++    /* SPU_TASK_PROF=<s>: every s seconds, per image: tasks finished, average wall
++     * time from thread start to end (lock waits included) and the share of the
++     * window spent waiting for the taskset LS lock / serial gate. */
++    { static int s_tp = -1; static LARGE_INTEGER s_f, s_w0; static SRWLOCK s_tl = SRWLOCK_INIT;
++      static double s_tot[64], s_wait[64]; static unsigned s_n[64];
++      if (s_tp < 0) { const char* e = getenv("SPU_TASK_PROF"); s_tp = e ? atoi(e) : 0;
++                      QueryPerformanceFrequency(&s_f); QueryPerformanceCounter(&s_w0); }
++      if (s_tp > 0) {
++          LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
++          const int im = j->image_id & 63;
++          AcquireSRWLockExclusive(&s_tl);
++          s_tot[im]  += (double)(t1.QuadPart - j->prof_t0) / (double)s_f.QuadPart;
++          s_wait[im] += (double)(j->prof_t1 - j->prof_t0) / (double)s_f.QuadPart;
++          s_n[im]++;
++          const double win = (double)(t1.QuadPart - s_w0.QuadPart) / (double)s_f.QuadPart;
++          if (win >= s_tp) {
++              char buf[1024]; int p = snprintf(buf, sizeof buf, "[task-prof] %.1fs:", win);
++              for (int k = 0; k < 64; k++) {
++                  if (!s_n[k]) continue;
++                  if (p < (int)sizeof buf - 60)
++                      p += snprintf(buf + p, sizeof buf - p, " img%d n=%u avg=%.1fms lockwait=%.0f%%", k, s_n[k],
++                                    1000.0 * s_tot[k] / s_n[k], 100.0 * s_wait[k] / (s_tot[k] > 0 ? s_tot[k] : 1));
++                  s_tot[k] = s_wait[k] = 0; s_n[k] = 0;
++              }
++              fprintf(stderr, "%s\n", buf);
++              s_w0 = t1;
++          }
++          ReleaseSRWLockExclusive(&s_tl);
++      } }
++#endif
+     free(j);
+ }
+ 
+@@ -1051,8 +1099,39 @@ void spu_taskset_signal_task(uint32_t taskset_ea, uint32_t taskId)
   * line holding a parked taskset's signalled bitset is committed; a commit
   * that did not signal them only costs a spurious wake, which the wait loop
   * re-checks. */
@@ -3074,7 +3137,7 @@ index 6a19d5b..0fa51bd 100644
      for (int i = 0; i < SPU_PARKED_MAX; i++) {
          const uint64_t k = s_parked[i];
          if (!k || (((uint32_t)(k >> 32) + CSTS_SIGNALLED) & ~127u) != line) continue;
-@@ -1082,9 +1125,24 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
+@@ -1082,9 +1161,24 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
      { extern unsigned long long ps3_ms_now(void);
        unsigned long long _now = ps3_ms_now();
        static int _n = 0; if (_n++ < 200 || (_n % 500) == 0)
@@ -3102,7 +3165,7 @@ index 6a19d5b..0fa51bd 100644
      /* LBP_SYNC_ACK: taskset sync-lane bookkeeping. On real SPURS the taskset
       * POLICY MODULE advances the per-SPU progress lanes (sync+0x40+16*row:
       * ticket u16 @+0, consumer lanes @+2..) as tasks are processed; our HLE
-@@ -1161,14 +1219,80 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
+@@ -1161,14 +1255,80 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
                  "after %us (no signal)\n", taskId, taskset_ea, secs); fflush(stderr); }
      spu_serial_acquire();       /* resume: re-take the serial lock */
      { extern unsigned long long ps3_ms_now(void);
@@ -3184,7 +3247,7 @@ index 6a19d5b..0fa51bd 100644
  
      uint64_t fp = spu_workload_fingerprint(image, image_size);
      spu_lifted_entry_fn fn = NULL;
-@@ -1199,6 +1323,8 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
+@@ -1199,6 +1359,8 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
            } }
          fprintf(stderr, "[spu_workload] async dispatch MISS fp=0x%016llX size=%u\n",
                  (unsigned long long)fp, image_size);
@@ -3193,7 +3256,7 @@ index 6a19d5b..0fa51bd 100644
          return 0;
      }
  
-@@ -1210,8 +1336,7 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
+@@ -1210,8 +1372,7 @@ int spu_workload_dispatch_async(const uint8_t* image, uint32_t image_size,
       * set the globals for THIS task). Reading them later in the async thread races
       * the next CreateTask overwriting the single-slot globals -- with two audio
       * tasks that made both run task 1's descriptor. */
@@ -3204,7 +3267,7 @@ index 6a19d5b..0fa51bd 100644
       * descriptor at eaContext+0x10 = {0x40-marker handle, workload EAs}; the
       * async SPU thread reading it later would race the PPU stack. word1 is
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..c3006fd 100644
+index 4f82063..4742a35 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -30,6 +30,90 @@
@@ -3345,7 +3408,7 @@ index 4f82063..c3006fd 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -265,18 +366,33 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -265,18 +366,66 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -3362,7 +3425,40 @@ index 4f82063..c3006fd 100644
 -            for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
 -            fprintf(stderr, "\n"); fflush(stderr); } }
 +    spurs_pm_hang_begin(ctx, wid, spu_num);
++#ifdef _WIN32
++    LARGE_INTEGER prof_t0; QueryPerformanceCounter(&prof_t0);
++#endif
 +    const int pm_halted = spu_run_with_halt(entry, ctx);
++#ifdef _WIN32
++    /* SPURS_PM_PROF=<s>: every s seconds, the wall time each workload's module
++     * runs took, as a share of the window. All of an instance's modules run on
++     * one host thread, so the shares add up to how busy that thread is. */
++    { static int s_pp = -1; static LARGE_INTEGER s_f, s_w0; static double s_acc[SPURS_PM_MAX_WKL];
++      static unsigned s_runs[SPURS_PM_MAX_WKL]; static SRWLOCK s_pl = SRWLOCK_INIT;
++      if (s_pp < 0) { const char* e = getenv("SPURS_PM_PROF"); s_pp = e ? atoi(e) : 0;
++                      QueryPerformanceFrequency(&s_f); QueryPerformanceCounter(&s_w0); }
++      if (s_pp > 0 && wid < SPURS_PM_MAX_WKL) {
++          LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
++          AcquireSRWLockExclusive(&s_pl);
++          s_acc[wid] += (double)(t1.QuadPart - prof_t0.QuadPart) / (double)s_f.QuadPart;
++          s_runs[wid]++;
++          const double win = (double)(t1.QuadPart - s_w0.QuadPart) / (double)s_f.QuadPart;
++          if (win >= s_pp) {
++              char buf[1024]; int p = snprintf(buf, sizeof buf, "[pm-prof] %.1fs:", win);
++              double tot = 0;
++              for (unsigned w = 0; w < SPURS_PM_MAX_WKL; w++) {
++                  if (!s_runs[w]) continue;
++                  tot += s_acc[w];
++                  if (p < (int)sizeof buf - 40)
++                      p += snprintf(buf + p, sizeof buf - p, " w%u=%.0f%%/%u", w, 100.0 * s_acc[w] / win, s_runs[w]);
++                  s_acc[w] = 0; s_runs[w] = 0;
++              }
++              fprintf(stderr, "%s total=%.0f%%\n", buf, 100.0 * tot / win);
++              s_w0 = t1;
++          }
++          ReleaseSRWLockExclusive(&s_pl);
++      } }
++#endif
 +    spurs_pm_hang_end(ctx);
 +    if (g_spurs_pm_enddump) {
 +        static int lo = -1, hi = -1; static int left[64];
@@ -3391,7 +3487,7 @@ index 4f82063..c3006fd 100644
  
      if (s_claimlog) {
          unsigned claims = g_spu_putllc_sync_hit - claim_before;
-@@ -303,12 +419,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -303,12 +452,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */

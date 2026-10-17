@@ -115,7 +115,10 @@ and job, task and policy-module contexts never gave theirs back. Right after boo
 `tag_completed`. One context's parked stall-and-notify list then left another context's tag "incomplete", a WWS
 policy module spun on it, and since the port's SPURS kernel runs an instance's modules on one host thread, every
 workload stopped (EDGE holes, shapes B and D). Contexts now release their engine (`spu_coh_unregister`), and the table
-has 64 slots. A run went 560 s and 3020 flips with no stall.
+has 64 slots. A run went 560 s and 3020 flips with no stall; a 30-minute run never stopped, and the game frame
+counter reached 901 in 570 s (~1.5 frames/s). Profile: the single host thread that runs every SPURS policy module
+is ~74% busy (BrBDblBufWrkld 30%, EDGE0/1/2 ~11% each), so the next limit is that serial kernel. Frames are still
+black (no guest shaders: glslang is not installed).
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
