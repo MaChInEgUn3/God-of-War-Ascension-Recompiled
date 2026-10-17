@@ -141,7 +141,8 @@ if(PORT_ENABLE_SPU)
         # loop that branches indirectly walks the thread stack off its guard
         # page a few thousand iterations in.
         list(APPEND SPU_SOURCES ${SPU_LIFTED}
-             "${PS3RECOMP_DIR}/runtime/spu/spu_dispatch_mt.c")
+             "${PS3RECOMP_DIR}/runtime/spu/spu_dispatch_mt.c"
+             "${CMAKE_CURRENT_SOURCE_DIR}/gow_mlaa_hle.c")   # HLE of the MLAA taskset
         # Generated beside the lift; each is present only once its generator
         # has been run, so each is included only if it is actually here.
         foreach(gen IN ITEMS spu_workloads.c jobmods_register.c taskset_policy_bytes.c)

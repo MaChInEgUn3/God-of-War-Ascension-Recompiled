@@ -27,6 +27,14 @@ Lessons that cost days; keep them.
 * **GCM FIFO park**: `GCM_PARK_WAIT=1` (default in the port) keeps the walker on a self-JUMP park until the title
   patches it, instead of resyncing to `put` (`jump-park`/`stuck-get`). `GCM_RECDBG=1` prints every JUMP and a FIFO dump
   at each resync.
+* **RSX semaphores**: `GCM_SEMA_ACQUIRE=1` (default in the port) blocks the walker on NV406E SEMAPHORE_ACQUIRE;
+  with `GCM_RECDBG=1` every release and every acquire outside the `0x062xxxxx` ring is logged, plus one
+  `ACQUIRE blocks ...` line per blocking point.
+* **WWS / SPU tracing**: `SPU_WWSJOB=1` (job entries per wid, 40 each), `SPURS_PM_DMA_WID=<n>` (every DMA of
+  workload n's PM runs), `SPU_DMA_IMG=<n>` (every DMA of SPU image n), `SPU_INTERP_STATS=1` (interpreter hand-offs and
+  steps per image), `SPU_WAITLOG=1` (WAIT_SIGNAL exits; the enter line also shows `cpu=`/`lockwait=`/`atomics=`
+  since the last exit, which separates compute from blocking).
+* **MLAA**: `GOW_MLAA=lifted` runs the real MLAA tasks (image 14) instead of the HLE in `port/gow_mlaa_hle.c`.
 * **SPURS tasks**: `SPURS_TASK2_STUB=1` restores the old accept-only `cellSpursCreateTask2`. SPU `BRANCH-TO-0` lines now
   print `ls[pc-4]`/`ls[pc]`/`r3`: a `stopd` (`0x280xxxxx`) or `stop` word there is a job assert, not a missing lift.
 * **PSARC helpers**: `analysis/psarc_find.py <regex> <psarc...>` lists entries; `analysis/psarc_extract.py <psarc> <name> <out>`

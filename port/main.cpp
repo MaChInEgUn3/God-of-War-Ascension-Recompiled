@@ -403,6 +403,8 @@ static void harness_guest_caller(uint32_t opd, uint64_t a0, uint64_t a1,
     ppu_guest_call(opd, a0, a1, a2, a3, a4, a5, a6, a7);
 }
 
+extern "C" void gow_mlaa_hle_register(void);   /* gow_mlaa_hle.c */
+
 int main(int argc, char** argv)
 {
     if (argc < 2) {
@@ -416,6 +418,10 @@ int main(int argc, char** argv)
      * segment behind it before patching the park; following `put` instead skipped
      * the GET_REPORTs that release the RsxSync job list. */
     if (!getenv("GCM_PARK_WAIT")) _putenv_s("GCM_PARK_WAIT", "1");
+    /* GCM_SEMA_ACQUIRE: the RSX must block on NV406E SEMAPHORE_ACQUIRE until the
+     * SPU post-process tasks release their label; running ahead let RsxSync post
+     * the next batch over the tasks' control block and a batch was lost. */
+    if (!getenv("GCM_SEMA_ACQUIRE")) _putenv_s("GCM_SEMA_ACQUIRE", "1");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole
@@ -433,6 +439,7 @@ int main(int argc, char** argv)
 
     { extern void ps3_sampler_start(void); ps3_sampler_start(); } /* PS3_SAMPLE=<ms> */
 #ifdef _WIN32
+    gow_mlaa_hle_register();   /* after the SPU ctors: replaces the lifted MLAA tasks */
     if (getenv("GOW_SCAN")) CreateThread(NULL, 0, guest_scan_thread, NULL, 0, NULL);
     if (getenv("GOW_PEEK")) CreateThread(NULL, 0, guest_peek_thread, NULL, 0, NULL);
 #endif

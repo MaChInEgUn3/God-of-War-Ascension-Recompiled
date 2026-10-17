@@ -759,7 +759,7 @@ index b7dfd50..3a00f55 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index ac0a7a8..82acb5c 100644
+index ac0a7a8..4d6dc82 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -340,19 +340,31 @@ static void populate_offset_table(u32 ea, u32 io, u32 size)
@@ -795,7 +795,15 @@ index ac0a7a8..82acb5c 100644
      }
  }
  
-@@ -1727,7 +1739,15 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -781,6 +793,7 @@ unsigned long long ps3_ms_now(void)
+ }
+ 
+ static u32 s_sema_offset = 0;   /* NV406E semaphore offset (label window) */
++static u32 s_sema_wait_get = 0xFFFFFFFFu;  /* get offset of a blocked ACQUIRE (GCM_SEMA_ACQUIRE) */
+ /* Backlog past which the drain stops honouring one-flip-per-tick and
+  * catches up instead. Sized well above a frame's command list so a
+  * title that keeps up never sees this path. */
+@@ -1727,7 +1740,15 @@ static void gcm_rsx_process_fifo_unlocked(void)
                     * park standing -- it only patches a park when it reuses that
                     * block. Waiting for a patch that will not come freezes the
                     * FIFO for the rest of the run, so follow the write head. */
@@ -812,7 +820,44 @@ index ac0a7a8..82acb5c 100644
                                                gcm_fifo_resync_why("jump-park", &s_fifo_getoff, put); }
                    break;
                }
-@@ -1936,7 +1956,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1789,8 +1810,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
+                     u32 m = (type == 0) ? method + i * 4 : method;
+                     u32 v = vm_read32(dea);
+                     u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
+-                    { static int sn = 0; if (getenv("GCM_RECDBG") && sn++ < 12)
+-                        fprintf(stderr, "[SEMA] m=0x%02X v=0x%08X off=0x%X\n", m, v, s_sema_offset); }
++                    { static int sn = 0, sr = 0;
++                      /* releases, and every acquire outside the 0x062xxxxx ring, are
++                       * logged up to 400; the ring's hot off=0x10 acquires only 12. */
++                      int other = (s_fifo_getoff & 0xFF000000u) != 0x06000000u;
++                      if (getenv("GCM_RECDBG") && ((m == 0x6Cu || other) ? sr++ < 400 : sn++ < 12))
++                        fprintf(stderr, "[SEMA] m=0x%02X v=0x%08X off=0x%X get=0x%08X label=0x%08X\n", m, v,
++                                m == 0x64u ? v : s_sema_offset, s_fifo_getoff,
++                                vm_read32(GCM_LABEL_GUEST_BASE + ((m == 0x64u ? v : s_sema_offset) & 0xFFFFu))); }
+                     if (m == 0x64u)      s_sema_offset = v;
+                     else if (m == 0x6Cu) vm_write32(la, v);
+                     else if (m == 0x68u && vm_read32(la) != v) {
+@@ -1803,7 +1830,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+             if (blk) { sem_blocked = 1; break; }
+         }
+                 }
+-                if (sem_blocked) break;
++                if (sem_blocked) {
++                    if (s_sema_wait_get != s_fifo_getoff && getenv("GCM_RECDBG")) {
++                        static int sb = 0;
++                        u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
++                        if (sb++ < 200)
++                            fprintf(stderr, "[SEMA] ACQUIRE blocks get=0x%08X off=0x%X label=0x%08X want=0x%08X\n",
++                                    s_fifo_getoff, s_sema_offset, vm_read32(la),
++                                    vm_read32(gcm_io2ea(s_fifo_getoff + 4 + count * 4 - 4)));
++                    }
++                    s_sema_wait_get = s_fifo_getoff; break;
++                }
++                s_sema_wait_get = 0xFFFFFFFFu;
+                 s_fifo_getoff += 4 + count * 4;
+                 continue;
+             }
+@@ -1936,7 +1974,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -841,7 +886,7 @@ index ac0a7a8..82acb5c 100644
                          const u32 v = vm_read32(dea), idx = (v & 0xFFFFFFu) / 16u;
                          { static int rn = 0; if (rn++ < 6) printf("[GET_REPORT] type=%u idx=%u%c", v >> 24, idx, 10); }
                          if (idx < CELL_GCM_MAX_REPORT_COUNT) {
-@@ -1997,7 +2037,15 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1997,7 +2055,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -854,11 +899,14 @@ index ac0a7a8..82acb5c 100644
 +          u32 pea = gcm_io2ea(s_fifo_getoff);
 +          parked = pea && vm_read32(pea) == (0x20000000u | s_fifo_getoff);
 +      }
++      /* Likewise a get held by a blocking SEMAPHORE_ACQUIRE: the RSX is waiting
++       * for an SPU/PPU label write (GoW:A's MLAA tasks release it), not lost. */
++      if (s_sema_wait_get == s_fifo_getoff) parked = 1;
 +      if (s_fifo_getoff == last && s_fifo_getoff != put && !parked) {
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
-@@ -2637,14 +2685,101 @@ static u32 gcm_io_alloc(u32 size)
+@@ -2637,14 +2706,101 @@ static u32 gcm_io_alloc(u32 size)
      if (s_io_alloc_next == 0)
          s_io_alloc_next = (s_config.ioSize + 0xFFFFFu) & ~0xFFFFFu;
      if (s_io_alloc_next < 0x100000u) s_io_alloc_next = 0x100000u;
@@ -960,7 +1008,7 @@ index ac0a7a8..82acb5c 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -2684,6 +2819,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2684,6 +2840,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -968,7 +1016,7 @@ index ac0a7a8..82acb5c 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -2692,6 +2828,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2692,6 +2849,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -976,7 +1024,7 @@ index ac0a7a8..82acb5c 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -2727,6 +2864,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2727,6 +2885,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -993,7 +1041,7 @@ index ac0a7a8..82acb5c 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -2744,8 +2891,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -2744,8 +2912,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -1443,7 +1491,7 @@ index 718392f..9aedcc5 100644
      if (s) {
          uint32_t own = vm_read32(lwmutex + LWM_OWNER);
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 2a74e51..f6e871d 100644
+index 2a74e51..08c1b1a 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,9 +21,9 @@
@@ -1459,7 +1507,7 @@ index 2a74e51..f6e871d 100644
  #include <time.h>
  #include "../platform/win32_compat.h"
  
-@@ -65,48 +65,48 @@ static uint64_t spu_host_ns(void)
+@@ -65,48 +65,51 @@ static uint64_t spu_host_ns(void)
  #else
  #  define SPU_TLS __thread
  #endif
@@ -1509,6 +1557,9 @@ index 2a74e51..f6e871d 100644
 + * released. cellSpurs sets it so a PPU blocked in cellSpursEventFlagWait wakes
 + * when a task sets the flag, instead of on its next 2 ms poll. */
 +void (*g_spu_line_commit_hook)(uint32_t line) = 0;
++/* Title hook (port glue), separate from the slot cellSpurs owns: called after a
++ * committed PUTLLC/PUTLLUC with the committing SPU context, outside the lock. */
++void (*g_spu_line_commit_title_hook)(uint32_t line, spu_context* ctx) = 0;
 +/* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
 +void spu_taskset_line_committed(uint32_t line);
 +/* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
@@ -1550,7 +1601,7 @@ index 2a74e51..f6e871d 100644
  static SPU_TLS jmp_buf s_spu_halt_env;
  static SPU_TLS int     s_spu_halt_armed = 0;
  
-@@ -224,7 +224,7 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
+@@ -224,7 +227,7 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
       * recursion guard halted the SPU at 2000 after a few minutes of idling. */
      ctx->host_depth = 0;
      ctx->irq_frame = 0;
@@ -1559,7 +1610,7 @@ index 2a74e51..f6e871d 100644
      /* Nest-safe: a job run synchronously from inside another SPU's execution
       * re-enters here on the same host thread. The halt target is per-thread,
       * so save the outer one and put it back on the way out -- otherwise the
-@@ -584,12 +584,27 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -584,12 +587,27 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
           * without a per-function probe. */
          { static SPU_THREAD_LOCAL uint32_t t_ea; static SPU_THREAD_LOCAL unsigned long t_n;
            if (ea != t_ea) { t_ea = ea; t_n = 0; }
@@ -1590,7 +1641,7 @@ index 2a74e51..f6e871d 100644
            } }
          spu_lockline_unlock();
          /* SPU_LLARWATCH=<hex EA>: every GETLLAR of that line, with the LSA it
-@@ -745,10 +760,10 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -745,10 +763,11 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
                        ctx->gpr[0]._u32[0] & SPU_LS_MASK, ea); }
          ctx->resv_valid = 0;                           /* reservation consumed */
          spu_lockline_unlock();
@@ -1601,20 +1652,22 @@ index 2a74e51..f6e871d 100644
 +        if (ctx->atomic_stat == 0) {
 +            spu_taskset_line_committed(ea & ~127u);
 +            if (g_spu_line_commit_hook) g_spu_line_commit_hook(ea & ~127u);
++            if (g_spu_line_commit_title_hook) g_spu_line_commit_title_hook(ea & ~127u, ctx);
 +        }
          return 1;
  
      case MFC_PUTLLUC_CMD:
-@@ -766,7 +781,7 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -766,7 +785,8 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
          ctx->resv_valid = 0; ctx->atomic_stat = 2;   /* PUTLLUC complete */
          spu_lockline_unlock();
          spu_taskset_line_committed(ea & ~127u);
 -        if (g_spu_line_commit_hook) g_spu_line_commit_hook(ea & ~127u);
 +        if (g_spu_line_commit_hook) g_spu_line_commit_hook(ea & ~127u);
++        if (g_spu_line_commit_title_hook) g_spu_line_commit_title_hook(ea & ~127u, ctx);
          return 1;
  
      default:
-@@ -1969,7 +1984,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -1969,7 +1989,10 @@ static int spu_smc_microstep(spu_context* ctx)
              pc += 4; continue;
          }
          if (op9 == 0x041 || op9 == 0x061) {                   /* stqa / lqa (abs) */
@@ -1626,7 +1679,7 @@ index 2a74e51..f6e871d 100644
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
              pc += 4; continue;
-@@ -2038,10 +2056,18 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2038,10 +2061,37 @@ static int spu_smc_microstep(spu_context* ctx)
                        " microstep set -- handing to the interpreter (steps=%d)\n",
                        ctx->image_id, pc, w, steps); }
          ctx->pc = pc;
@@ -1634,6 +1687,25 @@ index 2a74e51..f6e871d 100644
 -         * no lifted entry, and a job's return would otherwise run on through
 -         * the caller's code (GH3's song-freeze; see drain_ret_pc). */
 -        return spu_interp_run_until(ctx, pc, ctx->drain_ret_pc) ? 1 : 0;
++        /* SPU_INTERP_STATS=1: interpreter hand-offs and steps per image, every
++         * 20000 hand-offs -- how much of an image runs interpreted, and from where. */
++        { static int s_is = -1; if (s_is < 0) s_is = getenv("SPU_INTERP_STATS") ? 1 : 0;
++          if (s_is) {
++              extern uint64_t g_spu_interp_steps;
++              static volatile long s_calls[64]; static volatile long long s_steps[64];
++              static volatile long s_tot; static uint32_t s_lastpc[64];
++              unsigned im = (unsigned)ctx->image_id & 63u;
++              _InterlockedIncrement(&s_calls[im]); s_lastpc[im] = pc;
++              uint32_t r = spu_interp_run_until(ctx, pc, ctx->drain_ret_pc);
++              s_steps[im] += (long long)g_spu_interp_steps;
++              if (_InterlockedIncrement(&s_tot) % 20000 == 0)
++                  for (unsigned k = 0; k < 64; k++) if (s_calls[k])
++                      fprintf(stderr, "[interp-stats] img=%u handoffs=%ld steps=%lld lastpc=0x%05X\n",
++                              k, s_calls[k], s_steps[k], s_lastpc[k]);
++              if (!r) return 0;
++              if (ctx->status == SPU_STATUS_RUNNING) g_spu_trampoline_fn = spu_indirect_branch;
++              return 1;
++          } }
 +        /* Stop at the drain's return point too: it sits mid-function, so it is
 +         * no lifted entry, and a job's return would otherwise run on through
 +         * the caller's code (GH3's song-freeze; see drain_ret_pc). */
@@ -1649,7 +1721,29 @@ index 2a74e51..f6e871d 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2612,9 +2638,16 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2598,6 +2648,21 @@ void spu_indirect_branch(spu_context* ctx)
+             fflush(stderr);
+         }
+     }
++    /* SPU_WWSJOB=1 (GoW:A WWS PM, image 10): log each entry from the policy module
++     * (lr below 0x4000) into staged job code (LS >= 0x4000) with the running wid
++     * (kernel ctx wklCurrentId @0x1DC) -- which jobs actually start, per workload. */
++    { static int s_wj = -1; if (s_wj < 0) s_wj = getenv("SPU_WWSJOB") ? 1 : 0;
++      const uint32_t p = ctx->pc & SPU_LS_MASK, lr = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
++      if (s_wj && ctx->image_id == 10 && ctx->policy_mode && p >= 0x4000 && p < 0x3E000 && lr < 0x4000) {
++          static int _n[256];
++          const uint8_t* L = ctx->ls;
++          if (_n[L[0x1DF]]++ < 40) {
++              fprintf(stderr, "[wwsjob] wid=%u enter pc=0x%05X lr=0x%05X r3=%08X r4=%08X r5=%08X "
++                      "code=%02X%02X%02X%02X%02X%02X%02X%02X\n",
++                      L[0x1DF], p, lr, ctx->gpr[3]._u32[0], ctx->gpr[4]._u32[0], ctx->gpr[5]._u32[0],
++                      L[p], L[p+1], L[p+2], L[p+3], L[p+4], L[p+5], L[p+6], L[p+7]);
++          }
++      } }
+     /* No lifted function at this PC: it may be RUNTIME-GENERATED code (the
+      * WWS jobmanager writes a save/restore stub above its static
+      * image and calls it). Interpret the live LS bytes; on success the next
+@@ -2612,9 +2677,16 @@ void spu_indirect_branch(spu_context* ctx)
        static int _bt0[BT0_MAX_IMG];
        unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
                       ? (unsigned)ctx->image_id : 0;
@@ -1669,6 +1763,62 @@ index 2a74e51..f6e871d 100644
      /* One-shot: the FMOD null-handler DSP node carries a PPU descriptor EA at
       * node+0x14 (observed 0x93C3C0). Dump it to identify which plugin/unit
       * type never got its SPU code streamed (env SPU_DSPDESC=<hex ea>). */
+diff --git a/runtime/spu/spu_coherency.c b/runtime/spu/spu_coherency.c
+index 7ac619f..b311e88 100644
+--- a/runtime/spu/spu_coherency.c
++++ b/runtime/spu/spu_coherency.c
+@@ -38,15 +38,24 @@ static volatile long g_lockline = 0;
+  * pause, and yield after a long wait. The bare exchange loop let GH3's four
+  * idle job-policy pollers saturate the line and delay every other SPU atomic
+  * -- FMOD's mixer task among them, 25-40 ms at a time. */
++/* Per-thread time spent waiting for the global lock line (QPC ticks); read by
++ * the WAIT_SIGNAL log (SPU_WAITLOG) to tell lock contention from task work. */
++__declspec(thread) unsigned long long g_spu_lockline_wait_ticks;
++__declspec(thread) unsigned long long g_spu_lockline_count;
+ void spu_lockline_lock(void)
+ {
+     unsigned spins = 0;
+-    while (_InterlockedExchange(&g_lockline, 1)) {
++    g_spu_lockline_count++;
++    if (!_InterlockedExchange(&g_lockline, 1)) return;
++    LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
++    do {
+         do {
+             _mm_pause();
+             if (++spins >= 4096) { spins = 0; SwitchToThread(); }
+         } while (g_lockline);
+-    }
++    } while (_InterlockedExchange(&g_lockline, 1));
++    QueryPerformanceCounter(&t1);
++    g_spu_lockline_wait_ticks += (unsigned long long)(t1.QuadPart - t0.QuadPart);
+ }
+ void spu_lockline_unlock(void) { _InterlockedExchange(&g_lockline, 0); }
+ #else
+diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
+index 90f3221..c3cf430 100644
+--- a/runtime/spu/spu_dma.h
++++ b/runtime/spu/spu_dma.h
+@@ -1359,7 +1359,20 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+     /* Policy-module observation trace: every SPURS PM run's first transfers,
+      * always on (policy runs are rare and their DMA pattern is the primary
+      * bring-up signal: joblist fetch, job-module loads, output stores). */
++    /* SPU_DMA_IMG=<n>: every DMA of image n (cmd, lsa, ea, size), up to 200000. */
++    { static int s_di = -2; if (s_di == -2) { const char* e = getenv("SPU_DMA_IMG"); s_di = e ? atoi(e) : -1; }
++      static int s_dc = 0;
++      if (s_di >= 0 && spu->image_id == s_di && s_dc++ < 200000)
++          fprintf(stderr, "[img-dma] img=%d pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%09llX size=0x%X\n",
++                  s_di, spu->pc & 0x3FFFF, cmd, lsa, (unsigned long long)ea, size); }
+     if (spu->policy_mode) {
++        /* SPURS_PM_DMA_WID=<n>: every DMA of the policy-module runs of workload n
++         * (wklCurrentId @LS 0x1DC), up to 600 -- what a stalled workload fetches. */
++        { static int s_dw = -2; if (s_dw == -2) { const char* e = getenv("SPURS_PM_DMA_WID"); s_dw = e ? atoi(e) : -1; }
++          static int s_dn = 0;
++          if (s_dw >= 0 && spu->ls[0x1DF] == (uint8_t)s_dw && s_dn++ < 40000)
++              fprintf(stderr, "[pm-dma] wid=%d pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%09llX size=0x%X tag=%u\n",
++                      s_dw, spu->pc & 0x3FFFF, cmd, lsa, (unsigned long long)ea, size, tag); }
+         static int _pn = 0;
+         /* Cap the boot-time flood, but reopen the trace once the PPU is at the
+          * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
 diff --git a/runtime/spu/spu_drain.c b/runtime/spu/spu_drain.c
 index 931d3b3..fbeffa2 100644
 --- a/runtime/spu/spu_drain.c
@@ -1900,6 +2050,55 @@ index bdee01c..baa59b5 100644
 +void spu_pm_interp_entry(spu_context* ctx) {
 +    spu_interp_run(ctx, 0xA00u);
 +}
+diff --git a/runtime/spu/spu_workload.c b/runtime/spu/spu_workload.c
+index 6a19d5b..102c964 100644
+--- a/runtime/spu/spu_workload.c
++++ b/runtime/spu/spu_workload.c
+@@ -1082,9 +1082,24 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
+     { extern unsigned long long ps3_ms_now(void);
+       unsigned long long _now = ps3_ms_now();
+       static int _n = 0; if (_n++ < 200 || (_n % 500) == 0)
+-        fprintf(stderr, "[spu_workload] WAIT_SIGNAL#%d enter task=%u taskset=0x%08X ran=%llums\n",
+-                _n, taskId, taskset_ea,
+-                s_wait_exit_ms ? (_now - s_wait_exit_ms) : 0ull); }
++      { /* lock-line wait (ms) and atomic count since the last WAIT_SIGNAL exit */
++        extern __declspec(thread) unsigned long long g_spu_lockline_wait_ticks, g_spu_lockline_count;
++        static _Thread_local unsigned long long s_lw0, s_lc0;
++        LARGE_INTEGER f; QueryPerformanceFrequency(&f);
++        unsigned long long lw = (g_spu_lockline_wait_ticks - s_lw0) * 1000ull / (unsigned long long)f.QuadPart;
++        unsigned long long lc = g_spu_lockline_count - s_lc0;
++        s_lw0 = g_spu_lockline_wait_ticks; s_lc0 = g_spu_lockline_count;
++        /* thread CPU time (user+kernel) since the last exit: cpu ~= ran means the
++         * stage is compute-bound; cpu << ran means it was blocked somewhere. */
++        static _Thread_local unsigned long long s_cpu0;
++        FILETIME c_, e_, k_, u_; unsigned long long cpu = 0;
++        if (GetThreadTimes(GetCurrentThread(), &c_, &e_, &k_, &u_))
++            cpu = (((unsigned long long)k_.dwHighDateTime << 32 | k_.dwLowDateTime) +
++                   ((unsigned long long)u_.dwHighDateTime << 32 | u_.dwLowDateTime)) / 10000ull;
++        unsigned long long dcpu = cpu - s_cpu0; s_cpu0 = cpu;
++        fprintf(stderr, "[spu_workload] WAIT_SIGNAL#%d enter task=%u taskset=0x%08X t=%llu ran=%llums cpu=%llums lockwait=%llums atomics=%llu\n",
++                _n, taskId, taskset_ea, _now,
++                s_wait_exit_ms ? (_now - s_wait_exit_ms) : 0ull, dcpu, lw, lc); } }
+     /* LBP_SYNC_ACK: taskset sync-lane bookkeeping. On real SPURS the taskset
+      * POLICY MODULE advances the per-SPU progress lanes (sync+0x40+16*row:
+      * ticket u16 @+0, consumer lanes @+2..) as tasks are processed; our HLE
+@@ -1161,7 +1176,15 @@ int spu_taskset_wait_signal(uint32_t taskset_ea, uint32_t taskId)
+                 "after %us (no signal)\n", taskId, taskset_ea, secs); fflush(stderr); }
+     spu_serial_acquire();       /* resume: re-take the serial lock */
+     { extern unsigned long long ps3_ms_now(void);
+-      s_wait_exit_ms = ps3_ms_now(); }   /* stamp for the next entry's ran= */
++      unsigned long long now = ps3_ms_now();
++      /* SPU_WAITLOG=1: parked time per WAIT_SIGNAL exit (secs = 1 s timeouts hit):
++       * tells a condvar wake from a wake that only came when the timer ran out. */
++      { static int s_wl = -1; if (s_wl < 0) s_wl = getenv("SPU_WAITLOG") ? 1 : 0;
++        static int _n = 0;
++        if (s_wl && _n++ < 400 && s_wait_exit_ms)
++            fprintf(stderr, "[spu_workload] WAIT_SIGNAL exit task=%u taskset=0x%08X t=%llu timeouts=%u\n",
++                    taskId, taskset_ea, now, secs); }
++      s_wait_exit_ms = now; }   /* stamp for the next entry's ran= */
+     return 0;
+ }
+ 
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
 index 4f82063..90c285e 100644
 --- a/runtime/spu/spurs_policy.c
