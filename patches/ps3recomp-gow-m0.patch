@@ -1807,10 +1807,29 @@ index 7ac619f..b311e88 100644
  void spu_lockline_unlock(void) { _InterlockedExchange(&g_lockline, 0); }
  #else
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..4ab52a6 100644
+index 90f3221..fb31de3 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
-@@ -1359,7 +1359,33 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -818,11 +818,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+           fprintf(stderr, " %02X%02X%02X%02X", spu->ls[_e+_o], spu->ls[_e+_o+1],
+                   spu->ls[_e+_o+2], spu->ls[_e+_o+3]);
+       fprintf(stderr, "\n"); }
++    const uint32_t rem0 = spu->list_stall_remaining[t];
+     int rc = mfc_run_list(spu, spu->list_stall_elem_lsa[t], spu->list_stall_remaining[t],
+                           spu->list_stall_dest_lsa[t], spu->list_stall_ea_base[t],
+                           spu->list_stall_cmd[t], t);
+     if (!(spu->list_stall_mask & (1u << t)))      /* ran to the end: tag done */
+         mfc->tag_completed |= (1u << t);
++    /* SPU_LIST_TAG=<n>: uncapped ack trace for one tag group. */
++    { static int s_lt = -2; if (s_lt == -2) { const char* e = getenv("SPU_LIST_TAG"); s_lt = e ? atoi(e) : -1; }
++      if ((int)t == s_lt)
++          fprintf(stderr, "[list-tag] ACK tag=%u pc=0x%05X irq=%d remaining=%u rc=%d parked=0x%X stallstat=0x%X "
++                  "completed=0x%X evstat=0x%X\n", t, spu->pc & SPU_LS_MASK, spu->irq_saved ? 1 : 0, rem0, rc,
++                  spu->list_stall_mask, spu->list_stall_stat, mfc->tag_completed, spu->event_status); }
+     return rc;
+ }
+ 
+@@ -1359,7 +1366,33 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -1844,6 +1863,62 @@ index 90f3221..4ab52a6 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
+@@ -1391,11 +1424,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+                     "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
+                     spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
+                     size, size / 8, tag); }
++        { static int s_lt = -2; if (s_lt == -2) { const char* e = getenv("SPU_LIST_TAG"); s_lt = e ? atoi(e) : -1; }
++          static int s_ln = 0;
++          if (((int)tag == s_lt || (s_lt >= 32 && lsa < 0x10)) && s_ln++ < 400) {
++              const uint8_t* q = spu->ls + ((uint32_t)ea & SPU_LS_MASK & ~7u);
++              fprintf(stderr, "[list-tag] ISSUE tag=%u pc=0x%05X lr=0x%05X irq=%d cmd=0x%02X list=0x%05X size=0x%X dest=0x%05X "
++                      "elems=%02X%02X%02X%02X:%02X%02X%02X%02X %02X%02X%02X%02X:%02X%02X%02X%02X ls0=%02X%02X%02X%02X\n",
++                      tag, spu->pc & SPU_LS_MASK, spu->gpr[0]._u32[0] & SPU_LS_MASK, spu->irq_saved ? 1 : 0,
++                      cmd, (uint32_t)ea & SPU_LS_MASK, size, lsa,
++                      q[0],q[1],q[2],q[3],q[4],q[5],q[6],q[7], q[8],q[9],q[10],q[11],q[12],q[13],q[14],q[15],
++                      spu->ls[0], spu->ls[1], spu->ls[2], spu->ls[3]); } }
+         rc = mfc_do_list_transfer(spu, (uint32_t)ea & SPU_LS_MASK,
+                                   ea & 0xFFFFFFFF00000000ull, size, cmd);
+     } else {
+         rc = mfc_do_transfer(spu, lsa, ea, size, cmd);
+     }
++    /* SPU_LIST_TAG set: report any DMA that changed LS word 0 (the interrupt
++     * vector of the WWS job manager) -- an overwritten vector means every
++     * later interrupt is refused. */
++    { static int s_lt2 = -2; if (s_lt2 == -2) { const char* e = getenv("SPU_LIST_TAG"); s_lt2 = e ? 1 : 0; }
++      static uint32_t s_ls0_seen[64]; static int s_v0n = 0;
++      if (s_lt2 && spu->policy_mode) {
++          const uint32_t w0 = (uint32_t)spu->ls[0] << 24 | spu->ls[1] << 16 | spu->ls[2] << 8 | spu->ls[3];
++          unsigned slot = (unsigned)spu->ls[0x1DF] & 63u;
++          if (s_ls0_seen[slot] && w0 != s_ls0_seen[slot] && s_v0n++ < 40)
++              fprintf(stderr, "[list-tag] LS0 changed 0x%08X -> 0x%08X by cmd=0x%02X tag=%u lsa=0x%05X ea=0x%09llX size=0x%X pc=0x%05X wid=%u\n",
++                      s_ls0_seen[slot], w0, cmd, tag, lsa, (unsigned long long)ea, size, spu->pc & SPU_LS_MASK, slot);
++          if (s_ls0_seen[slot] && w0 != s_ls0_seen[slot] && s_v0n == 1) {   /* first event: dump LS + regs */
++              FILE* f = fopen("ls_vector_clobber.bin", "wb");
++              if (f) { fwrite(spu->ls, 1, SPU_LS_SIZE, f); fclose(f); }
++              fprintf(stderr, "[list-tag] dumped LS -> ls_vector_clobber.bin; lr=0x%05X r3..r8=%08X %08X %08X %08X %08X %08X\n",
++                      spu->gpr[0]._u32[0] & SPU_LS_MASK, spu->gpr[3]._u32[0], spu->gpr[4]._u32[0], spu->gpr[5]._u32[0],
++                      spu->gpr[6]._u32[0], spu->gpr[7]._u32[0], spu->gpr[8]._u32[0]);
++          }
++          s_ls0_seen[slot] = w0;
++      } }
+ 
+     /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
+      * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
+@@ -1546,6 +1609,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+                       spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
+                       spu->mfc_tag_status,
+                       (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }
++        /* SPU_LIST_TAG=<n>: tag updates whose mask covers tag n (rate-limited to 400). */
++        { static int s_lt = -2; if (s_lt == -2) { const char* e = getenv("SPU_LIST_TAG"); s_lt = e ? atoi(e) : -1; }
++          static int s_ln = 0;
++          if (s_lt >= 0 && (spu->mfc_tag_mask & (1u << s_lt)) && s_ln++ < 400)
++              fprintf(stderr, "[list-tag] TAGUPD pc=0x%05X upd=%u mask=0x%X completed=0x%X -> stat=0x%X parked=0x%X\n",
++                      spu->pc & SPU_LS_MASK, value, spu->mfc_tag_mask, mfc->tag_completed,
++                      spu->mfc_tag_status, spu->list_stall_mask); }
+         break;
+     case MFC_WrListStallAck:
+         /* Acknowledge a stalled list element's tag group: resume the parked
 diff --git a/runtime/spu/spu_drain.c b/runtime/spu/spu_drain.c
 index 931d3b3..fbeffa2 100644
 --- a/runtime/spu/spu_drain.c

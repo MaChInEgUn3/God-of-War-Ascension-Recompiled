@@ -42,6 +42,10 @@ Lessons that cost days; keep them.
 * **Stuck SPURS workloads**: `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc);
   `SPURS_WINFO_LOG=1` logs what `cellSpursGetWorkloadInfo` returns (contention/readyCount changes per wid).
+* **SPU DMA lists / interrupts**: `SPU_LIST_TAG=<n>` traces list ISSUE (with the first two elements and LS word 0),
+  stall ACKs and tag updates for tag n, and reports any DMA during a PM run that changes LS word 0 (the WWS
+  interrupt vector), dumping the whole LS to `ls_vector_clobber.bin` on the first change. `[spu-int] ... is no
+  branch -- not taken` means the vector was overwritten.
 * **Lifter regression to remember**: callee-saved restore folding (`_cs_N`) must never apply to a mid-function
   spill/reload pair; if a function computes garbage right after a reload from the stack, check its lifted C for
   `ctx->gpr[N] = _cs_N` at that point.

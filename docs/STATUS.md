@@ -49,6 +49,9 @@ register was mistaken for a prologue save, so its reload returned the entry valu
 `ppu_lifter.py`, relift required). No NULL reads or heap damage remain. Current stop: the WWS policy-module run of
 wid 7 never returns. It loops waiting for DMA tag 5, a stall-and-notify list whose SN interrupt is taken but never
 acknowledged; the main thread waits for that workload to go idle.
+Update (M0.19): the SN is refused because LS 0 (the PM's interrupt vector) was overwritten by a job's `PUTL`. The
+job built its output-list descriptor from a JobApi buffer/tag allocation (PM ~0x16F0) that returned -1, so the list
+address became LS 0. Next: why that PM allocation fails for the RenJobSet job (buffer-set binding).
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
