@@ -65,6 +65,20 @@ Lessons that cost days; keep them.
   report then lists recent kicks and the `GET_REPORT`s within ±0x14000 of get (offset range
   `GCM_WALK_REPORT=<lo>-<hi>`, default 0x1E000-0x20000, the RsxSync report slots).
   The runtime hooks behind it (`g_spu_put_observer`, `g_ppu_jump_store_observer`) are NULL unless a library installs them.
+* **Walker history and unfilled holes** (`[walk]` report, needs `GCM_PARKLOG=1`): `spu-put` lists the SPU PUTs into the
+  FIFO ring near get (ring range `GCM_PUTRING=<lo>-<hi>`, IO, default 0x280000-0xA80000; wid 13 RenderJobs writes 0x4000
+  chunks with self-JUMP holes, wid 15-17 EDGE fill them); `ref to park` scans `GCM_WALK_SCAN=<lo>-<hi>` (EA, default
+  0x21600000-0x21C00000) for the parked word's EA/IO and the words pointing at it (EDGE job descriptor and job-list
+  entry); `jump` and `report-done` are the last JUMPs taken and main-memory GET_REPORTs executed; `armed report` lists
+  RsxSync report slots (`GCM_WALK_ARMED`, default 0x2001ED00-0x2001EE20) whose `+0xC` halfword is still set, plus every
+  GET_REPORT for them in the ring (old laps stay in memory: check the `jump` path before calling one "executed");
+  `GCM_WALK_DUMP=<ea>,<bytes>[;...]` dumps raw memory.
+* **WWS job-list state**: workload data `+0x08` = current row/list, rows at `+0x40+0x10*n` = {u16 high-water, u16 next
+  index, u16 lanes...}; list at `+0x3C` (EDGE) or the four list pointers at `+0x30` (RsxSync). Entries `{u32 cmd, u32 arg}`:
+  1 job, 3 nop, 4 end/next list, 2 and 5 are both gated at allocation on the halfword at `arg` being 0 (the PM reads the
+  counter `(count<<16)|(wid<<8)|flags`). `SPURS_PM_HANG_LS=<ls>,<bytes>[;...]` adds LS dumps to `[pm-hang]`;
+  `SPURS_PM_ENDLS_WID=<lo>-<hi>` prints them (`[pm-end]`) at the end of the next three runs of those wids once the
+  `[walk]` report has fired. The WWS PM caches the list line at LS 0xD00 (EA at 0x1500).
 * **Where is the main thread when flips stop?** `GOW_CLOCK_WATCH=<s>` prints three `[GSTACK:stall-main]` guest stacks
   (`ppu_dump_thread_stack(1, ...)`); identical sp/lr = blocked. This beat a day of reasoning about pipeline cycles.
 * **SPURS tasksets**: `SPU_TS_COMMITLOG=<taskset ea>` logs the bitsets at each SPU commit to that taskset's header line

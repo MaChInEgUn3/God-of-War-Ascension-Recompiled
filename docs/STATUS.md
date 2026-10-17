@@ -85,6 +85,17 @@ SPU-side. Fixes:
 * SPU-created tasks are started when the taskset header line is committed (the ELF field flags are masked off).
 
 The batch now completes. Next stop: the main thread in `func_00416A10` (via `0x35E8EC`, frame function `+0x2C4`).
+Update (M0.24, in progress): runs now reach 1300-2200 flips. The main-thread stop varies (`0x416338` job scheduler,
+`0x375A60` ref throttle), but on the RSX side it is always the same: the walker parks on an EDGE hole that is never
+filled. Measured chain:
+* the hole's EDGE job is in the EDGE list;
+* the EDGE PM waits at a `(2, slot)` entry on the previous slot of the batch-counter ring `0x99AA80` (count 1);
+* the MLAA HLE does 5 of that slot's 6 decrements; the last comes from an RsxSync job (LS `0x4618`);
+* RsxSync sits on an armed report whose GET_REPORT is not on the walked path before the hole.
+
+Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
+emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
+is unexplained.
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.

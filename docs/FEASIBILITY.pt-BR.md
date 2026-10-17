@@ -237,6 +237,20 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - `SPU_TS_COMMITLOG=<taskset ea>`: bitsets a cada commit no cabeçalho do taskset, mais as candidatas de cada varredura;
   - a pilha da thread principal (`[GSTACK:stall-main]`) quando os flips param.
 
+### M0.24 — buracos EDGE não preenchidos (em andamento, 2026-10-17)
+- As execuções chegam a 1300–2200 flips. A parada da thread principal varia (`0x416338`, escalonador de jobs PPU; `0x375A60`, throttle por `ref` do RSX), mas no lado RSX é sempre a mesma coisa: o walker fica num self-JUMP no meio de um sub-buffer, isto é, um buraco que um job EDGE deveria preencher.
+- O RenderJobs (wid 13) escreve blocos de 0x4000 no FIFO com buracos; o EDGE0/1/2 (wid 15/16/17) preenche cada um com comandos (`0x00041740…`).
+- Cadeia medida:
+  - o job do buraco está na lista do EDGE;
+  - a PM do EDGE para numa entrada `(2, slot)` e espera o slot **anterior** do anel de contadores de lote `0x99AA80` (8 slots, índice em `0x99AAA0`), que está com count 1;
+  - o HLE do MLAA faz 5 dos 6 decrementos; o último vem de um job do RsxSync (LS `0x4618`);
+  - o RsxSync está numa espera de report armado, cujo GET_REPORT não está no caminho percorrido antes do buraco (as cópias no anel são de voltas anteriores).
+- Algumas paradas se resolvem sozinhas. Em aberto: a dependência atravessa mesmo o buraco, ou a emulação erra a ordem de emissão/armação? Também há um segundo padrão sem explicação: a PM parada numa entrada de job (linha `0x00130013`).
+- Ferramentas novas:
+  - no relatório `[walk]`: `spu-put`, `ref to park`, `jump`, `report-done` e `armed report`;
+  - `GCM_WALK_SCAN`, `GCM_WALK_DUMP`, `GCM_WALK_ARMED` e `GCM_PUTRING`;
+  - `SPURS_PM_HANG_LS` e `SPURS_PM_ENDLS_WID`.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.
