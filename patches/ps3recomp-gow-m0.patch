@@ -2051,7 +2051,7 @@ index 931d3b3..fbeffa2 100644
              spu_task_launch_check(ctx, (void*)fn);
              if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) {
 diff --git a/runtime/spu/spu_interp.c b/runtime/spu/spu_interp.c
-index bdee01c..baa59b5 100644
+index bdee01c..ebd8860 100644
 --- a/runtime/spu/spu_interp.c
 +++ b/runtime/spu/spu_interp.c
 @@ -114,6 +114,27 @@ static int spu_step(spu_context* ctx) {
@@ -2114,7 +2114,19 @@ index bdee01c..baa59b5 100644
      /* rotate / shift extras */
      case SPU_rothm:    DST = spu_rothm(A,B); break;
      case SPU_rotqmbi:  DST = spu_rotqmbi(A,B); break;
-@@ -309,8 +353,9 @@ static int spu_step(spu_context* ctx) {
+@@ -288,7 +332,10 @@ static int spu_step(spu_context* ctx) {
+     case SPU_brhz: if ((PREF(DST) & 0xFFFF) == 0) next = d.tgt; break;
+     case SPU_brhnz:if ((PREF(DST) & 0xFFFF) != 0) next = d.tgt; break;
+     case SPU_bi:   next = PREF(A) & 0x3FFFC; break;
+-    case SPU_bisl: DST = spu_link(pc + 4); next = PREF(A) & 0x3FFFC; break;
++    /* Read the target before writing the link: `bisl $0,$0` (rt == ra) is how
++     * GoW:A's WWS jobs call the JobApi through a table word they rotated into
++     * $0. Writing the link first made that call return to itself unexecuted. */
++    case SPU_bisl: next = PREF(A) & 0x3FFFC; DST = spu_link(pc + 4); break;
+     case SPU_iret: next = ctx->srr0 & 0x3FFFC; break;
+     case SPU_biz:  if (PREF(DST) == 0) next = PREF(A) & 0x3FFFC; break;
+     case SPU_binz: if (PREF(DST) != 0) next = PREF(A) & 0x3FFFC; break;
+@@ -309,8 +356,9 @@ static int spu_step(spu_context* ctx) {
                     ctx->pc = pc; ctx->stop_code = 0x1000; ctx->status = SPU_STATUS_STOPPED_BY_HALT; return 1; }
          break; }
      default:
@@ -2126,7 +2138,7 @@ index bdee01c..baa59b5 100644
          ctx->pc = pc; ctx->status = SPU_STATUS_STOPPED_BY_HALT; return 1;
      }
      ctx->pc = next;
-@@ -360,6 +405,26 @@ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t sto
+@@ -360,6 +408,26 @@ uint32_t spu_interp_run_until(spu_context* ctx, uint32_t start_lsa, uint32_t sto
      static int _g1in=0;
      uint32_t ring[64]; int rc=0, rn=0;
      for (;;) {
@@ -2153,7 +2165,7 @@ index bdee01c..baa59b5 100644
          /* Match the lifted path: only synthetic HLE tasks may bypass the
           * resident policy. Real tasksets also store 0xA70 in their API table.
           * Preserve the legacy CRI return convention while invoking the HLE. */
-@@ -454,3 +519,10 @@ void spu_dispatch(spu_context* ctx, uint32_t target) {
+@@ -454,3 +522,10 @@ void spu_dispatch(spu_context* ctx, uint32_t target) {
          target = next;
      }
  }
@@ -2444,3 +2456,37 @@ index 66c65e5..4d9776b 100644
                  _r = int(_dm.group(1))
                  if _r not in _first_def:
                      _first_def[_r] = _i
+diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
+index bfc9af4..f711e5d 100644
+--- a/tools/spu_lifter.py
++++ b/tools/spu_lifter.py
+@@ -925,19 +925,23 @@ class SPULifter:
+             # Indirect call: nested dispatch bracketed like brsl (host_depth +
+             # SPU_DRAIN + image save/restore) so the callee's tail-chains drain
+             # here and its `bi $r0` returns via host return.
+-            return (f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
+-                    f"{{ int32_t _si = (int32_t)ctx->image_id; "
+-                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; ctx->host_depth++; "
++            # The target is read before the link is written: rt == ra
++            # (`bisl $0,$0`, GoW:A's WWS jobs) must call the old value.
++            return (f"{{ uint32_t _bt = {g(tgt_reg)}._u32[0]; "
++                    f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
++                    f"int32_t _si = (int32_t)ctx->image_id; "
++                    f"{_ied}ctx->pc = _bt; ctx->host_depth++; "
+                     f"spu_indirect_branch(ctx); spu_drain_call(ctx, 0x{addr + 4:X}); "
+                     f"ctx->host_depth--; spu_img_restore(ctx, _si); }}")
+         # bisled: set link, branch to RA only if an external event is pending.
+         if mn in ("bisled",):
+             link_rt = insn.raw & 0x7F            # rt = link; ra (last) = target
+             tgt_reg = _reg(ops[-1])
+-            return (f"{g(link_rt)} = spu_splat_u32(0x{addr + 4:X}); "
++            return (f"{{ uint32_t _bt = {g(tgt_reg)}._u32[0]; "
++                    f"{g(link_rt)} = spu_splat_u32(0x{addr + 4:X}); "
+                     f"if ((ctx->event_status & ctx->event_mask) != 0) {{ "
+-                    f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; "
+-                    f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
++                    f"{_ied}ctx->pc = _bt; "
++                    f"g_spu_trampoline_fn = spu_indirect_branch; return; }} }}")
+         # biz/binz/bihz/bihnz: ops[0] = condition reg, ops[1] = target reg.
+         if mn in ("biz", "binz", "bihz", "bihnz"):
+             cond = self._cond(mn[1:], _reg(ops[0]))   # strip leading 'b' -> iz/inz...

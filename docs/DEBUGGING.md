@@ -49,6 +49,10 @@ Lessons that cost days; keep them.
 * **Lifter regression to remember**: callee-saved restore folding (`_cs_N`) must never apply to a mid-function
   spill/reload pair; if a function computes garbage right after a reload from the stack, check its lifted C for
   `ctx->gpr[N] = _cs_N` at that point.
+* **SPU register hazards**: an instruction whose destination is also a source (`bisl $0,$0`) must read its
+  operands first. The interpreter got this wrong for `bisl` (M0.20); suspect it whenever a job "returns" from an
+  API call that never ran (no PM-side trace, result = whatever was in `r3` before).
+* **Frame count**: `GCM_FLIPCOUNT=1` logs every flip with a timestamp.
 * **MLAA**: `GOW_MLAA=lifted` runs the real MLAA tasks (image 14) instead of the HLE in `port/gow_mlaa_hle.c`.
 * **SPURS tasks**: `SPURS_TASK2_STUB=1` restores the old accept-only `cellSpursCreateTask2`. SPU `BRANCH-TO-0` lines now
   print `ls[pc-4]`/`ls[pc]`/`r3`: a `stopd` (`0x280xxxxx`) or `stop` word there is a job assert, not a missing lift.

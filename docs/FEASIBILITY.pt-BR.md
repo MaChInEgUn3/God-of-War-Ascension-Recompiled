@@ -176,6 +176,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Próximo passo:** descobrir por que a função da PM que aloca buffer/tag (JobApi perto de `0x16F0`; conferir junto `logicalToBufferNumArray @0x11B0` e `bufferSetArray @0xDF0`) falha para esse job do RenJobSet. A causa provável é o binding de buffer-set não feito no carregamento do job, ou outra instrução mal emulada no interpretador.
 - Medido depois: na entrada do job, `runJobNum@0x12E0 = 0` e `loadJobNum@0x12D0 = -1`, iguais aos de workloads saudáveis, então não é o caso de `runJobNum = -1` visto no LBP. A tabela de API do job tem `0x16F0` (espera de tag 3) na entrada 0. A chamada que falha é a de lote de buffers `0x1760` (`r4 = 2` requisições → `0x2FD8` GetBufferTag → `0x2EA0` GetLogicalBuffer). O próximo passo é ler o cabeçalho de buffers desse job e o que `0x2EA0` exige.
 
+### M0.20 — `bisl $0,$0` no interpretador SPU: wid 7 destravado, ~740 flips (2026-10-16)
+- **Causa raiz do M0.19.** A tabela de API do job (LS `0x1370`) é `{0x16F0, 0x2FD8, 0x1760, ...}`. O job roda `rotqbyi $0,$0,4; bisl $0,$0`, uma chamada indireta para `0x2FD8` (GetBufferTag com `set=2`, `logical=0`, `useTag=1`) em que o registrador de link é o mesmo do alvo. O interpretador (`spu_interp.c`, `SPU_bisl`) gravava o link antes de ler o alvo, então a chamada "retornava" à instrução seguinte sem executar. O job usava então o `r3 = {-1,0,0,0}` deixado pela API `0x16F0` (`0x2350` devolve `ceq(tagstat, mask)`): tag `0xFF` e endereço LS 0.
+- Pela análise estática com o dump da LS, o resultado correto era o buffer 4 do set 2 (`bufferSetArray @0xDF0` = `D8108204`, página 216 → LS `0x36000`), com a tag alocada por `0x2930`.
+- **Correção:** no `bisl` o alvo é lido antes de gravar o link, no interpretador e também no `spu_lifter.py` (`bisl`/`bisled`). Nenhuma imagem liftada atual tem `rt == ra`, então não é preciso reliftar. O microstepper (`spu_channels.c`) já fazia na ordem certa.
+- **Resultado:** `SPURS_PM_HANG=3` não reporta nada, o wid 7 chega a contention 0, e a contagem vai de 2 para cerca de 740 flips em 48 s (`GCM_FLIPCOUNT=1`, ~15 por segundo). A MLAA atende até o lote 12.
+- **Nova parada (~48 s):** os flips cessam e a thread principal gira em `[HOTREAD] 0x20A9AE94` (lr `0x467B2C`), a mesma espera de conclusão de job WWS da M0.10.
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.

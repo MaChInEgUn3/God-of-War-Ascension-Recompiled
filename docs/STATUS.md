@@ -52,6 +52,11 @@ acknowledged; the main thread waits for that workload to go idle.
 Update (M0.19): the SN is refused because LS 0 (the PM's interrupt vector) was overwritten by a job's `PUTL`. The
 job built its output-list descriptor from a JobApi buffer/tag allocation (PM ~0x16F0) that returned -1, so the list
 address became LS 0. Next: why that PM allocation fails for the RenJobSet job (buffer-set binding).
+Update (M0.20): the allocation never ran. The job calls the JobApi with `bisl $0,$0` (link register = target
+register), and the SPU interpreter wrote the link before reading the target, so the call returned to itself. Fixed in
+`spu_interp.c` and, for future lifts, in `spu_lifter.py`. The wid 7 PM run returns and the game reaches **about 740
+flips in 48 s** (was 2). Current stop: the flips cease around 48 s and the main thread spins on `0x20A9AE94`
+(lr `0x467B2C`, WWS job completion).
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
