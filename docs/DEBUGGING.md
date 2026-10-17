@@ -79,6 +79,12 @@ Lessons that cost days; keep them.
   also prints the newest frame header (`frame +0x200..+0x810`) and the current words at the last jump sources.
   Combining `SPU_DMA_EA` (EDGE lists + FIFO), `SPU_ATOM_EA=99AA80` and `GOW_MLAA_LOG=1` gives the per-frame order
   X → W → R1 → Y → EDGE fills → R2 (see FEASIBILITY M0.24).
+* **Who writes what into the FIFO / a job list**: `PPU_WVAL=<value> PPU_WVAL_LO/HI` (exact word, guest stack on the
+  first 3); `PPU_WJUMPBACK=<ea-io delta>[,<min>-<max>]` logs PPU stores of a JUMP that points `min..max` bytes behind
+  itself (a buffer wrapping to its begin); `SPU_DMA_EA_FIND=<vlo>-<vhi>` lists payload words in a value range in each
+  `[ea-dma]` line and `SPU_DMA_EA_PEEK=<ea>` appends the current guest word at ea. GoW:A frame segments: record table
+  `*(0x81B9F8)` (16-byte `{key, value}`, count `0x967E60`), sorted then linked by `0x369184`; trace `0x36971C` with
+  `PPU_TRACE_DUMP=36971c,0x967E68,0x240,1` to see each frame's segment list.
 * **WWS job-list state**: workload data `+0x08` = current row/list, rows at `+0x40+0x10*n` = {u16 high-water, u16 next
   index, u16 lanes...}; list at `+0x3C` (EDGE) or the four list pointers at `+0x30` (RsxSync). Entries `{u32 cmd, u32 arg}`:
   1 job, 3 nop, 4 end/next list, 2 and 5 are both gated at allocation on the halfword at `arg` being 0 (the PM reads the

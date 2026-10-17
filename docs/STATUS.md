@@ -93,6 +93,13 @@ filled. Measured chain:
 * the MLAA HLE does 5 of that slot's 6 decrements; the last comes from an RsxSync job (LS `0x4618`);
 * RsxSync sits on an armed report whose GET_REPORT is not on the walked path before the hole.
 
+Correction: the permanent stops come in three shapes:
+* **A:** the post-wrap frame's segment chain holds an invalid segment and overwrites its own header.
+* **B:** the EDGE PM is parked on a pre-wait job.
+* **C:** the main thread waits for the two-stage task batch in `0x368C64 → 0x3A5AA4`.
+
+Frame segments are 16-byte records (table `*(0x81B9F8)`, atomic count `0x967E60`) written by the PPU, HighestPrio6 and
+RenJobSet. They are sorted, then linked at frame function `+0x5CC`. See FEASIBILITY M0.24.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

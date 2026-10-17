@@ -252,6 +252,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Frame normal:** X → R1 → Y → o EDGE preenche os buracos pós-espera → R2. Os buracos que dependem da espera ficam depois de R1 no caminho do RSX.
 - **Frame da parada:** o EDGE preenche os buracos pré-espera (num bloco do RenderJobs em frame+0x8000), mas a cadeia de `+0x23C` (frame+0x10000, o 2º bloco escrito pelo RenderJobs) contém um buraco pós-espera. O RSX chega nele antes de R1, e isso fecha o ciclo.
   - Hipótese: os blocos do RenderJobs caíram uma posição deslocados em relação ao cabeçalho do frame (ordem de alocação no anel PPU × SPU).
+- **Correção (mesma data):** essa hipótese de deslocamento foi descartada. O slot de espera é sempre `idx−1` (sem corrida), e as paradas são de **três formas**:
+  - **A (pós-wrap):** o cabeçalho do frame vem curto (`+0x220 → +0x348`). A cadeia de segmentos daquele frame contém um segmento inválido (`0x293120 → 0x28C140`, com fim antes do início, no meio do anel), e o fluxo principal sobrescreve o próprio cabeçalho e o sub-bloco do frame antes de o RSX executá-los. Daí o buraco pós-espera antes de R1.
+  - **B (PM parada num job pré-espera):** linha `0x00130013`; a cadeia de slots não se aplica aqui.
+  - **C:** a thread principal fica em `0x368C64 → 0x343608 → 0x3A5AA4` esperando o lote de tarefas de dois estágios, e o frame nunca é ligado (RSX no park `+0x030`).
+- **Como o frame é montado:** cada pedaço do fluxo é um registro `{chave u64, valor u64}` numa tabela em `0x20A80010` (base em `0x81B9F8`), reservado com `count++` atômico em `0x967E60`.
+  - Quem escreve: o PPU (`0x368BFC`), o HighestPrio6 (wid 2, pc `0x66DC`, 7 registros por frame) e o RenJobSet (wid 11, PUTLLC `0x107F0` + PUT `0x10894`).
+  - Na função de frame, `+0x350` (`0x368C64`) espera o lote, ordena (`0x5BB850`) e converte para `{início, fim}` (`*(0x967E68)`); `+0x5CC` (`0x36971C → 0x369184`) liga os segmentos com JUMPs, pulando as entradas com início 0.
 - Algumas paradas se resolvem sozinhas. Em aberto: a dependência atravessa mesmo o buraco, ou a emulação erra a ordem de emissão/armação? Também há um segundo padrão sem explicação: a PM parada numa entrada de job (linha `0x00130013`).
 - Ferramentas novas:
   - no relatório `[walk]`: `spu-put`, `ref to park`, `jump`, `report-done` e `armed report`;

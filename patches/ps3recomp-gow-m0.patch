@@ -1799,10 +1799,10 @@ index acbaf12..f9ae67d 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index bf75dc8..15f7b38 100644
+index bf75dc8..539f5fe 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -1743,8 +1743,12 @@ static void ww_arm_inline_window(uint32_t ww)
+@@ -1743,8 +1743,37 @@ static void ww_arm_inline_window(uint32_t ww)
      g_ww_lo = ww & ~15u;
      g_ww_hi = (ww & ~15u) + len;
  }
@@ -1812,10 +1812,35 @@ index bf75dc8..15f7b38 100644
  static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra)
  {
 +    if (g_ppu_jump_store_observer && width == 4 && (v >> 29) == 1u) g_ppu_jump_store_observer(a, v);
++    /* PPU_WJUMPBACK=<ea-io delta>[,<min>-<max>] (hex): log PPU stores of a FIFO
++     * JUMP whose target lies <min..max> bytes (default 0x6000-0xA000) BEHIND the
++     * word itself -- a command buffer wrapping to its begin. Guest stack on the
++     * first three. */
++    if (width == 4 && (v >> 29) == 1u) {
++        static int s_jb = -1; static uint32_t s_d, s_mn = 0x6000, s_mx = 0xA000;
++        if (s_jb < 0) { const char* e = getenv("PPU_WJUMPBACK"); s_jb = 0;
++            if (e) { char* p; s_d = (uint32_t)strtoul(e, &p, 16); s_jb = 1;
++                     if (p && *p == ',') { s_mn = (uint32_t)strtoul(p + 1, &p, 16);
++                                           if (p && *p == '-') s_mx = (uint32_t)strtoul(p + 1, 0, 16); } } }
++        if (s_jb) {
++            uint32_t io = a - s_d, tgt = v & 0x1FFFFFFCu;
++            if (tgt < io && io - tgt >= s_mn && io - tgt <= s_mx) {
++                static int _n = 0;
++                if (_n++ < 64) {
++                    fprintf(stderr, "[wjb] io=0x%08X jump-> 0x%08X (back 0x%X) guest-fn=0x%08X\n",
++                            io, tgt, io - tgt, ppu_prof_resolve_host(ra));
++                    extern PPU_THREAD_LOCAL ppu_context* g_active_ctx;
++                    extern void ppu_dump_guest_stack(ppu_context*, const char*);
++                    if (_n <= 3 && g_active_ctx) ppu_dump_guest_stack(g_active_ctx, "wjb");
++                    fflush(stderr);
++                }
++            }
++        }
++    }
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
       * it lands. PPU_WWATCH answers "who writes this address"; when a bad value is
       * copied from node to node down a list, that only ever catches the copy.
-@@ -2120,6 +2124,18 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
+@@ -2120,6 +2149,18 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
  #endif
  }
  
@@ -1834,7 +1859,7 @@ index bf75dc8..15f7b38 100644
  extern "C" void ppu_dump_guest_stack(ppu_context* ctx, const char* tag)
  {
      if (!ctx || !vm_base) return;
-@@ -2434,6 +2450,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2434,6 +2475,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
          fprintf(stderr,"%s\n",ln); } } }
  #endif
      uint32_t addr = (uint32_t)ctx->ctr;
@@ -1860,7 +1885,7 @@ index bf75dc8..15f7b38 100644
      /* PS3_CALLTRACE=N: log the first N indirect calls (target + r3/r4) --
       * generic visibility into vtable/callback dispatch (e.g. which job body a
       * JobManager worker runs). */
-@@ -3061,13 +3096,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3061,13 +3121,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
      case 330: {   /* sys_mmapper_allocate_address(u64 size, u64 flags,
                     * u64 alignment, u32* alloc_addr) -> reserve guest VA range */
          static uint32_t s_next_va = 0x11000000u;   /* just past the loaded image */
@@ -1890,7 +1915,7 @@ index bf75dc8..15f7b38 100644
          if (out) vm_write32(out, va);
          ctx->gpr[3] = 0;
          return;
-@@ -3805,6 +3852,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
+@@ -3805,6 +3877,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
           * an empty boot device before deadlocking on a data.toc it never loaded. */
          ctx.gpr[3] = argc_n;                        /* argc */
          ctx.gpr[4] = argv_base;                     /* argv */
@@ -1903,7 +1928,7 @@ index bf75dc8..15f7b38 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -3915,3 +3968,75 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -3915,3 +3993,75 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -2341,7 +2366,7 @@ index 7ac619f..221bb05 100644
  {
      uint32_t line = ea >> SPU_COH_LINE_SHIFT;
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..3b4a034 100644
+index 90f3221..f070cf7 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -168,6 +168,15 @@ static inline int mfc_is_fence(uint32_t cmd)
@@ -2379,7 +2404,7 @@ index 90f3221..3b4a034 100644
      return rc;
  }
  
-@@ -1359,7 +1375,39 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1359,7 +1375,55 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -2398,9 +2423,25 @@ index 90f3221..3b4a034 100644
 +          (((uint32_t)ea < s_hi && (uint32_t)ea + size > s_lo) ||
 +           (s_hi2 > s_lo2 && (uint32_t)ea < s_hi2 && (uint32_t)ea + size > s_lo2)) && s_dn++ < s_dmax) {
 +          const uint8_t* d = spu->ls + (lsa & 0x3FFF0u);
-+          fprintf(stderr, "[ea-dma] img=%d wid=%u pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%08llX size=0x%X data=%02X%02X%02X%02X %02X%02X%02X%02X\n",
++          /* SPU_DMA_EA_FIND=<vlo>-<vhi>: also list payload words in [vlo,vhi) (offset=value);
++           * SPU_DMA_EA_PEEK=<ea>: and the current guest word at ea. */
++          char fb[160]; int fp = 0; fb[0] = 0;
++          { static int s_ff = -1; static uint32_t s_flo, s_fhi, s_pk;
++            if (s_ff < 0) { const char* f = getenv("SPU_DMA_EA_FIND"); s_ff = 0;
++                if (f) { char* q; s_flo = (uint32_t)strtoul(f, &q, 16);
++                         s_fhi = (q && *q == '-') ? (uint32_t)strtoul(q + 1, 0, 16) : s_flo + 1; s_ff = 1; }
++                const char* k = getenv("SPU_DMA_EA_PEEK"); s_pk = k ? (uint32_t)strtoul(k, 0, 16) : 0; }
++            if (s_ff)
++                for (uint32_t o = 0; o + 4 <= size && o < 0x4000 && fp < 120; o += 4) {
++                    const uint8_t* w = spu->ls + ((lsa + o) & 0x3FFFCu);
++                    uint32_t v = (uint32_t)w[0] << 24 | (uint32_t)w[1] << 16 | (uint32_t)w[2] << 8 | w[3];
++                    if (v >= s_flo && v < s_fhi) fp += snprintf(fb + fp, sizeof fb - fp, " +%X=%08X", o, v);
++                }
++            if (s_pk && fp < 140) { extern uint8_t* vm_base; const uint8_t* g = vm_base + s_pk;
++                fp += snprintf(fb + fp, sizeof fb - fp, " peek=%02X%02X%02X%02X", g[0], g[1], g[2], g[3]); } }
++          fprintf(stderr, "[ea-dma] img=%d wid=%u pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%08llX size=0x%X data=%02X%02X%02X%02X %02X%02X%02X%02X%s\n",
 +                  spu->image_id, spu->policy_mode ? spu->ls[0x1DF] : 255u, spu->pc & 0x3FFFF, cmd, lsa,
-+                  (unsigned long long)ea, size, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
++                  (unsigned long long)ea, size, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], fb);
 +      } }
 +    /* SPU_DMA_IMG=<n>: every DMA of image n (cmd, lsa, ea, size), up to 200000. */
 +    { static int s_di = -2; if (s_di == -2) { const char* e = getenv("SPU_DMA_IMG"); s_di = e ? atoi(e) : -1; }
@@ -2419,7 +2460,7 @@ index 90f3221..3b4a034 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1391,11 +1439,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1391,11 +1455,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -2461,7 +2502,7 @@ index 90f3221..3b4a034 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1546,6 +1624,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1546,6 +1640,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }
