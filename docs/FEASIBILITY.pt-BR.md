@@ -245,6 +245,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - a PM do EDGE para numa entrada `(2, slot)` e espera o slot **anterior** do anel de contadores de lote `0x99AA80` (8 slots, índice em `0x99AAA0`), que está com count 1;
   - o HLE do MLAA faz 5 dos 6 decrementos; o último vem de um job do RsxSync (LS `0x4618`);
   - o RsxSync está numa espera de report armado, cujo GET_REPORT não está no caminho percorrido antes do buraco (as cópias no anel são de voltas anteriores).
+- **Estrutura medida por frame:**
+  - na thread principal: `0x411A30` cria o job Y (lote anterior; espera o 1º report do frame, R1), `0x407470` cria o job X (lote atual; MLAA; espera o 2º report, R2) e `0x3E7104` aloca o próximo lote;
+  - no SPU: o MeshProcJobs (wid 14, pc `0x74D4`) escreve `(2, slot)` na lista do EDGE do frame (rodízio EDGE0/1/2), sempre com o slot anterior ao índice;
+  - no FIFO de cada frame: cabeçalho → JUMP em `+0x23C` para uma cadeia de sub-buffers (frame+0x10004) → volta em `+0x7FC` → GET_REPORT R1 em `+0x804`.
+- **Frame normal:** X → R1 → Y → o EDGE preenche os buracos pós-espera → R2. Os buracos que dependem da espera ficam depois de R1 no caminho do RSX.
+- **Frame da parada:** o EDGE preenche os buracos pré-espera (num bloco do RenderJobs em frame+0x8000), mas a cadeia de `+0x23C` (frame+0x10000, o 2º bloco escrito pelo RenderJobs) contém um buraco pós-espera. O RSX chega nele antes de R1, e isso fecha o ciclo.
+  - Hipótese: os blocos do RenderJobs caíram uma posição deslocados em relação ao cabeçalho do frame (ordem de alocação no anel PPU × SPU).
 - Algumas paradas se resolvem sozinhas. Em aberto: a dependência atravessa mesmo o buraco, ou a emulação erra a ordem de emissão/armação? Também há um segundo padrão sem explicação: a PM parada numa entrada de job (linha `0x00130013`).
 - Ferramentas novas:
   - no relatório `[walk]`: `spu-put`, `ref to park`, `jump`, `report-done` e `armed report`;

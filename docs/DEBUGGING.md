@@ -73,6 +73,12 @@ Lessons that cost days; keep them.
   RsxSync report slots (`GCM_WALK_ARMED`, default 0x2001ED00-0x2001EE20) whose `+0xC` halfword is still set, plus every
   GET_REPORT for them in the ring (old laps stay in memory: check the `jump` path before calling one "executed");
   `GCM_WALK_DUMP=<ea>,<bytes>[;...]` dumps raw memory.
+* **Frame timeline knobs**: `GCM_REPLOG=1` logs every main-memory GET_REPORT the walker executes (`[report] io arg t`);
+  `SPU_DMA_EA=<lo>-<hi>,<lo2>-<hi2>` takes a second range and `SPU_DMA_EA_MAX=<n>` (decimal) lifts the 300000-line cap;
+  `GCM_WALK_FIND=<vlo>-<vhi>[@<ealo>-<eahi>]` lists words with values in a range at the `[walk]` report; the report
+  also prints the newest frame header (`frame +0x200..+0x810`) and the current words at the last jump sources.
+  Combining `SPU_DMA_EA` (EDGE lists + FIFO), `SPU_ATOM_EA=99AA80` and `GOW_MLAA_LOG=1` gives the per-frame order
+  X → W → R1 → Y → EDGE fills → R2 (see FEASIBILITY M0.24).
 * **WWS job-list state**: workload data `+0x08` = current row/list, rows at `+0x40+0x10*n` = {u16 high-water, u16 next
   index, u16 lanes...}; list at `+0x3C` (EDGE) or the four list pointers at `+0x30` (RsxSync). Entries `{u32 cmd, u32 arg}`:
   1 job, 3 nop, 4 end/next list, 2 and 5 are both gated at allocation on the halfword at `arg` being 0 (the PM reads the
