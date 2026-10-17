@@ -100,6 +100,11 @@ Correction: the permanent stops come in three shapes:
 
 Frame segments are 16-byte records (table `*(0x81B9F8)`, atomic count `0x967E60`) written by the PPU, HighestPrio6 and
 RenJobSet. They are sorted, then linked at frame function `+0x5CC`. See FEASIBILITY M0.24.
+**Shape A fixed:** our HLE `_cellGcmSetFlipCommand` "wrapped" the title's context to `begin` whenever a block was near
+its end and `get` looked past `begin + 0x20000`. GoW:A's per-frame 64 KB blocks, which use the title's own callback,
+hit that right after the 8 MB ring wraps, so the frame overwrote its own header. The wrap now applies only to
+SDK-style contexts (no callback, or ours). Runs now reach game frame ~358 (was ~194). New stop: main thread in
+`0x352378`/`0x416A10`.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

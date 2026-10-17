@@ -259,6 +259,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **Como o frame é montado:** cada pedaço do fluxo é um registro `{chave u64, valor u64}` numa tabela em `0x20A80010` (base em `0x81B9F8`), reservado com `count++` atômico em `0x967E60`.
   - Quem escreve: o PPU (`0x368BFC`), o HighestPrio6 (wid 2, pc `0x66DC`, 7 registros por frame) e o RenJobSet (wid 11, PUTLLC `0x107F0` + PUT `0x10894`).
   - Na função de frame, `+0x350` (`0x368C64`) espera o lote, ordena (`0x5BB850`) e converte para `{início, fim}` (`*(0x967E68)`); `+0x5CC` (`0x36971C → 0x369184`) liga os segmentos com JUMPs, pulando as entradas com início 0.
+- **Causa da forma A (corrigida):** era o nosso HLE.
+  - `_cellGcmSetFlipCommand` → `gcm_flip_into_fifo` tem uma heurística de "dar a volta no anel": se sobram menos de `GCM_FLIP_WRAP_BYTES` (0x40000) até `end` e `get ≥ begin + 0x20000` (comparando endereços), ele grava `JUMP → begin` e faz `current = begin`.
+  - No GoW o contexto é um bloco de 64 KB por frame, com callback próprio do título (`0x5D9950 → 0x4158D0`). Logo depois do wrap do anel de 8 MB, o `get` ainda está na volta anterior (endereço maior), então o flip (`0x46DA30 → 0x629024`, no meio do frame) rebobinava `current` para o início do bloco, e o resto do frame sobrescrevia o próprio cabeçalho ainda não executado.
+  - Era determinístico: sempre o primeiro frame após o wrap, sempre park em `0x299080`.
+  - Correção: só dar a volta quando o contexto usa o callback padrão (o nosso) ou nenhum.
+  - Resultado: o jogo passa do frame ~194 e vai até o ~358; nova parada em `0x352378`/`0x416A10`.
+- Descartados no caminho: deslocamento dos blocos do RenderJobs, corrida na escolha do slot, atraso de 25 ms por frame (`PPU_DELAY_FN`) e reuso de slot de task (as duplicatas eram as legítimas).
 - Algumas paradas se resolvem sozinhas. Em aberto: a dependência atravessa mesmo o buraco, ou a emulação erra a ordem de emissão/armação? Também há um segundo padrão sem explicação: a PM parada numa entrada de job (linha `0x00130013`).
 - Ferramentas novas:
   - no relatório `[walk]`: `spu-put`, `ref to park`, `jump`, `report-done` e `armed report`;

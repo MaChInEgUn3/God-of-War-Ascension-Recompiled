@@ -85,6 +85,14 @@ Lessons that cost days; keep them.
   `[ea-dma]` line and `SPU_DMA_EA_PEEK=<ea>` appends the current guest word at ea. GoW:A frame segments: record table
   `*(0x81B9F8)` (16-byte `{key, value}`, count `0x967E60`), sorted then linked by `0x369184`; trace `0x36971C` with
   `PPU_TRACE_DUMP=36971c,0x967E68,0x240,1` to see each frame's segment list.
+* **Who moves a write pointer back**: `PPU_WDEC=<ea>` logs every 4-byte PPU store to ea that lowers it (small steps
+  with a guest stack) and any other-width store covering it. `stvx` is lifted as a raw memcpy and inline lifted stores
+  can bypass the watch: then `GOW_GUARD=<ea> GOW_GUARD_RIP=auto` (page guard; guest stack on the first write from each
+  distinct lifted-code instruction) names the writer. `PPU_DELAY_FN=<fn>,<ms>` sleeps on every entry to a guest
+  function (timing experiments; needs the `PPU_TRACE_FUNCS=all` lift).
+* **HLE that writes into the title's command context**: `_cellGcmSetFlipCommand(ctx, id)` writes a flip marker at
+  `ctx->current`; its ring-wrap shortcut only applies to SDK-style contexts. Suspect HLE first when a title's
+  `current` jumps without a store from title code.
 * **WWS job-list state**: workload data `+0x08` = current row/list, rows at `+0x40+0x10*n` = {u16 high-water, u16 next
   index, u16 lanes...}; list at `+0x3C` (EDGE) or the four list pointers at `+0x30` (RsxSync). Entries `{u32 cmd, u32 arg}`:
   1 job, 3 nop, 4 end/next list, 2 and 5 are both gated at allocation on the halfword at `arg` being 0 (the PM reads the
