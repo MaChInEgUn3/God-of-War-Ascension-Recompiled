@@ -59,6 +59,14 @@ Lessons that cost days; keep them.
   `[walk]` report: get/put/ref/ref queue, the last 16 decoded FIFO words, the words at get, and what the ring holds now
   after the last decoded word. `GCM_SEMALOG=1` logs every new ACQUIRE blocking point without the rest of
   `GCM_RECDBG` (which slows the walker enough to hide timing stalls).
+* **FIFO park/kick protocol**: `GCM_PARKLOG=1` logs each self-JUMP park the walker reaches and when it is released,
+  `[kick]` for every PPU store of "JUMP to the next word" (the title's park release), `[park-patch]` for SPU PUTs
+  over the current park, and `[park-reset]` if an SPU PUT writes a self-JUMP back over a released park. The `[walk]`
+  report then lists recent kicks and the `GET_REPORT`s within ±0x14000 of get (offset range
+  `GCM_WALK_REPORT=<lo>-<hi>`, default 0x1E000-0x20000, the RsxSync report slots).
+  The runtime hooks behind it (`g_spu_put_observer`, `g_ppu_jump_store_observer`) are NULL unless a library installs them.
+* **SPU atomics on one line**: `SPU_ATOM_EA=<ea> SPU_ATOM_EA_MAX=0 SPU_ATOM_FULL=1`. PUTLLC lines carry RAM and
+  STORE, so a diff shows which word each job changed (used to prove a decrement was never issued rather than lost).
 * **Port defaults that hide GoW:A-specific walker traps**: `GCM_FIFO_CIRCLE_PASSES=0` (no "circling" resync to the
   fixed `put`), `VK_TEX_OFF=1` (no CPU texture decode until guest shaders exist). Override them on the command line.
 * **`lr` in `[wwsjob]` lines** is `r0` at the moment of entry, not a link: a job resumed by `bi` after an API

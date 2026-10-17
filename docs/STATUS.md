@@ -68,6 +68,14 @@ With both, a run reaches about 1300 to 1600 flips. The remaining stops vary from
 * the walker stalled on an ordinary method.
 
 See FEASIBILITY M0.21.
+Update (M0.22): the remaining stop is a three-way wait:
+* the main thread waits for a batch counter whose last decrement is an RsxSync job;
+* that job waits for a GET_REPORT inside the next FIFO segment;
+* that segment's start park is released by the main thread only at the end of the frame.
+
+Ruled out by measurement: fence publication, a lost atomic update, and an SPU DMA re-parking a released segment. Next:
+who writes the batch-slot owner bytes (`0x99B480+i`) and the frame counter (`0x99B4BC`), and when, compared with the
+kick.
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.

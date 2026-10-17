@@ -771,7 +771,7 @@ index b7dfd50..3a00f55 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index ac0a7a8..0660937 100644
+index ac0a7a8..20ddc91 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -340,19 +340,31 @@ static void populate_offset_table(u32 ea, u32 io, u32 size)
@@ -815,10 +815,93 @@ index ac0a7a8..0660937 100644
  /* Backlog past which the drain stops honouring one-flip-per-tick and
   * catches up instead. Sized well above a frame's command list so a
   * title that keeps up never sees this path. */
-@@ -1367,6 +1380,33 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
+@@ -1367,6 +1380,137 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
      *getoff = land;
  }
  
++/* GCM_PARKLOG=1: log each self-JUMP park the walker reaches and when (and to
++ * what) it is released, every PPU store of a "JUMP to the next word" into the
++ * ring ([kick], the title's park release), every SPU PUT that writes over the
++ * current park ([park-patch]) and any SPU PUT that puts a self-JUMP back over a
++ * park the PPU already released ([park-reset]). */
++static volatile uint32_t g_gcm_park_ea = 0;
++static u32 s_park_io = 0xFFFFFFFFu;
++static unsigned long long s_park_t0 = 0;
++#define GCM_KICK_N 16
++static volatile u32 s_kick_ea[GCM_KICK_N], s_kick_io[GCM_KICK_N];
++static unsigned long long s_kick_t[GCM_KICK_N];
++static volatile long s_kick_i = 0;
++static u32 gcm_ea2io(u32 ea);
++static void gcm_ppu_jump_store(uint32_t ea, uint32_t v)
++{
++    u32 io = gcm_ea2io(ea);
++    if (io == 0xFFFFFFFFu || (v & 0x1FFFFFFCu) != io + 4u) return;    /* JUMP to the next word */
++    extern unsigned long long ps3_ms_now(void);
++    long k = InterlockedIncrement(&s_kick_i) % GCM_KICK_N;
++    s_kick_ea[k] = ea; s_kick_io[k] = io; s_kick_t[k] = ps3_ms_now();
++    static volatile long n = 0;
++    if (InterlockedIncrement(&n) <= 20000)
++        fprintf(stderr, "[kick] PPU released io=0x%08X (get=0x%08X) t=%llu\n", io, s_fifo_getoff, s_kick_t[k]);
++}
++static void gcm_spu_put(uint32_t ea, uint32_t size, const uint8_t* src, uint32_t cmd,
++                        int img, unsigned wid, uint32_t pc)
++{
++    const u32 pe = g_gcm_park_ea;
++    if (pe && ea <= pe && ea + size >= pe + 4u) {
++        const uint8_t* d = src + (pe - ea);
++        static volatile long n = 0;
++        if (InterlockedIncrement(&n) <= 400)
++            fprintf(stderr, "[park-patch] SPU img=%d wid=%u pc=0x%05X cmd=0x%02X ea=0x%08X size=0x%X -> park 0x%08X new=%02X%02X%02X%02X\n",
++                    img, wid, pc, cmd, ea, size, pe, d[0], d[1], d[2], d[3]);
++    }
++    for (int k = 0; k < GCM_KICK_N; k++) {
++        const u32 ke = s_kick_ea[k];
++        if (!ke || ea > ke || ea + size < ke + 4u) continue;
++        const uint8_t* d = src + (ke - ea);
++        const u32 w = (u32)d[0] << 24 | (u32)d[1] << 16 | (u32)d[2] << 8 | d[3];
++        if (w != (0x20000000u | s_kick_io[k])) continue;
++        extern unsigned long long ps3_ms_now(void);
++        static volatile long n = 0;
++        if (InterlockedIncrement(&n) <= 400)
++            fprintf(stderr, "[park-reset] SPU img=%d wid=%u pc=0x%05X cmd=0x%02X ea=0x%08X size=0x%X re-parks io=0x%08X released %llu ms ago\n",
++                    img, wid, pc, cmd, ea, size, s_kick_io[k], ps3_ms_now() - s_kick_t[k]);
++    }
++}
++static int gcm_parklog(void)
++{
++    static int v = -1;
++    if (v < 0) {
++        v = getenv("GCM_PARKLOG") ? 1 : 0;
++        if (v) {
++            extern void (*g_spu_put_observer)(uint32_t, uint32_t, const uint8_t*, uint32_t, int, unsigned, uint32_t);
++            extern void (*g_ppu_jump_store_observer)(uint32_t, uint32_t);
++            g_spu_put_observer = gcm_spu_put;
++            g_ppu_jump_store_observer = gcm_ppu_jump_store;
++        }
++    }
++    return v;
++}
++static void gcm_park_note(u32 io, u32 ea)
++{
++    if (!gcm_parklog() || io == s_park_io) return;
++    extern unsigned long long ps3_ms_now(void);
++    s_park_io = io; s_park_t0 = ps3_ms_now(); g_gcm_park_ea = ea;
++    static int n = 0;
++    if (n++ < 20000)
++        fprintf(stderr, "[park] RSX parked at io=0x%08X ea=0x%08X ref=0x%08X t=%llu\n", io, ea,
++                vm_read32(GCM_CONTROL_GUEST_ADDR + 8), s_park_t0);
++}
++static void gcm_park_check_release(u32 io, u32 w)
++{
++    if (s_park_io == 0xFFFFFFFFu || io != s_park_io || w == (0x20000000u | io)) return;
++    extern unsigned long long ps3_ms_now(void);
++    static int n = 0;
++    if (n++ < 20000)
++        fprintf(stderr, "[park] released io=0x%08X after %llu ms, word now 0x%08X\n", io,
++                ps3_ms_now() - s_park_t0, w);
++    s_park_io = 0xFFFFFFFFu; g_gcm_park_ea = 0;
++}
++
 +/* For a port's watchdog: where the walker is right now (unlocked, racy reads --
 + * diagnosis only). Prints get/put and the last 16 decoded words. */
 +void cellGcm_walk_report(void)
@@ -826,6 +909,12 @@ index ac0a7a8..0660937 100644
 +    fprintf(stderr, "[walk] get=0x%08X put=0x%08X ref=0x%08X refq head=%u tail=%u sema_wait_get=0x%08X\n",
 +            s_fifo_getoff, vm_read32(GCM_CONTROL_GUEST_ADDR + 0), vm_read32(GCM_CONTROL_GUEST_ADDR + 8),
 +            (unsigned)s_ref_qhead, (unsigned)s_ref_qtail, s_sema_wait_get);
++    for (int k = 0; k < GCM_KICK_N; k++)
++        if (s_kick_ea[k]) {
++            u32 cur = vm_read32(s_kick_ea[k]);
++            fprintf(stderr, "[walk]   kick io=0x%08X t=%llu word now 0x%08X%s\n", s_kick_io[k], s_kick_t[k], cur,
++                    cur == (0x20000000u | s_kick_io[k]) ? "  <-- re-parked" : "");
++        }
 +    for (u32 t = GCM_TRACE_N - 16; t < GCM_TRACE_N; t++) {
 +        u32 k = (s_tr_i + t) % GCM_TRACE_N;
 +        u32 w = s_tr_w[k];
@@ -836,6 +925,21 @@ index ac0a7a8..0660937 100644
 +        u32 io = s_fifo_getoff + (u32)(k * 4), ea = gcm_io2ea(io);
 +        fprintf(stderr, "[walk]   at get%+d io=%08X w=%08X\n", k * 4, io, ea ? vm_read32(ea) : 0xDEADDEADu);
 +    }
++    /* GET_REPORT (0x1800) headers within +-0x14000 of get whose report offset is
++     * in GCM_WALK_REPORT_LO..HI (hex, default 0x1E000-0x20000): is the report a
++     * waiter needs before or after the park the walker sits on? */
++    { static u32 lo = 1, hi = 0;
++      if (lo == 1) { const char* e = getenv("GCM_WALK_REPORT"); lo = 0x1E000; hi = 0x20000;
++                     if (e) { char* p; lo = (u32)strtoul(e, &p, 16); if (p && *p == '-') hi = (u32)strtoul(p + 1, 0, 16); } }
++      u32 from = s_fifo_getoff > 0x14000u ? s_fifo_getoff - 0x14000u : 0;
++      for (u32 io = from; io < s_fifo_getoff + 0x14000u; io += 4) {
++          u32 ea = gcm_io2ea(io), ea2 = gcm_io2ea(io + 4);
++          if (!ea || !ea2 || vm_read32(ea) != 0x00041800u) continue;
++          u32 arg = vm_read32(ea2), off = arg & 0xFFFFFFu;
++          if (off >= lo && off < hi)
++              fprintf(stderr, "[walk]   GET_REPORT at io=%08X (%s get) arg=%08X\n", io,
++                      io < s_fifo_getoff ? "before" : "after", arg);
++      } }
 +    /* What the ring holds NOW after the last decoded word (was it still empty
 +     * when the walker passed?). */
 +    { u32 last = s_tr_off[(s_tr_i + GCM_TRACE_N - 1) % GCM_TRACE_N];
@@ -849,7 +953,30 @@ index ac0a7a8..0660937 100644
  static void gcm_fifo_dump_around(u32 getoff)
  {
      static int d = 0;
-@@ -1727,7 +1767,15 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1539,7 +1683,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+      * that does read the context (the ring-recycle heuristic) is separately guarded
+      * by s_gcm_ctx_out_ea, which stays 0 on that path. */
+     if (!s_gcm_context_ea && !s_gcm_syscall_mode) return;
+-    if (!s_inited) { rsx_state_init(&s_state); s_inited = 1; }
++    if (!s_inited) { rsx_state_init(&s_state); s_inited = 1; (void)gcm_parklog(); }
+ 
+     /* Walk the FIFO exactly like the RSX: chase the guest-written `put` (an IO
+      * offset in the control register), decoding method headers and following
+@@ -1655,6 +1799,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+             break;
+         }
+         u32 w = vm_read32(ea);
++        gcm_park_check_release(s_fifo_getoff, w);
+         /* Only remember offsets BELOW put -- those are positions in the
+          * ring the title is writing. A park in another region is where the
+          * walker gave up, not how far it got through the ring. */
+@@ -1722,12 +1867,21 @@ static void gcm_rsx_process_fifo_unlocked(void)
+                * CPU the guest needs. Stop this pass instead; the next one
+                * re-reads the word, so a patched jump is still followed. */
+               if (tgt == s_fifo_getoff) {
++                  gcm_park_note(s_fifo_getoff, ea);
+                   /* Parked. If the title has meanwhile moved `put` somewhere
+                    * else, it has switched to its other segment and left this
                     * park standing -- it only patches a park when it reuses that
                     * block. Waiting for a patch that will not come freezes the
                     * FIFO for the rest of the run, so follow the write head. */
@@ -866,7 +993,7 @@ index ac0a7a8..0660937 100644
                                                gcm_fifo_resync_why("jump-park", &s_fifo_getoff, put); }
                    break;
                }
-@@ -1789,8 +1837,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1789,8 +1943,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      u32 m = (type == 0) ? method + i * 4 : method;
                      u32 v = vm_read32(dea);
                      u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
@@ -883,7 +1010,7 @@ index ac0a7a8..0660937 100644
                      if (m == 0x64u)      s_sema_offset = v;
                      else if (m == 0x6Cu) vm_write32(la, v);
                      else if (m == 0x68u && vm_read32(la) != v) {
-@@ -1803,7 +1857,23 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1803,7 +1963,23 @@ static void gcm_rsx_process_fifo_unlocked(void)
              if (blk) { sem_blocked = 1; break; }
          }
                  }
@@ -908,7 +1035,7 @@ index ac0a7a8..0660937 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -1936,7 +2006,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1936,7 +2112,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -937,7 +1064,7 @@ index ac0a7a8..0660937 100644
                          const u32 v = vm_read32(dea), idx = (v & 0xFFFFFFu) / 16u;
                          { static int rn = 0; if (rn++ < 6) printf("[GET_REPORT] type=%u idx=%u%c", v >> 24, idx, 10); }
                          if (idx < CELL_GCM_MAX_REPORT_COUNT) {
-@@ -1997,7 +2087,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1997,7 +2193,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -957,7 +1084,7 @@ index ac0a7a8..0660937 100644
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
-@@ -2637,14 +2738,101 @@ static u32 gcm_io_alloc(u32 size)
+@@ -2637,14 +2844,101 @@ static u32 gcm_io_alloc(u32 size)
      if (s_io_alloc_next == 0)
          s_io_alloc_next = (s_config.ioSize + 0xFFFFFu) & ~0xFFFFFu;
      if (s_io_alloc_next < 0x100000u) s_io_alloc_next = 0x100000u;
@@ -1059,7 +1186,7 @@ index ac0a7a8..0660937 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -2684,6 +2872,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2684,6 +2978,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -1067,7 +1194,7 @@ index ac0a7a8..0660937 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -2692,6 +2881,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2692,6 +2987,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -1075,7 +1202,7 @@ index ac0a7a8..0660937 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -2727,6 +2917,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2727,6 +3023,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -1092,7 +1219,7 @@ index ac0a7a8..0660937 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -2744,8 +2944,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -2744,8 +3050,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -1474,10 +1601,23 @@ index acbaf12..f9ae67d 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index bf75dc8..8769e72 100644
+index bf75dc8..670dd87 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
-@@ -2434,6 +2434,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -1743,8 +1743,12 @@ static void ww_arm_inline_window(uint32_t ww)
+     g_ww_lo = ww & ~15u;
+     g_ww_hi = (ww & ~15u) + len;
+ }
++/* Called for every 4-byte guest store of an NV FIFO JUMP word (type bits 001)
++ * when set -- cellGcmSys under GCM_PARKLOG records the title's park releases. */
++extern "C" { void (*g_ppu_jump_store_observer)(uint32_t ea, uint32_t v) = 0; }
+ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra)
+ {
++    if (g_ppu_jump_store_observer && width == 4 && (v >> 29) == 1u) g_ppu_jump_store_observer(a, v);
+     /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
+      * it lands. PPU_WWATCH answers "who writes this address"; when a bad value is
+      * copied from node to node down a list, that only ever catches the copy.
+@@ -2434,6 +2438,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
          fprintf(stderr,"%s\n",ln); } } }
  #endif
      uint32_t addr = (uint32_t)ctx->ctr;
@@ -1503,7 +1643,7 @@ index bf75dc8..8769e72 100644
      /* PS3_CALLTRACE=N: log the first N indirect calls (target + r3/r4) --
       * generic visibility into vtable/callback dispatch (e.g. which job body a
       * JobManager worker runs). */
-@@ -3061,13 +3080,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3061,13 +3084,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
      case 330: {   /* sys_mmapper_allocate_address(u64 size, u64 flags,
                     * u64 alignment, u32* alloc_addr) -> reserve guest VA range */
          static uint32_t s_next_va = 0x11000000u;   /* just past the loaded image */
@@ -1533,7 +1673,7 @@ index bf75dc8..8769e72 100644
          if (out) vm_write32(out, va);
          ctx->gpr[3] = 0;
          return;
-@@ -3805,6 +3836,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
+@@ -3805,6 +3840,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
           * an empty boot device before deadlocking on a data.toc it never loaded. */
          ctx.gpr[3] = argc_n;                        /* argc */
          ctx.gpr[4] = argv_base;                     /* argv */
@@ -1546,7 +1686,7 @@ index bf75dc8..8769e72 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -3915,3 +3952,75 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -3915,3 +3956,75 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -1941,7 +2081,7 @@ index 2a74e51..d83d689 100644
       * node+0x14 (observed 0x93C3C0). Dump it to identify which plugin/unit
       * type never got its SPU code streamed (env SPU_DSPDESC=<hex ea>). */
 diff --git a/runtime/spu/spu_coherency.c b/runtime/spu/spu_coherency.c
-index 7ac619f..b311e88 100644
+index 7ac619f..221bb05 100644
 --- a/runtime/spu/spu_coherency.c
 +++ b/runtime/spu/spu_coherency.c
 @@ -38,15 +38,24 @@ static volatile long g_lockline = 0;
@@ -1971,11 +2111,39 @@ index 7ac619f..b311e88 100644
  }
  void spu_lockline_unlock(void) { _InterlockedExchange(&g_lockline, 0); }
  #else
+@@ -88,6 +97,11 @@ static spu_context* s_coh_ctxs[SPU_COH_MAX_CTX];
+ 
+ unsigned long g_spu_lr_raise = 0;
+ 
++/* Called for every PUT-class SPU DMA when set (spu_dma.h mfc_do_transfer); src
++ * is the LS source of the transfer. Diagnosis hook, NULL by default. */
++void (*g_spu_put_observer)(uint32_t ea, uint32_t size, const uint8_t* src,
++                           uint32_t cmd, int img, unsigned wid, uint32_t pc) = 0;
++
+ void spu_coh_reserve(spu_context* ctx, uint32_t ea)
+ {
+     uint32_t line = ea >> SPU_COH_LINE_SHIFT;
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..fb31de3 100644
+index 90f3221..3b11719 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
-@@ -818,11 +818,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -168,6 +168,15 @@ static inline int mfc_is_fence(uint32_t cmd)
+ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+                                    uint32_t size, uint32_t cmd)
+ {
++    /* PUT observer (spu_coherency.c), installed by a library that needs to see
++     * SPU writes to guest memory -- cellGcmSys under GCM_PARKLOG watches the
++     * FIFO ring for writes over park words. */
++    { extern void (*g_spu_put_observer)(uint32_t ea, uint32_t size, const uint8_t* src,
++                                        uint32_t cmd, int img, unsigned wid, uint32_t pc);
++      if (g_spu_put_observer && (cmd & 0xF0u) == 0x20u)
++          g_spu_put_observer((uint32_t)ea, size, spu->ls + (lsa & 0x3FFF0u) + (lsa & 0xFu), cmd,
++                             spu->image_id, spu->policy_mode ? spu->ls[0x1DF] : 255u,
++                             (uint32_t)spu->pc & SPU_LS_MASK); }
+     /* SPU_DMA_WATCH=<hex>: report any transfer whose destination RANGE covers
+      * this guest address. A DMA landing in the loaded ELF image is always a
+      * bug, and it is invisible to the sampling traces -- YDKJ had an SPU job
+@@ -818,11 +827,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
            fprintf(stderr, " %02X%02X%02X%02X", spu->ls[_e+_o], spu->ls[_e+_o+1],
                    spu->ls[_e+_o+2], spu->ls[_e+_o+3]);
        fprintf(stderr, "\n"); }
@@ -1994,7 +2162,7 @@ index 90f3221..fb31de3 100644
      return rc;
  }
  
-@@ -1359,7 +1366,33 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1359,7 +1375,33 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -2028,7 +2196,7 @@ index 90f3221..fb31de3 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1391,11 +1424,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1391,11 +1433,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -2070,7 +2238,7 @@ index 90f3221..fb31de3 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1546,6 +1609,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1546,6 +1618,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }

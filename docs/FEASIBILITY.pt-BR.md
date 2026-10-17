@@ -195,6 +195,25 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   O próximo passo é descobrir quem aplica o patch de um park num frame que funciona (`SPU_DMA_EA` sobre o anel, mais o write watch da PPU) e o que esse agente espera na parada.
 - Ferramentas novas: `GOW_CLOCK_WATCH=<s>` (fase do frame clock; mais `[walk]` quando o clock trava ou os flips param), `GCM_SEMALOG=1`, `GOW_MLAA_LOG=1`, `VK_TEX_OFF`.
 
+### M0.22 — a parada restante é um ciclo PPU ↔ RsxSync ↔ RSX (2026-10-17, diagnóstico)
+- **Medido e descartado:**
+  - publicação de fences: na parada, `ref` bate e a fila está vazia;
+  - park liberado e depois sobrescrito por DMA: nenhum `[park-reset]`;
+  - update perdido no contador de lote: com `SPU_ATOM_EA=99AA80`, o 6º decremento simplesmente nunca é emitido.
+- **Quem libera os parks** (`GCM_PARKLOG=1`):
+  - os parks no meio do segmento são liberados pelos jobs EDGE (wids 15/16/17, PM `pc=0xD0F8`, `PUTF` cuja primeira palavra é o park) e pela PPU;
+  - o park de início de frame (`…x030`, depois de `SET_REFERENCE`, segmentos de `0x14000` no anel `0x280000–0xA80000`) é liberado pela thread principal (`func_00376A08` ← `0x375D90` ← `func_003E82A8+0x6D8`), que escreve "JUMP para a palavra seguinte".
+- **Função de frame `0x3E82A8`:** primeiro espera os lotes (`0x3E799C`), depois monta e libera o segmento. A espera usa `idx = (frame+2) % 3`, depois o contador EDGE `0x99AAC0+idx*4`, e para cada slot `i` marcado com `idx` em `0x99B480+i` espera `0x99AA80+i*4` e `0x99B460+i*4`.
+- **Lista do RsxSync (lista 0, `0x23E84180`):** se repete por frame como `{wait R_a; job A (0x9BCxxx); wait R_b; job B (0x9BAxxx/0x9BBxxx); nop}`.
+  - O job A do frame F decrementa `0x99AA80+(F mod 8)*4` e `0x99B460+(F mod 8)*4`.
+  - O job B do frame F sinaliza à MLAA o lote F+1, com o contador de F+1.
+  - Em cada segmento k, os reports `R_a(k)` (`+0x47D4`) e `R_b(k)` (`+0x7B30`) ficam dentro do próprio segmento. Assim o lote k+1 só fecha depois de `R_a(k+1)`, que fica no segmento k+1.
+- **Na parada:** o RSX está no park de início do segmento k+1, já parcialmente escrito pela PPU (os parks internos dele já foram liberados), e o RsxSync espera um report desse segmento. A PPU, no início da iteração, espera o contador com count 1 que depende desse mesmo job A. Como o hardware não trava, algum elo da emulação está errado: provavelmente a associação slot/frame (`0x99B480`, `0x99B4BC`) ou a ordem entre a marcação do slot e a espera. O próximo passo é ver quem escreve os bytes de dono `0x99B480+i` e o contador `0x99B4BC`, e quando, comparando com o kick.
+- Ferramentas novas:
+  - `GCM_PARKLOG=1`: `[park]`, `[park-patch]`, `[kick]`, `[park-reset]`, e os kicks recentes no `[walk]`;
+  - os ganchos de runtime `g_spu_put_observer` (PUTs SPU) e `g_ppu_jump_store_observer` (stores PPU de palavras JUMP);
+  - no `[walk]`, a varredura de `GET_REPORT` em torno do `get` (`GCM_WALK_REPORT=<lo>-<hi>`).
+
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
 0a. (feito, ver M0.8) **SPURS por LLE** (passos 2–4 de `FIRMWARE_LLE.md`) com `libsre.prx`/`liblv2.prx` decriptados.
