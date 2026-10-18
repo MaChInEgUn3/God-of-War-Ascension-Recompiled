@@ -1877,10 +1877,24 @@ index d8506de..5d72aff 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index b438d87..86d6c67 100644
+index b438d87..08b7818 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
-@@ -1989,6 +1989,29 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -1979,9 +1979,10 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+     }
+     if (s_pd.draws_log) {
+         fprintf(s_pd.draws_log, "pass %03u draw %u: pipe %u cmask %08X blend %u %X/%X"
+-                " dt %u dw %u at %u |", s_pd.pass, s_pd.draws, pipeline, rs->color_mask,
+-                rs->blend_enable, rs->sf_rgb, rs->df_rgb, rs->depth_test, rs->depth_write,
+-                rs->alpha_test_enable);
++                " dt %u dw %u df %X st %u sf %X cull %u/%X ff %X at %u |", s_pd.pass, s_pd.draws, pipeline,
++                rs->color_mask, rs->blend_enable, rs->sf_rgb, rs->df_rgb, rs->depth_test, rs->depth_write,
++                rs->depth_func, rs->stencil_enable, rs->s_func, rs->cull_enable, rs->cull_face,
++                rs->front_face, rs->alpha_test_enable);
+         for (u32 u = 0; u < RSX_BE_MAX_TEXTURES; u++) {
+             if (!(tex_mask & (1u << u))) continue;
+             rsx_dsp_texture t;
+@@ -1989,6 +1990,29 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
              fprintf(s_pd.draws_log, " t%u %u:0x%08X f%02X %ux%u", u, t.location, t.offset,
                      t.format & 0xFFu, t.width, t.height);
          }
@@ -1910,7 +1924,50 @@ index b438d87..86d6c67 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2325,9 +2348,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2231,6 +2255,28 @@ static void sink_end(void* user, const rsx_dispatch* r)
+     const u32 uploaded = indexed ? dc.n_verts : n_draw;
+     g.be->draw(g.be->user, topology, dc.verts, uploaded, layout.stride,
+                indexed ? g.indices : NULL, indexed ? n_draw : 0);
++    /* RSX_ENGINE_PASS_DUMP_DRAWS: what this draw did to the depth buffer --
++     * min/max after it and how many pixels changed. Names the draw that
++     * leaves a buffer at one value (a plane in front of the scene). */
++    if (s_pd.state == 2 && s_pd.draws_log && zslot != ENG_INVALID && g.be->depth_readback) {
++        const eng_zdepth* z = &g.zdepths[zslot];
++        static float* s_prev; static size_t s_prev_n; static u32 s_prev_slot = ENG_INVALID;
++        const size_t n = (size_t)z->w * z->h;
++        float* d = (float*)malloc(n * sizeof(float));
++        if (d && g.be->depth_readback(g.be->user, z->handle, 0, 0, z->w, z->h, d, z->w * 4u) == 0) {
++            float lo = 1e30f, hi = -1e30f; size_t changed = 0;
++            const int cmp = s_prev && s_prev_n == n && s_prev_slot == zslot;
++            for (size_t i = 0; i < n; i++) {
++                if (d[i] < lo) lo = d[i];
++                if (d[i] > hi) hi = d[i];
++                if (cmp && d[i] != s_prev[i]) changed++;
++            }
++            fprintf(s_pd.draws_log, "    after: topo %u verts %u idx %u | z %.6g..%.6g changed %s%zu\n",
++                    (unsigned)topology, uploaded, indexed ? n_draw : 0u, lo, hi, cmp ? "" : "(first) ", changed);
++            free(s_prev); s_prev = d; s_prev_n = n; s_prev_slot = zslot; d = NULL;
++        }
++        free(d);
++    }
+     /* Counted only when the draw ran the guest's OWN programs, which is what
+      * the test hook means: a draw through the built-in pair is a draw, not
+      * evidence that the decompile-translate-compile path worked. */
+@@ -2294,6 +2340,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+         const float depth = !zs ? 1.0f
+                           : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
+                                 : (float)(zs >> 8) / 16777215.0f;
++        { static u32 seen[16]; static u32 ns;
++          u32 k = 0; while (k < ns && seen[k] != zs) k++;
++          if (k == ns && ns < 16) {
++              seen[ns++] = zs;
++              fprintf(stderr, "[rsx engine] depth clear raw 0x%08X fmt %u -> %.9g (surface fmt reg 0x%08X)\n",
++                      zs, sf.depth_format, depth, rsx_dsp_reg(&g.rsx, 0x0208));
++          } }
+         g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
+                                   depth, z16 ? 0 : (u8)(zs & 0xFFu));
+         g.zdepths[zslot].cleared = 1;
+@@ -2325,9 +2378,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -1945,7 +2002,7 @@ index b438d87..86d6c67 100644
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index 87ea864..072b844 100644
+index 87ea864..5e1250d 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -2173,7 +2230,27 @@ index 87ea864..072b844 100644
  /* ---- E3: textures ---------------------------------------------------------
   * The engine decodes every level to host rows (rsx_texture_decode) and hands
   * them over one upload each; the crossbar is a property of the view, so it
-@@ -2808,7 +2924,7 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+@@ -2805,10 +2921,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+     if ((rs->color_mask >>  8) & 0xFFu) wm |= VK_COLOR_COMPONENT_G_BIT;
+     if ((rs->color_mask >>  0) & 0xFFu) wm |= VK_COLOR_COMPONENT_B_BIT;
+     if ((rs->color_mask >> 24) & 0xFFu) wm |= VK_COLOR_COMPONENT_A_BIT;
++    /* VK_ENG_DEBUG_NODS=1 (diagnostic): no depth/stencil test, no culling, all
++     * colour channels written -- tells "the draws rasterize but a test rejects
++     * them" from "the draws produce no fragments at all". */
++    /* A value is a bit mask: 1 depth, 2 stencil, 4 culling, 8 colour mask
++     * (1 alone = "1"; any other non-numeric value = all of them). */
++    { static int s_nods = -1;
++      if (s_nods < 0) { const char* e = getenv("VK_ENG_DEBUG_NODS");
++                        s_nods = !e ? 0 : (atoi(e) > 0 ? atoi(e) : 15); }
++      if (s_nods & 1) { ds.depthTestEnable = VK_FALSE; ds.depthWriteEnable = VK_FALSE; }
++      if (s_nods & 2) ds.stencilTestEnable = VK_FALSE;
++      if (s_nods & 4) ras.cullMode = VK_CULL_MODE_NONE;
++      if (s_nods & 8)
++          wm = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
++      /* 16: swap the front-face winding (diagnostic for a Y-flip mismatch). */
++      if (s_nods & 16)
++          ras.frontFace = (ras.frontFace == VK_FRONT_FACE_CLOCKWISE) ? VK_FRONT_FACE_COUNTER_CLOCKWISE
++                                                                     : VK_FRONT_FACE_CLOCKWISE; }
      VkPipelineColorBlendAttachmentState cba[RSX_BE_MAX_COLOR_TARGETS];
      for (u32 r = 0; r < P->rt_count; r++)
          cba[r] = (VkPipelineColorBlendAttachmentState){
@@ -2182,7 +2259,7 @@ index 87ea864..072b844 100644
              .srcColorBlendFactor = vk_gcm_blend_factor(rs->sf_rgb),
              .dstColorBlendFactor = vk_gcm_blend_factor(rs->df_rgb),
              .colorBlendOp = vk_gcm_blend_op(rs->eq_rgb),
-@@ -3394,7 +3510,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3394,7 +3527,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -2191,7 +2268,7 @@ index 87ea864..072b844 100644
      free(s_vk.cpu_verts);
      memset(&s_vk, 0, sizeof s_vk);
  }
-@@ -3429,5 +3545,3 @@ u32 rsx_vulkan_backend_guest_draws(void)
+@@ -3429,5 +3562,3 @@ u32 rsx_vulkan_backend_guest_draws(void)
  {
      return s_vk.eng_active ? rsx_draw_engine_guest_draws() : s_g.last_draws;
  }

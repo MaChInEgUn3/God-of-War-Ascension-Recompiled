@@ -51,6 +51,18 @@ Lessons that cost days; keep them.
   import stub (`0x628xxx`) means time inside that firmware HLE; `analysis/imp.py` plus the NID database name it.
   `SPURS_TASK2_PROF=<s>` times `cellSpursCreateTask2` (calls, share of wall, avg/max) and splits `CreateTask` into
   stages.
+* **What the GPU drew (Vulkan, needs `PS3RECOMP_VK_GUEST_PROGRAMS=1`)**:
+  * `PS3RECOMP_VK_DUMP=<file>` with `PS3RECOMP_VK_DUMP_EVERY=<n>` writes every n-th presented frame as PPM; a
+    `%05u` in the name keeps a numbered sequence. `analysis/ppm2png.py` converts one frame;
+    `analysis/sheet.py "<glob>" <out.png>` builds a 3x3 contact sheet.
+  * `PS3RECOMP_VK_DUMP_SURFACES=<present#>,<dir>` writes every engine colour target at that present and logs its
+    value range. A surface holding only its clear value means no draw reached it.
+  * `RSX_ENGINE_PASS_DUMP=<dir>` (with `_AFTER=<s>`, `_MAX=<passes>`, `_DRAWS=1`) writes `passes.txt` (targets, zeta,
+    depth/blend/stencil state per pass) and `draws.txt`, one line per draw with the viewport, vertex attribute 0
+    (location/offset and first element) and transform constants 264..267. `RSX_ENGINE_SHADER_DUMP=<dir>` writes each
+    pipeline's HLSL.
+  * `VK_ENG_DEBUG_NODS=<mask>` turns pipeline tests off: 1 depth, 2 stencil, 4 culling, 8 colour mask. If an
+    image appears with a test off, that test is what rejects the draws.
 * **Log volume**: every log line from every thread goes through one stdio lock, so a chatty line slows the game
   (1.3 M lines in 70 s cost ~40% of the frame rate). The port defaults to `PS3_VERBOSE=0`; set `PS3_VERBOSE=1` for the
   `[WAIT]`/`[evt]` lines. Per-task lines print for the first tasks only; `SPURS_TASK_LOG=1` prints all of them.
