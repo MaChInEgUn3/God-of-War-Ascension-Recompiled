@@ -30,6 +30,22 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
 6. Run `port\build_vk\MyGameRecomp.exe local\vfs\PS3_GAME\USRDIR\EBOOT.elf` (needs `SDL2.dll` next to the exe;
    set `PS3RECOMP_VK_WINDOW=1` to open the window).
 
+## Guest shaders (Vulkan): glslang
+
+The game's RSX programs are decompiled to HLSL and compiled to SPIR-V by glslang. Without it the Vulkan backend
+draws nothing useful (black frames). The Windows SDK's `dxc.exe` is built without SPIR-V codegen, so it does not help.
+An MSVC-ABI build that works is conda-forge's `win-64` packages `glslang-16.5.0-h8fa7867_2.conda` and
+`spirv-tools-2026.3-h49e36cd_1.conda`, from `https://conda.anaconda.org/conda-forge/win-64/`. Check each SHA-256
+against `https://api.anaconda.org/package/conda-forge/<name>/files`.
+
+1. Each `.conda` file is a zip. Unzip it, then extract its `pkg-*.tar.zst` with Windows `tar.exe` into
+   `local/tools/glslang/sdk`. The result is `sdk/Library/{lib,bin,include}`.
+2. `scripts\cfg.bat` passes `-DCMAKE_PREFIX_PATH=.../glslang/sdk/Library`. The configure log must say
+   `Vulkan: guest programs available (glslang 16.5.0)`. The patch adds that `find_package` on Windows.
+3. Copy `SPIRV-Tools.dll` and `SPIRV-Tools-opt.dll` from `sdk/Library/bin` next to the exe.
+4. Run with `PS3RECOMP_VK_GUEST_PROGRAMS=1`. `PS3RECOMP_VK_DUMP=<file.ppm>` with `PS3RECOMP_VK_DUMP_EVERY=<n>`
+   writes every n-th presented frame to that file.
+
 ## Optional: firmware SPURS (LLE)
 
 Decrypt your own `libsre.sprx`, then run `lift_prx.py libsre.prx --base 0x30000000`,

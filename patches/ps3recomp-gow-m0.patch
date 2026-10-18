@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 94de794..1e21ebb 100644
+index 94de794..1312807 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -50,8 +50,8 @@ list(FILTER HLE_SOURCES EXCLUDE REGEX "/tests/")
@@ -32,6 +32,19 @@ index 94de794..1e21ebb 100644
  else()
      # cellPad and cellAudio select their SDL2 backends unconditionally off
      # Windows (see PAD_BACKEND_SDL2 / AUDIO_BACKEND_SDL2), so SDL2 is required
+@@ -291,6 +303,12 @@ endif()
+ # libs/video/rsx_shader_spirv.cpp is a stub and the Vulkan backend stays on
+ # its fixed-function path.
+ if(PS3RECOMP_RSX_VULKAN)
++    # The search above is UNIX-only (it is the Metal path). On Windows, point
++    # CMAKE_PREFIX_PATH at an MSVC-ABI glslang (e.g. conda-forge's win-64
++    # glslang + spirv-tools packages, extracted: <dir>/Library).
++    if(NOT glslang_FOUND)
++        find_package(glslang CONFIG QUIET)
++    endif()
+     if(glslang_FOUND AND TARGET glslang::glslang AND TARGET glslang::SPIRV)
+         set_source_files_properties(
+             "${CMAKE_CURRENT_SOURCE_DIR}/libs/video/rsx_shader_spirv.cpp"
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
 index 5e3b510..c26652a 100644
 --- a/libs/spurs/cellSpurs.c

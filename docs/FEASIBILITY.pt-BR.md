@@ -394,7 +394,12 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Resultado: `CreateTask2` caiu para ~2–3% do tempo de parede (0,13 ms por chamada). O jogo foi de ~18 para **~27–28 frames/s de lógica** (t=60→120 s), perto dos 30 do original. A wid 8 caiu de ~65% para 44% de uma thread.
   - Os números de M0.28 foram medidos durante a enxurrada de log: o `RESUME-ELEMS` roda dentro do caminho `wrch`→StallAck, então o `m%` incluía tempo de log. Medido sem o log (run210): **EDGE ≈ 0,20 ms/job** (18% em 54.978 jobs/min) e wid 8 com m 15% (era 35%).
   - **O jogo já roda no próprio ritmo de ~30 fps.** Com o log desligado, o topo do `GOW_MAIN_PROF` (~30%) é `0x375A60`, um laço `mftb` + `sys_timer_usleep(30)` que espera `*(*(0x9BE004)+8)` (`0x70002008`) alcançar `game_frame − 1`. Esse contador é escrito pelo processador de FIFO RSX (`GOW_GUARD=70002008`). Com `GOW_VBLANK_MS=8` (vblank a 125 Hz, knob de diagnóstico) o jogo segue a ~29–30 frames/s, igual aos 16 ms; logo não é o nosso vblank que o segura. A espera é folga do frame. Daqui em diante, desempenho deixa de ser o gargalo e a frente passa a ser a imagem.
-  - Os 27–33 frames/s são a taxa de lógica sem limitador. Nada aqui segura os flips no vblank (flips e frames andam juntos), então quando houver apresentação real o número pode cair, e isso não será regressão.
+  - Os 27–33 frames/s são a taxa de lógica sem limitador.
+- **M0.30: primeira imagem (2026-10-18, run215):**
+  - Com autorização do usuário, instalei o glslang 16.5.0 + spirv-tools 2026.3 localmente em `tools/glslang`. São pacotes `win-64` do conda-forge, com SHA-256 conferido. O `dxc` do Windows SDK não tem geração de SPIR-V.
+  - O CMake do ps3recomp só procurava o glslang em UNIX; o patch adiciona a busca no ramo Vulkan.
+  - Com `PS3RECOMP_VK_GUEST_PROGRAMS=1`, o frame despejado aos ~60 s mostra a **vinheta da Santa Monica Studio**, a primeira imagem real do jogo.
+  - Pendência visível: `colour target format 11 1280x720 not supported yet` (1311 vezes em 120 s). O formato 11 é `CELL_GCM_SURFACE_F_W16Z16Y16X16`, o alvo HDR RGBA16F do jogo, que o motor Vulkan ainda não aceita. Nada aqui segura os flips no vblank (flips e frames andam juntos), então quando houver apresentação real o número pode cair, e isso não será regressão.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

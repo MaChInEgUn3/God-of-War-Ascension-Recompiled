@@ -147,6 +147,9 @@ serialised on the stdio lock, and `cellSpursCreateTask2` alone spent ~20% of the
 are now capped (`SPURS_TASK_LOG=1` restores the per-task ones), and the port defaults to `PS3_VERBOSE=0`. The game
 logic runs at **~27-28 game frames/s** (the original targets 30). The screen is still black: there is no RSX shader
 translation without glslang.
+Update (M0.30): glslang is installed locally (see BUILDING.md), and guest shaders run on Vulkan
+(`PS3RECOMP_VK_GUEST_PROGRAMS=1`). The first real frame is the Santa Monica Studio intro logo. Next: the HDR colour
+target (`F_W16Z16Y16X16`, GCM format 11), which the Vulkan engine rejects ("not supported yet").
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
