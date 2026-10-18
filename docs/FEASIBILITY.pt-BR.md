@@ -382,6 +382,16 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Resultado, ms por job EDGE: 0,78 → 0,41 (SSE4.2) → 0,39 (`pshufb` nas rotações) → **0,30** (x86-64-v3 + `fi`).
   - O jogo foi de ~10–11 para **~18,4 frames/s** (t=60→120 s).
   - `SPURS_KERN_SPUS=<a,b,...>` define o SPU de cada thread de kernel, e cada thread visita as cargas na ordem de prioridade do seu SPU. Sem ganho claro no A/B ruidoso (0,1 vs 0,1,5 vs 0,1,2); o padrão continua 2 threads.
+- **M0.29: log demais (2026-10-18, run206–210):**
+  - O `GOW_MAIN_PROF` agora também mostra o LR vivo (a chamada mais recente, que o back chain não enxerga). Com ele, ~24% da thread principal apareceu dentro do stub de import `0x628E9C`, que é o `cellSpursCreateTask2` (NID `0xE14CA62D`).
+  - `SPURS_TASK2_PROF=<s>` mediu: ~190 chamadas/s com média de 1,3 ms (máximo de 300 ms). Desse tempo, ~20% eram os dois `printf` sem buffer por task; o `CreateThread` era só 1,5%.
+  - Uma contagem de linhas mostrou **1,3 milhão de linhas em 70 s**, todas serializadas no lock do stderr/stdout:
+    - `[mfc-list] RESUME-ELEMS`: sem limite, 6 escritas por job WWS;
+    - `[spurs-pm] poll`: o limite usava o contador por execução da PM, que zera a cada execução;
+    - `[WAIT]`/`[evt]`: o `ps3_log_verbose()` fica ligado sempre que o stderr é redirecionado;
+    - mais 4 linhas por task.
+  - Correção: esses logs passam a ter limite. `SPURS_TASK_LOG=1` traz de volta os logs por task, e a porta usa `PS3_VERBOSE=0` por padrão (`PS3_VERBOSE=1` reativa). Agora são ~4 mil linhas em 150 s.
+  - Resultado: `CreateTask2` caiu para ~2–3% do tempo de parede (0,13 ms por chamada). O jogo foi de ~18 para **~27–28 frames/s de lógica** (t=60→120 s), perto dos 30 do original. A wid 8 caiu de ~65% para 44% de uma thread.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

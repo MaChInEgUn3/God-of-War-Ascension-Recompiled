@@ -265,8 +265,10 @@ static DWORD WINAPI main_prof(LPVOID arg)
     for (;;) {
         Sleep(2);
         uint32_t fn[DEPTH] = {0, 0, 0}, ra[DEPTH];
+        uint32_t lfn = 0, lr = 0;
+        ppu_thread_chain(1, &lfn, &lr, -1);   /* live LR: the most recent call */
         const int n = ppu_thread_chain(1, fn, ra, DEPTH);
-        if (n > 0) fn[0] = ra[0];   /* innermost level by call site: which callee of fn[1] */
+        if (n > 0) { fn[0] = ra[0]; fn[2] = lr; }  /* key: innermost call site, its fn, live LR */
         total++;
         if (n <= 0) fail++;
         else {
@@ -283,7 +285,7 @@ static DWORD WINAPI main_prof(LPVOID arg)
                 int best = -1;
                 for (int i = 0; i < NB; i++) if (cnt[i] && (best < 0 || cnt[i] > cnt[best])) best = i;
                 if (best < 0) break;
-                fprintf(stderr, "[main-prof]   %5.1f%%  ra %08X in %08X <- %08X\n", 100.0 * cnt[best] / total,
+                fprintf(stderr, "[main-prof]   %5.1f%%  ra %08X in %08X  lr %08X\n", 100.0 * cnt[best] / total,
                         key[best][0], key[best][1], key[best][2]);
                 cnt[best] = 0;
             }
@@ -620,6 +622,11 @@ int main(int argc, char** argv)
      * SPUs, but 3, 4 and 6 threads measured slower (9.2-10.1): the frame's job chain
      * has too little parallel work and the extra threads only add lock contention. */
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
+    /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
+     * redirected, and at hundreds per second from every thread through one FILE
+     * lock they skew exactly the runs that measure timing. Set PS3_VERBOSE=1 to
+     * get them back. */
+    if (!getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

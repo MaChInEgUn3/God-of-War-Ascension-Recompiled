@@ -46,7 +46,15 @@ Lessons that cost days; keep them.
   waiting for the taskset LS lock. `[pm-prof]` entries read `w<wid>=<pct>%/<runs>i<pct>%`, where the `i` part is
   the share of that workload's time spent in the SPU interpreter (runtime-loaded job code with no lift).
   `GOW_MAIN_PROF=<s>` samples the main PPU thread's guest call chain every 2 ms and prints the top chains
-  (`ra <innermost return address> in <caller fn> <- <its caller>`), i.e. where each frame waits.
+  (`ra <innermost return address> in <caller fn>  lr <live LR>`), i.e. where each frame waits. The live LR is the
+  most recent call, inside a leaf or an HLE import the back chain cannot show. An `lr` right after a `bl` to an
+  import stub (`0x628xxx`) means time inside that firmware HLE; `analysis/imp.py` plus the NID database name it.
+  `SPURS_TASK2_PROF=<s>` times `cellSpursCreateTask2` (calls, share of wall, avg/max) and splits `CreateTask` into
+  stages.
+* **Log volume**: every log line from every thread goes through one stdio lock, so a chatty line slows the game
+  (1.3 M lines in 70 s cost ~40% of the frame rate). The port defaults to `PS3_VERBOSE=0`; set `PS3_VERBOSE=1` for the
+  `[WAIT]`/`[evt]` lines. Per-task lines print for the first tasks only; `SPURS_TASK_LOG=1` prints all of them.
+  Measure performance with the defaults.
 * **Interpreted job code**: `SPU_JOBMOD_LOG=1` prints each distinct (code base `LS[0x1320]`, module header) a
   policy module jumps into with no lifted module. `SPU_INTERP_MISS=1` ranks unresolved branch targets by interpreted
   time every 20 s (`wid img pc n ms`). A target inside a module's image is a missing entry: feed the log to
