@@ -340,7 +340,12 @@ static DWORD WINAPI frame_clock(LPVOID)
              * advancing at 60 Hz even while present() throttles. */
             CLOCK_PHASE(4);
             if (rsx_ok) cellGcm_rsx_process_fifo();
-            next_tick += 16;             /* ~60 Hz */
+            /* ~60 Hz. GOW_VBLANK_MS=<ms> (diagnostic) changes the vblank period:
+             * whether the game logic is paced by vsync shows as a frame rate that
+             * scales with it. */
+            { static int s_vb = -1; if (s_vb < 0) { const char* e = getenv("GOW_VBLANK_MS");
+                  s_vb = (e && atoi(e) > 0) ? atoi(e) : 16; }
+              next_tick += (ULONGLONG)s_vb; }
             fired++;
         }
         if (fired >= 240) next_tick = now;   /* fell too far behind -- resync */
