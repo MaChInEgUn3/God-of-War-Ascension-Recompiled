@@ -138,6 +138,10 @@ claim that keeps a module on one thread at a time: **~11-12.7 game frames/s** (w
 has 6 SPUs: the HLE read `_cellSpursAttributeInitialize`'s revision argument as nSpus. Each kernel thread now honours
 the per-SPU workload priorities (BrBDblBufWrkld is pinned to SPU 5), but 3-6 threads measured slower than 2. Known: one
 rare stall with two threads (once in ~3 h of play, not reproduced since).
+Update (M0.28): the lifted SPU code was compiled for plain SSE2, so `shufb` ran as a byte loop and `fma` as a libm
+call. Now it builds with `-march=x86-64-v3 -ffp-contract=off` (`SPU_HOST_ARCH`), the quadword byte rotates use
+`pshufb`, and `fi` no longer calls `ldexpf`. An EDGE job takes 0.30 ms (was 0.78), and the game runs at **~18 game
+frames/s** (was ~11).
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

@@ -164,7 +164,7 @@ endif()
 # libsre_) and libsre_exports.c (prx_exports.py). Derived from the user's own
 # firmware: never commit or distribute it. See lle_libsre.cpp for the runtime
 # modes (GOW_LLE=off|all-hle|real).
-set(LLE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../local/lle/recomp" CACHE PATH "Lifted libsre output (local, never committed)")
+set(LLE_DIR "D:/GOW A/work/lle/recomp2" CACHE PATH "Lifted libsre output")
 option(PORT_ENABLE_LLE_LIBSRE "Link the lifted firmware libsre (LLE SPURS)" ON)
 set(LLE_SOURCES "")
 if(PORT_ENABLE_LLE_LIBSRE AND EXISTS "${LLE_DIR}/ppu_recomp_000.cpp"
@@ -211,12 +211,21 @@ endif()
 #   -O2                 -- the target-wide -O1 exists for the huge PPU TUs; the
 #                          SPU sources are small and decode-hot, so they get
 #                          full optimization. The last -O on the line wins.
+#   SPU_HOST_ARCH       -- host ISA for the lifted SPU code (default x86-64-v3 =
+#                          AVX2 + FMA, any x86 CPU since ~2013; -msse4.2 for older
+#                          ones). spu_helpers.h takes its pshufb paths (shufb, the
+#                          quadword byte rotates) only under __SSE4_1__, and
+#                          fma/fms/fnms are fmaf() -- a libm call without FMA.
+#                          The default SSE2 target ran all of those as loops/calls.
+#   -ffp-contract=off   -- only the explicit fmaf()s fuse, as on the SPU.
+set(SPU_HOST_ARCH "-march=x86-64-v3" CACHE STRING "Host ISA flag for lifted SPU sources")
 if(SPU_SOURCES)
     set_source_files_properties(${SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
         COMPILE_DEFINITIONS SPU_USE_DISPATCH_MT)
     if(NOT MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS "-O2")
+        set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS
+            "-O2;${SPU_HOST_ARCH};-ffp-contract=off")
     endif()
 endif()
 

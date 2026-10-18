@@ -370,6 +370,18 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Medido, frames/s entre t=60 s e t=120 s: 2 threads **11,3**, 3 threads 9,7, 4 threads 9,2 e 6 threads (um por SPU, com o filtro de prioridade) 10,1. A cadeia de jobs do frame tem pouco trabalho paralelo, e threads extras só somam contenção (por exemplo o lock global de lock-line).
   - Padrão da porta: `SPURS_KERN_THREADS=2`.
 - Parada rara com 2 threads: uma vez em ~3 h de jogo (run192, frame ~592, tudo ocioso menos a wid 8). Não se repetiu em 11 execuções nem em 30 min; o detector de parada fica ligado para pegá-la.
+- **M0.28: ISA do host para o código SPU lifted (2026-10-18, run198–205):**
+  - Com 3 threads o kernel nem satura (~175% de 300%), e os jobs EDGE ficam em ~15 mil/min com 2 ou 3 threads. O EDGE é limitado pela latência de cada job (~0,78 ms), não pelo número de threads.
+  - Nova medida no `[pm-prof]`: `m<pct>%c<pct>%`, a fração de cada wid em escritas de canal (comandos MFC, ou seja, cópias DMA) e em leituras de canal (esperas). No EDGE: m 12%, c 0%. Os ~88% restantes são computação no código lifted.
+  - Causa: os fontes SPU compilavam com `-O2` sem `-march`, ou seja, só SSE2. Nesse alvo o `spu_helpers.h` usa o laço de 16 bytes no `shufb` (o caminho `pshufb` exige `__SSE4_1__`), e `fma`/`fms`/`fnms` viram chamadas `fmaf` da libm (FMA em software).
+  - Correções:
+    - `SPU_HOST_ARCH` (padrão `-march=x86-64-v3`) mais `-ffp-contract=off` nos fontes SPU;
+    - `rotqby`, `shlqby`, `rotqmby` e família (`lqd`+`rotqby` é como o SPU faz toda leitura escalar) passaram a usar um `pshufb` só;
+    - `spu_fi` deixou de chamar `ldexpf`.
+    - As versões em laço ficam como referência (`*_ref`). `tests/test_spu_shufb.c` compara todas as contagens de deslocamento e 2 milhões de casos de `fi`, bit a bit.
+  - Resultado, ms por job EDGE: 0,78 → 0,41 (SSE4.2) → 0,39 (`pshufb` nas rotações) → **0,30** (x86-64-v3 + `fi`).
+  - O jogo foi de ~10–11 para **~18,4 frames/s** (t=60→120 s).
+  - `SPURS_KERN_SPUS=<a,b,...>` define o SPU de cada thread de kernel, e cada thread visita as cargas na ordem de prioridade do seu SPU. Sem ganho claro no A/B ruidoso (0,1 vs 0,1,5 vs 0,1,2); o padrão continua 2 threads.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

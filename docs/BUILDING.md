@@ -23,7 +23,10 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `python analysis/lift_edge_frags.py <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
    `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted.
 5. `scripts\cfg.bat`, then `scripts\build.bat` (first build about 7 min and about 8 GB RAM; incremental builds take
-   seconds unless the lifted header changes).
+   seconds unless the lifted header changes). The lifted SPU sources build with `-O2 -march=x86-64-v3
+   -ffp-contract=off` (AVX2 + FMA). On a CPU without AVX2/FMA, configure with `-DSPU_HOST_ARCH=-msse4.2`. Do not
+   drop below SSE4.1: the `shufb` and quadword byte-rotate helpers fall back to byte loops, and `fma`/`fms`/`fnms`
+   become libm `fmaf` calls; the SPU jobs then run about 2x slower.
 6. Run `port\build_vk\MyGameRecomp.exe local\vfs\PS3_GAME\USRDIR\EBOOT.elf` (needs `SDL2.dll` next to the exe;
    set `PS3RECOMP_VK_WINDOW=1` to open the window).
 

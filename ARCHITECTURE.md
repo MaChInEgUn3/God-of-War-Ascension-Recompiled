@@ -51,6 +51,9 @@
   `GCM_FIFO_CIRCLE_PASSES=0` and `VK_TEX_OFF=1` (until guest shaders exist). It also hosts the `GOW_CLOCK_WATCH`
   frame-clock watchdog, plus the `GOW_HEARTBEAT` and `GOW_MAIN_PROF` probes; `SPURS_PM_HANG=10`,
   `SPURS_PASS_GREEDY=1` and `SPURS_KERN_THREADS=2` are on by default.
+* `port/CMakeLists.txt` compiles the lifted SPU sources with `-O2 ${SPU_HOST_ARCH} -ffp-contract=off` (default
+  `-march=x86-64-v3`). `spu_helpers.h` has SIMD paths (`shufb`, the quadword byte rotates) gated on `__SSE4_1__`, and
+  `fma` is `fmaf`, so the host ISA roughly doubles SPU job speed.
 * `patches/`: fixes against upstream (envp/envc, SPURS v2 wrappers, `sys_lwcond_t` layout, 64-bit file sizes,
   Edge Zlib HLE in `_cellSpursLFQueuePushBody`, GCM IO allocator, syscall 14 range, `sys_mmapper_allocate_address`
   first-fit at `0x20000000`) plus diagnostics (function-entry tracer in the lifter, MemTable dump, stack scan).

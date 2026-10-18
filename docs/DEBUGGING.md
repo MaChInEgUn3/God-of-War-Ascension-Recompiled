@@ -59,7 +59,10 @@ Lessons that cost days; keep them.
   idle back-off (log2 passes, default 4).
   `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default 2) runs n host kernel threads per instance, with a per-wid
   claim; thread k plays SPU k and skips workloads whose priority on SPU k is 0 (`priority per SPU` is printed at
-  registration). `j<n>` in `[pm-prof]` counts job-code entries per wid. `[pm-prof]` shows `z<pct>%` per wid (share of its time spent in idle runs, polls == 0) and `idle=` overall;
+  registration). `SPURS_KERN_SPUS=<a,b,...>` sets the SPU each thread plays (and the thread count); each thread
+  visits workloads in its SPU's priority order. `j<n>` in `[pm-prof]` counts job-code entries per wid;
+  `m<pct>%c<pct>%` is the share of the wid's time spent in SPU channel writes (MFC commands, i.e. DMA copies) and
+  channel reads (tag/event waits), measured only under `SPURS_PM_PROF`. `[pm-prof]` shows `z<pct>%` per wid (share of its time spent in idle runs, polls == 0) and `idle=` overall;
   a high idle share means the kernel is busy polling, not working.
 * **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
