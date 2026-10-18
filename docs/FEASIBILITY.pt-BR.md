@@ -443,6 +443,10 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Diagnóstico novo: `SPU_DMA_EA_DUMP`, `GCM_EXEC_WATCH`, `RSX_ENGINE_FP_LOG`, `GCM_MARKERS`, linhas `m` no `draws.txt`.
   - **Visibilidade:** o workload wid 5 (`jobmod_e9f3f00d551e`, carregado de `0x6B4C80`) só **reinicia** os slots de consulta (PUT de `FFFF` em `0x2023FD00`); quem lê é o próprio EDGE (wids 15/16/17, pc `0xAF54`, GET de 16 bytes por objeto). `SPU_DMA_EA_GET` mostra o que ele lê: 96% `{timer, 0x0000FFFF, 0}` (visível) e 4% pendente. Então a oclusão não explica o corte.
   - **A/B lift × interpretador:** o módulo de geometria EDGE é `jobmod_d93503647dd8` (imagem 225, carregado de `0x6FB300`). Com `SPU_NOLIFT_IMG=225 SPU_INTERP_UNLIFTED=1` os wids EDGE passam a ~86% interpretados, e o resultado é o mesmo: pré-passo de 161 draws, sem passada de cor. Não é bug do lift desse módulo, mas o interpretador usa os mesmos helpers de `spu_helpers.h`, e os fragmentos (300–339) continuam liftados.
+  - **Interpretando também os fragmentos** (`SPU_NOLIFT_IMG=225,300-339`, 85–90% interpretado): o resultado é o mesmo. O lift do EDGE está descartado.
+  - **A/B da resposta de oclusão** (`GCM_ZPASS_VALUE`, `GCM_REPORT_TIMER0`, `GCM_REPORT_SKIP`): valor 0, timer 0 ou slots pendentes não mudam a estrutura do frame (pré-passo de 161 draws, sem cor). A oclusão está descartada.
+  - **O job desiste antes da geometria:** com `SPURS_PM_DMA_WID=15@195`, cada job EDGE lê só o descritor de 0xB0 bytes (`0x21BEAxxx`, pc `0x2038`) e o slot de oclusão (duas vezes, pc `0xAF54`), e já grava o bloco no FIFO (pc `0xD0E0`). Nenhuma leitura de vértices/índices. A decisão vem do descritor do job.
+  - **Próximo passo:** despejar os descritores de 0xB0 de um job de cor e de um job do pré-passo, e comparar flags/LOD/máscaras. Quem os escreve (PPU ou RenderJobs) é o próximo elo.
   - **Próximo passo:** entender por que o job de geometria EDGE da passada de cor não emite nada. Hipóteses: culling do EDGE (matemática SPU) ou uma condição do lado PPU/SPU (visibilidade). Um oráculo seria o RPCS3 (`tools/rpcs3`).
 
 ### Próximos passos imediatos

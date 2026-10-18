@@ -1285,7 +1285,7 @@ index b7dfd50..3a00f55 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index ac0a7a8..d9b87fe 100644
+index ac0a7a8..de88025 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -20,6 +20,7 @@
@@ -1732,7 +1732,7 @@ index ac0a7a8..d9b87fe 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -1932,11 +2265,63 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1932,11 +2265,74 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * publication (gcm_ref_publish below) instead of letting a
                       * later fence in the same batch overwrite it. */
                      if (m == 0x50) gcm_ref_push_at(g_rsx_last_reference, s_fifo_getoff);
@@ -1783,9 +1783,20 @@ index ac0a7a8..d9b87fe 100644
 +                        const u32 v = vm_read32(dea), off = v & 0xFFFFFFu;
 +                        const u32 ea = gcm_io2ea(off);
 +                        { static int rm = 0; if (rm++ < 8) printf("[GET_REPORT] MAIN type=%u io=0x%X -> ea=0x%08X%c", v >> 24, off, ea, 10); }
-+                        if (ea) {
-+                            vm_write64(ea, get_timestamp_ns());
-+                            vm_write32(ea + 8, (v >> 24) == 1u ? 0xFFFFu : 0u);
++                        /* A/B of the occlusion answer: GCM_ZPASS_VALUE=<hex> (default
++                         * 0xFFFF) is the ZPASS count written, GCM_REPORT_TIMER0=1 writes
++                         * a zero timer, GCM_REPORT_SKIP=<io lo>-<io hi> leaves those
++                         * reports unwritten (pending). */
++                        static int zk = -1; static u32 zval, zskip_lo, zskip_hi, ztimer0;
++                        if (zk < 0) { zk = 1;
++                            const char* e = getenv("GCM_ZPASS_VALUE"); zval = e ? (u32)strtoul(e, 0, 16) : 0xFFFFu;
++                            ztimer0 = getenv("GCM_REPORT_TIMER0") ? 1u : 0u;
++                            e = getenv("GCM_REPORT_SKIP"); zskip_lo = zskip_hi = 0;
++                            if (e) { char* q; zskip_lo = (u32)strtoul(e, &q, 16);
++                                     zskip_hi = (q && *q == '-') ? (u32)strtoul(q + 1, 0, 16) : zskip_lo + 16; } }
++                        if (ea && !(off >= zskip_lo && off < zskip_hi)) {
++                            vm_write64(ea, ztimer0 ? 0ull : get_timestamp_ns());
++                            vm_write32(ea + 8, (v >> 24) == 1u ? zval : 0u);
 +                            vm_write32(ea + 12, 0);
 +                        }
 +                        { long k = InterlockedIncrement(&s_rep_i) % GCM_REP_N;
@@ -1797,7 +1808,7 @@ index ac0a7a8..d9b87fe 100644
                          const u32 v = vm_read32(dea), idx = (v & 0xFFFFFFu) / 16u;
                          { static int rn = 0; if (rn++ < 6) printf("[GET_REPORT] type=%u idx=%u%c", v >> 24, idx, 10); }
                          if (idx < CELL_GCM_MAX_REPORT_COUNT) {
-@@ -1997,7 +2382,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1997,7 +2393,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -1817,7 +1828,7 @@ index ac0a7a8..d9b87fe 100644
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
-@@ -2360,7 +2756,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2360,7 +2767,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * it spins on `ref` for good. Safe when the walker has left the head of
       * the ring well behind, which is the region the guest writes next. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -1835,7 +1846,7 @@ index ac0a7a8..d9b87fe 100644
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
          vm_write32(ctx + 8, begin);
-@@ -2637,14 +3042,101 @@ static u32 gcm_io_alloc(u32 size)
+@@ -2637,14 +3053,101 @@ static u32 gcm_io_alloc(u32 size)
      if (s_io_alloc_next == 0)
          s_io_alloc_next = (s_config.ioSize + 0xFFFFFu) & ~0xFFFFFu;
      if (s_io_alloc_next < 0x100000u) s_io_alloc_next = 0x100000u;
@@ -1937,7 +1948,7 @@ index ac0a7a8..d9b87fe 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -2684,6 +3176,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2684,6 +3187,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -1945,7 +1956,7 @@ index ac0a7a8..d9b87fe 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -2692,6 +3185,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2692,6 +3196,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -1953,7 +1964,7 @@ index ac0a7a8..d9b87fe 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -2727,6 +3221,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2727,6 +3232,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -1970,7 +1981,7 @@ index ac0a7a8..d9b87fe 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -2744,8 +3248,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -2744,8 +3259,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -4589,7 +4600,7 @@ index 8d8e4aa..291f6ee 100644
   * Preferred slot extraction
   *
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..c9fb613 100644
+index 90f3221..9ef0478 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -168,6 +168,15 @@ static inline int mfc_is_fence(uint32_t cmd)
@@ -4639,7 +4650,7 @@ index 90f3221..c9fb613 100644
      return rc;
  }
  
-@@ -1359,7 +1379,79 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1359,7 +1379,85 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -4711,15 +4722,21 @@ index 90f3221..c9fb613 100644
      if (spu->policy_mode) {
 +        /* SPURS_PM_DMA_WID=<n>: every DMA of the policy-module runs of workload n
 +         * (wklCurrentId @LS 0x1DC), up to 600 -- what a stalled workload fetches. */
-+        { static int s_dw = -2; if (s_dw == -2) { const char* e = getenv("SPURS_PM_DMA_WID"); s_dw = e ? atoi(e) : -1; }
++        /* SPURS_PM_DMA_WID=<n>[@<seconds>]: start logging only that many seconds in. */
++        { static int s_dw = -2; static unsigned long long s_dt = 0;
++          if (s_dw == -2) { const char* e = getenv("SPURS_PM_DMA_WID"); s_dw = e ? atoi(e) : -1;
++                            const char* at = e ? strchr(e, '@') : NULL;
++                            extern unsigned long long ps3_ms_now(void);
++                            if (at) s_dt = ps3_ms_now() + 1000ull * strtoul(at + 1, 0, 10); }
 +          static int s_dn = 0;
-+          if (s_dw >= 0 && spu->ls[0x1DF] == (uint8_t)s_dw && s_dn++ < 40000)
++          extern unsigned long long ps3_ms_now(void);
++          if (s_dw >= 0 && spu->ls[0x1DF] == (uint8_t)s_dw && (!s_dt || ps3_ms_now() >= s_dt) && s_dn++ < 40000)
 +              fprintf(stderr, "[pm-dma] wid=%d pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%09llX size=0x%X tag=%u\n",
 +                      s_dw, spu->pc & 0x3FFFF, cmd, lsa, (unsigned long long)ea, size, tag); }
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1391,11 +1483,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1391,11 +1489,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -4761,7 +4778,7 @@ index 90f3221..c9fb613 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1546,6 +1668,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1546,6 +1674,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }
