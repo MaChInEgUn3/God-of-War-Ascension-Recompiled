@@ -1877,10 +1877,40 @@ index d8506de..5d72aff 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index b438d87..22d03d8 100644
+index b438d87..86d6c67 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
-@@ -2325,9 +2325,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -1989,6 +1989,29 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+             fprintf(s_pd.draws_log, " t%u %u:0x%08X f%02X %ux%u", u, t.location, t.offset,
+                     t.format & 0xFFu, t.width, t.height);
+         }
++        /* Geometry inputs: viewport, attribute 0 and its first element as
++         * floats (when it is a float stream), and the first draws' transform
++         * constants 264..267 -- a draw that never writes a pixel usually has
++         * one of these zero or garbage. */
++        { rsx_dsp_viewport vp; rsx_dsp_get_viewport(&g.rsx, &vp);
++          fprintf(s_pd.draws_log, " | vp %u,%u %ux%u s(%g %g %g) t(%g %g %g)", vp.x, vp.y, vp.w, vp.h,
++                  vp.scale[0], vp.scale[1], vp.scale[2], vp.translate[0], vp.translate[1], vp.translate[2]);
++          rsx_dsp_vertex_attr a; rsx_dsp_get_vertex_attr(&g.rsx, 0, &a);
++          fprintf(s_pd.draws_log, " | a0 type %u size %u stride %u loc %u off 0x%08X base 0x%X/%u",
++                  a.type, a.size, a.stride, a.location, a.offset,
++                  rsx_dsp_vertex_data_base_offset(&g.rsx), rsx_dsp_vertex_data_base_index(&g.rsx));
++          if (a.type && a.size) {
++              const u8* p = eng_guest_ptr(NULL, a.location, a.offset + rsx_dsp_vertex_data_base_offset(&g.rsx), 16);
++              if (p) fprintf(s_pd.draws_log, " v0 %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
++                             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
++              else fprintf(s_pd.draws_log, " v0 <unresolved>");
++          }
++          if (s_pd.draws < 2)
++              for (u32 c = 264; c < 268; c++) {
++                  const u32* k = rsx_dsp_constant(&g.rsx, c);
++                  float f[4]; memcpy(f, k, 16);
++                  fprintf(s_pd.draws_log, " c%u(%g %g %g %g)", c, f[0], f[1], f[2], f[3]);
++              } }
+         fprintf(s_pd.draws_log, "\n");
+     }
+     if (s_pd.draws++) return;
+@@ -2325,9 +2348,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -1915,7 +1945,7 @@ index b438d87..22d03d8 100644
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index 87ea864..175c9e1 100644
+index 87ea864..072b844 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -2048,7 +2078,102 @@ index 87ea864..175c9e1 100644
      default:                            return -1;
      }
  }
-@@ -2808,7 +2846,7 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+@@ -2190,9 +2228,21 @@ static void vk_eng_clear_depth_stencil(void* user, u32 depth, u32 flags,
+ 
+ /* The named surface becomes the frame: blit it onto the display image, then
+  * the existing present does the readback, the PPM dump and the window. */
++static void vk_eng_dump_surfaces(u32 present_no, const char* dir);
+ static void vk_eng_present(void* user, u32 surface)
+ {
+     (void)user;
++    { static int s_at = -2; static char s_dir[512];
++      if (s_at == -2) {
++          const char* e = getenv("PS3RECOMP_VK_DUMP_SURFACES");
++          s_at = -1;
++          if (e) { const char* c = strchr(e, ',');
++                   if (c) { s_at = atoi(e); snprintf(s_dir, sizeof s_dir, "%s", c + 1); } }
++      }
++      if (s_at >= 0 && s_vk.presented + 1 == (u32)s_at) {
++          VK_LOG("surface dump at present %u (presenting handle %u)\n", (unsigned)s_at, surface);
++          vk_eng_dump_surfaces((u32)s_at, s_dir);
++      } }
+     vk_eng_obj* o = vk_eng_get(surface, VK_ENG_COLOR);
+     if (o && !vk_begin()) {
+         vk_barrier_image(o->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
+@@ -2259,6 +2309,72 @@ static void vk_eng_readback(void* user, u32 surface, u32 x, u32 y, u32 w, u32 h,
+     vk_destroy_buffer(&st);
+ }
+ 
++/* PS3RECOMP_VK_DUMP_SURFACES=<present#>,<dir>: at that present, write every
++ * engine colour target to <dir>/surf_<present>_h<handle>_<w>x<h>_<fmt>.ppm and
++ * log its value range -- which pass of a multi-pass frame still holds the
++ * image. RGBA16F is clamped to [0,1]; R32F is scaled by its own maximum. */
++static float vk_half_to_float(u16 h)
++{
++    const u32 s = (u32)(h >> 15) << 31, e = (h >> 10) & 0x1Fu, m = h & 0x3FFu;
++    u32 bits;
++    if (e == 0) {
++        if (!m) bits = s;
++        else { float f = (float)m / 16777216.0f; if (s) f = -f; return f; }   /* denormal */
++    } else if (e == 31) bits = s | 0x7F800000u | (m << 13);
++    else bits = s | ((e + 112u) << 23) | (m << 13);
++    float f; memcpy(&f, &bits, 4); return f;
++}
++static void vk_eng_dump_surfaces(u32 present_no, const char* dir)
++{
++    for (u32 hd = 1; hd < VK_ENG_MAX_OBJ; hd++) {
++        vk_eng_obj* o = &s_eobj[hd];
++        if (o->kind != VK_ENG_COLOR || !o->w || !o->h || !o->bpp) continue;
++        const u32 w = o->w, h = o->h, bpp = o->bpp;
++        u8* raw = (u8*)malloc((size_t)w * h * bpp);
++        u8* rgb = (u8*)malloc((size_t)w * h * 3);
++        if (!raw || !rgb) { free(raw); free(rgb); continue; }
++        memset(raw, 0, (size_t)w * h * bpp);
++        vk_eng_readback(NULL, hd, 0, 0, w, h, raw, w * bpp);
++        float mx = 0.0f; size_t nz = 0;
++        for (size_t i = 0; i < (size_t)w * h; i++) {
++            float c[3] = { 0, 0, 0 };
++            if (o->fmt == VK_FORMAT_R8G8B8A8_UNORM) {
++                for (int k = 0; k < 3; k++) c[k] = raw[i * 4 + k] / 255.0f;
++            } else if (o->fmt == VK_FORMAT_R16G16B16A16_SFLOAT) {
++                for (int k = 0; k < 3; k++) { u16 v; memcpy(&v, raw + i * 8 + k * 2, 2); c[k] = vk_half_to_float(v); }
++            } else if (o->fmt == VK_FORMAT_R32_SFLOAT) {
++                float v; memcpy(&v, raw + i * 4, 4); c[0] = c[1] = c[2] = v;
++            }
++            for (int k = 0; k < 3; k++) {
++                if (c[k] != 0.0f) nz++;
++                if (c[k] > mx) mx = c[k];
++            }
++        }
++        const float scale = (o->fmt == VK_FORMAT_R32_SFLOAT && mx > 0.0f) ? 1.0f / mx : 1.0f;
++        for (size_t i = 0; i < (size_t)w * h; i++) {
++            float c[3] = { 0, 0, 0 };
++            if (o->fmt == VK_FORMAT_R8G8B8A8_UNORM) {
++                for (int k = 0; k < 3; k++) c[k] = raw[i * 4 + k] / 255.0f;
++            } else if (o->fmt == VK_FORMAT_R16G16B16A16_SFLOAT) {
++                for (int k = 0; k < 3; k++) { u16 v; memcpy(&v, raw + i * 8 + k * 2, 2); c[k] = vk_half_to_float(v); }
++            } else if (o->fmt == VK_FORMAT_R32_SFLOAT) {
++                float v; memcpy(&v, raw + i * 4, 4); c[0] = c[1] = c[2] = v;
++            }
++            for (int k = 0; k < 3; k++) {
++                float v = c[k] * scale; v = v < 0 ? 0 : (v > 1 ? 1 : v);
++                rgb[i * 3 + k] = (u8)(v * 255.0f + 0.5f);
++            }
++        }
++        char path[1024];
++        snprintf(path, sizeof path, "%s/surf_%05u_h%02u_%ux%u_f%d.ppm", dir, present_no, hd, w, h, (int)o->fmt);
++        FILE* f = fopen(path, "wb");
++        if (f) { fprintf(f, "P6\n%u %u\n255\n", w, h); fwrite(rgb, 1, (size_t)w * h * 3, f); fclose(f); }
++        VK_LOG("surface dump h%u %ux%u fmt %d: max %.4g, nonzero components %zu of %zu -> %s\n",
++               hd, w, h, (int)o->fmt, mx, nz, (size_t)w * h * 3, path);
++        free(raw); free(rgb);
++    }
++}
++
+ /* ---- E3: textures ---------------------------------------------------------
+  * The engine decodes every level to host rows (rsx_texture_decode) and hands
+  * them over one upload each; the crossbar is a property of the view, so it
+@@ -2808,7 +2924,7 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
      VkPipelineColorBlendAttachmentState cba[RSX_BE_MAX_COLOR_TARGETS];
      for (u32 r = 0; r < P->rt_count; r++)
          cba[r] = (VkPipelineColorBlendAttachmentState){
@@ -2057,7 +2182,7 @@ index 87ea864..175c9e1 100644
              .srcColorBlendFactor = vk_gcm_blend_factor(rs->sf_rgb),
              .dstColorBlendFactor = vk_gcm_blend_factor(rs->df_rgb),
              .colorBlendOp = vk_gcm_blend_op(rs->eq_rgb),
-@@ -3394,7 +3432,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3394,7 +3510,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -2066,7 +2191,7 @@ index 87ea864..175c9e1 100644
      free(s_vk.cpu_verts);
      memset(&s_vk, 0, sizeof s_vk);
  }
-@@ -3429,5 +3467,3 @@ u32 rsx_vulkan_backend_guest_draws(void)
+@@ -3429,5 +3545,3 @@ u32 rsx_vulkan_backend_guest_draws(void)
  {
      return s_vk.eng_active ? rsx_draw_engine_guest_draws() : s_g.last_draws;
  }
