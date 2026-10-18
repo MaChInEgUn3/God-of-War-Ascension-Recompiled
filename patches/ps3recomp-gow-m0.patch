@@ -1877,10 +1877,10 @@ index d8506de..5d72aff 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index b438d87..2b7f377 100644
+index b438d87..534ad32 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
-@@ -1979,9 +1979,10 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -1979,16 +1979,88 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
      }
      if (s_pd.draws_log) {
          fprintf(s_pd.draws_log, "pass %03u draw %u: pipe %u cmask %08X blend %u %X/%X"
@@ -1894,9 +1894,41 @@ index b438d87..2b7f377 100644
          for (u32 u = 0; u < RSX_BE_MAX_TEXTURES; u++) {
              if (!(tex_mask & (1u << u))) continue;
              rsx_dsp_texture t;
-@@ -1989,6 +1990,45 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+             rsx_dsp_get_texture(&g.rsx, u, &t);
              fprintf(s_pd.draws_log, " t%u %u:0x%08X f%02X %ux%u", u, t.location, t.offset,
                      t.format & 0xFFu, t.width, t.height);
++            /* Main-memory textures: is anything there? 256 samples across the
++             * first w*h*4 bytes, count of non-zero words. */
++            if (t.location == 1 && t.width && t.height) {
++                const u32 span = t.width * t.height * 4u;
++                const u8* p = eng_guest_ptr(NULL, RSX_LOCATION_MAIN, t.offset, span);
++                if (p) {
++                    u32 nz = 0, rgb = 0;
++                    for (u32 s = 0; s < 256; s++) {
++                        const u8* q = p + (((u64)s * (span - 4)) / 255u & ~(u64)3);
++                        if (q[0] | q[1] | q[2] | q[3]) nz++;
++                        if (q[1] | q[2] | q[3]) rgb++;      /* A8R8G8B8: any colour at all */
++                    }
++                    fprintf(s_pd.draws_log, "(nz %u/256 rgb %u/256 first %02X%02X%02X%02X ea 0x%08X)", nz, rgb,
++                            p[0], p[1], p[2], p[3], vm_base ? (u32)(p - vm_base) : 0u);
++                    /* One PPM per distinct main-memory texture (A8R8G8B8 as
++                     * stored: A,R,G,B bytes; linear layout assumed). */
++                    { static u32 dumped[16]; static u32 nd;
++                      u32 k = 0; while (k < nd && dumped[k] != t.offset) k++;
++                      if (k == nd && nd < 16 && ((t.format & 0x9Fu) == 0x85u)) {
++                          dumped[nd++] = t.offset;
++                          char path[1024];
++                          snprintf(path, sizeof path, "%s/tex_main_%08X_%ux%u.ppm", s_pd.dir, t.offset,
++                                   t.width, t.height);
++                          FILE* f = fopen(path, "wb");
++                          if (f) {
++                              fprintf(f, "P6\n%u %u\n255\n", t.width, t.height);
++                              for (u32 i = 0; i < t.width * t.height; i++) fwrite(p + i * 4u + 1u, 1, 3, f);
++                              fclose(f);
++                          }
++                      } }
++                } else fprintf(s_pd.draws_log, "(unresolved)");
++            }
          }
 +        /* Geometry inputs: viewport, attribute 0 and its first element as
 +         * floats (when it is a float stream), and the first draws' transform
@@ -1940,7 +1972,7 @@ index b438d87..2b7f377 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2231,6 +2271,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2231,6 +2303,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
      g.be->draw(g.be->user, topology, dc.verts, uploaded, layout.stride,
                 indexed ? g.indices : NULL, indexed ? n_draw : 0);
@@ -2008,7 +2040,7 @@ index b438d87..2b7f377 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2294,6 +2395,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2294,6 +2427,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -2022,7 +2054,7 @@ index b438d87..2b7f377 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2325,9 +2433,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2325,9 +2465,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
