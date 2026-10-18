@@ -1285,7 +1285,7 @@ index b7dfd50..3a00f55 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index ac0a7a8..6addf76 100644
+index ac0a7a8..d9b87fe 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -20,6 +20,7 @@
@@ -1732,7 +1732,38 @@ index ac0a7a8..6addf76 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -1936,7 +2269,32 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1932,11 +2265,63 @@ static void gcm_rsx_process_fifo_unlocked(void)
+                      * publication (gcm_ref_publish below) instead of letting a
+                      * later fence in the same batch overwrite it. */
+                     if (m == 0x50) gcm_ref_push_at(g_rsx_last_reference, s_fifo_getoff);
++                    /* GCM_MARKERS=<n>: the title's debug markers -- a NOP whose payload starts
++                     * 0x68750001 ("hu" 0 1) followed by ASCII ("fxZPrePassEnd,00000000,...").
++                     * They name the frame's render phases in FIFO order; first n printed. */
++                    { static int mk = -1;
++                      if (mk < 0) { const char* e = getenv("GCM_MARKERS"); mk = e ? atoi(e) : 0; }
++                      if (mk > 0 && m == 0x0100u && vm_read32(dea) == 0x68750001u) {
++                          char txt[96]; u32 k = 0;
++                          for (u32 j = 1; j + i < count && k + 4 < sizeof txt; j++) {
++                              const u32 wv = vm_read32(gcm_io2ea(s_fifo_getoff + 4 + (i + j) * 4));
++                              for (int b = 24; b >= 0; b -= 8) { char c = (char)(wv >> b);
++                                  txt[k++] = (c >= 32 && c < 127) ? c : '.'; }
++                          }
++                          txt[k] = 0; mk--;
++                          fprintf(stderr, "[marker] io=%08X %s\n", s_fifo_getoff, txt);
++                      } }
++                    /* GCM_EXEC_WATCH=<io lo>-<io hi> (hex): when the walker executes a method
++                     * whose FIFO word lies in the range (time, method, value) -- set against
++                     * SPU_DMA_EA's write times, it shows whether a block ran before or after
++                     * the job that fills it wrote it. */
++                    { static int ew = -1; static u32 ew_lo, ew_hi;
++                      if (ew < 0) { const char* e = getenv("GCM_EXEC_WATCH"); ew = 0;
++                                    if (e) { char* q; ew_lo = (u32)strtoul(e, &q, 16);
++                                             ew_hi = (q && *q == '-') ? (u32)strtoul(q + 1, 0, 16) : ew_lo + 4; ew = 1; } }
++                      const u32 io_w = s_fifo_getoff + 4 + i * 4;
++                      if (ew && io_w >= ew_lo && io_w < ew_hi)
++                          fprintf(stderr, "[exec] io=%08X m=%04X v=%08X t=%llu\n", io_w, m, vm_read32(dea),
++                                  (unsigned long long)ps3_ms_now()); }
+                     /* NV4097_GET_REPORT: (type << 24) | offset into the report
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -1766,7 +1797,7 @@ index ac0a7a8..6addf76 100644
                          const u32 v = vm_read32(dea), idx = (v & 0xFFFFFFu) / 16u;
                          { static int rn = 0; if (rn++ < 6) printf("[GET_REPORT] type=%u idx=%u%c", v >> 24, idx, 10); }
                          if (idx < CELL_GCM_MAX_REPORT_COUNT) {
-@@ -1997,7 +2355,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1997,7 +2382,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -1786,7 +1817,7 @@ index ac0a7a8..6addf76 100644
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
-@@ -2360,7 +2729,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2360,7 +2756,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * it spins on `ref` for good. Safe when the walker has left the head of
       * the ring well behind, which is the region the guest writes next. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -1804,7 +1835,7 @@ index ac0a7a8..6addf76 100644
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
          vm_write32(ctx + 8, begin);
-@@ -2637,14 +3015,101 @@ static u32 gcm_io_alloc(u32 size)
+@@ -2637,14 +3042,101 @@ static u32 gcm_io_alloc(u32 size)
      if (s_io_alloc_next == 0)
          s_io_alloc_next = (s_config.ioSize + 0xFFFFFu) & ~0xFFFFFu;
      if (s_io_alloc_next < 0x100000u) s_io_alloc_next = 0x100000u;
@@ -1906,7 +1937,7 @@ index ac0a7a8..6addf76 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -2684,6 +3149,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2684,6 +3176,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -1914,7 +1945,7 @@ index ac0a7a8..6addf76 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -2692,6 +3158,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2692,6 +3185,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -1922,7 +1953,7 @@ index ac0a7a8..6addf76 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -2727,6 +3194,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2727,6 +3221,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -1939,7 +1970,7 @@ index ac0a7a8..6addf76 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -2744,8 +3221,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -2744,8 +3248,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -2080,7 +2111,7 @@ index d8506de..5d72aff 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index b438d87..7ec1472 100644
+index b438d87..771b01c 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -682,6 +682,9 @@ static u8* eng_coherence_buffer(u32 bytes)
@@ -2265,7 +2296,7 @@ index b438d87..7ec1472 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2036,6 +2134,32 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -2036,6 +2134,41 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
  /* Called on every present: arm on the first frame heavy enough when no delay
   * was asked for, and while capturing, close the pass in progress and write
   * the presented surface. */
@@ -2295,10 +2326,34 @@ index b438d87..7ec1472 100644
 +            why, prim, dc.n_verts, fp_loc, fp_off, s_pd.draws, s_pd.pass);
 +}
 +
++/* Draw-relevant methods in FIFO order (fragment program, BEGIN_END, draw
++ * calls) into draws.txt while capturing: shows a draw the FIFO carried that
++ * never became a draw line. */
++void pd_note_method(u32 method, u32 arg)
++{
++    if (s_pd.state != 2 || !s_pd.draws_log) return;
++    fprintf(s_pd.draws_log, "  m %04X = %08X\n", method, arg);
++}
++
  static void pd_present(u32 presented)
  {
      if (s_pd.state == 0) pd_capturing();
-@@ -2075,33 +2199,33 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2060,7 +2193,13 @@ static void pd_present(u32 presented)
+ static void sink_end(void* user, const rsx_dispatch* r)
+ {
+     (void)user; (void)r;
+-    if (!g.ready || !dc.n_packets) return;
++    if (!g.ready) return;
++    if (!dc.n_packets) {
++        /* A BEGIN/END pair with no draw method the sinks saw: either an empty
++         * pair or a draw method routed nowhere. */
++        pd_note_drop("no draw packets", g.rsx.current_primitive);
++        return;
++    }
+ 
+     const u32 prim = g.rsx.current_primitive;
+     /* Everything that becomes triangles -- lists, strips, fans, quads, quad
+@@ -2075,33 +2214,33 @@ static void sink_end(void* user, const rsx_dispatch* r)
      int scratch = 0;
      const int rebuild = eng_topology_rebuild(prim, 0, &scratch) != 0;
      if (!rebuild) {
@@ -2338,7 +2393,7 @@ index b438d87..7ec1472 100644
      const u32 target = targets[0];
  
      rsx_dsp_surface sf;
-@@ -2120,7 +2244,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2120,7 +2259,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
      const u32 pipeline = eng_pipeline_get(&layout, &rs,
                                            eng_surface_format(sf.color_format),
                                            n_targets, &pipeline_is_fixed, &tex_used);
@@ -2347,7 +2402,7 @@ index b438d87..7ec1472 100644
  
      /* Textures before any pipeline or target binding: a cache refresh can
       * replace a resource, and the backend is free to submit while doing it. */
-@@ -2138,7 +2262,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2138,7 +2277,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
                                                      vsamplers);
  
      if (indexed) {
@@ -2356,7 +2411,7 @@ index b438d87..7ec1472 100644
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
              dc.refs_remapped ? dc.ref_remap.occurrence_to_unique : NULL,
-@@ -2231,6 +2355,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2231,6 +2370,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
      g.be->draw(g.be->user, topology, dc.verts, uploaded, layout.stride,
                 indexed ? g.indices : NULL, indexed ? n_draw : 0);
@@ -2424,7 +2479,7 @@ index b438d87..7ec1472 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2294,6 +2479,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2294,6 +2494,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -2438,7 +2493,7 @@ index b438d87..7ec1472 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2325,9 +2517,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2325,9 +2532,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -2472,6 +2527,33 @@ index b438d87..7ec1472 100644
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
+@@ -2447,6 +2677,26 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+      * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
+      * preserve them with the wider mask. */
+     u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
++    /* RSX_ENGINE_FP_LOG=1: each distinct fragment program the FIFO selects,
++     * the first time -- whether a title's material blocks are executed at
++     * all, independently of any draw following them. */
++    if (m == 0x08E4u || m == 0x1808u || m == 0x1824u || m == 0x1814u) {
++        void pd_note_method(u32 method, u32 arg);
++        pd_note_method(m, arg);
++    }
++    if (m == 0x08E4u) {
++        static int on = -1;
++        if (on < 0) on = getenv("RSX_ENGINE_FP_LOG") ? 1 : 0;
++        if (on) {
++            static u32 seen[4096]; static u32 n;
++            u32 k = 0; while (k < n && seen[k] != arg) k++;
++            if (k == n && n < 4096) {
++                seen[n++] = arg;
++                fprintf(stderr, "[rsx engine] fp select #%u 0x%08X (after %u draws this frame)\n",
++                        n, arg, g.guest_draws);
++            }
++        }
++    }
+     rsx_dispatch_method(&g.rsx, m, arg);
+ }
+ 
 diff --git a/libs/video/rsx_draw_engine.h b/libs/video/rsx_draw_engine.h
 index 1a3bc99..1aeba8a 100644
 --- a/libs/video/rsx_draw_engine.h
@@ -4490,7 +4572,7 @@ index 8d8e4aa..291f6ee 100644
   * Preferred slot extraction
   *
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..f120c5c 100644
+index 90f3221..c55ee3a 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -168,6 +168,15 @@ static inline int mfc_is_fence(uint32_t cmd)
@@ -4540,7 +4622,7 @@ index 90f3221..f120c5c 100644
      return rc;
  }
  
-@@ -1359,7 +1379,55 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1359,7 +1379,68 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -4575,9 +4657,22 @@ index 90f3221..f120c5c 100644
 +                }
 +            if (s_pk && fp < 140) { extern uint8_t* vm_base; const uint8_t* g = vm_base + s_pk;
 +                fp += snprintf(fb + fp, sizeof fb - fp, " peek=%02X%02X%02X%02X", g[0], g[1], g[2], g[3]); } }
-+          fprintf(stderr, "[ea-dma] img=%d wid=%u pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%08llX size=0x%X data=%02X%02X%02X%02X %02X%02X%02X%02X%s\n",
++          extern unsigned long long ps3_ms_now(void);
++          fprintf(stderr, "[ea-dma] img=%d wid=%u pc=0x%05X cmd=0x%02X lsa=0x%05X ea=0x%08llX size=0x%X data=%02X%02X%02X%02X %02X%02X%02X%02X t=%llu%s\n",
 +                  spu->image_id, spu->policy_mode ? spu->ls[0x1DF] : 255u, spu->pc & 0x3FFFF, cmd, lsa,
-+                  (unsigned long long)ea, size, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], fb);
++                  (unsigned long long)ea, size, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], ps3_ms_now(), fb);
++          /* SPU_DMA_EA_DUMP=<n>: the whole payload (up to 1 KB) of the first n lines that had a
++           * SPU_DMA_EA_FIND hit -- what a command block a job wrote actually contains. */
++          { static int s_dd = -1;
++            if (s_dd < 0) { const char* e = getenv("SPU_DMA_EA_DUMP"); s_dd = e ? atoi(e) : 0; }
++            if (s_dd > 0 && fb[0] == ' ' && fb[1] == '+') { s_dd--;
++                for (uint32_t o = 0; o < size && o < 0x400; o += 16) {
++                    const uint8_t* w = spu->ls + ((lsa + o) & 0x3FFF0u);
++                    fprintf(stderr, "[ea-dump] %08llX:", (unsigned long long)(ea + o));
++                    for (uint32_t k = 0; k < 16 && o + k < size; k += 4)
++                        fprintf(stderr, " %02X%02X%02X%02X", w[k], w[k + 1], w[k + 2], w[k + 3]);
++                    fprintf(stderr, "\n");
++                } } }
 +      } }
 +    /* SPU_DMA_IMG=<n>: every DMA of image n (cmd, lsa, ea, size), up to 200000. */
 +    { static int s_di = -2; if (s_di == -2) { const char* e = getenv("SPU_DMA_IMG"); s_di = e ? atoi(e) : -1; }
@@ -4596,7 +4691,7 @@ index 90f3221..f120c5c 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1391,11 +1459,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1391,11 +1472,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -4638,7 +4733,7 @@ index 90f3221..f120c5c 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1546,6 +1644,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1546,6 +1657,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }
