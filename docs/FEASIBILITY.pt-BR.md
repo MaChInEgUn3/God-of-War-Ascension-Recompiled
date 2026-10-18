@@ -441,6 +441,8 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - O label `C80` (consumo do anel pelo RSX) congela em `0x234CB780` aos ~31 s, quando a cena 3D começa (`CE0` continua andando). Mas o pré-passo continua tirando geometria do mesmo anel, e pelo descritor ainda há espaço livre. Então não parece anel cheio: o EDGE descarta a geometria **por objeto**.
   - Consultas de oclusão: há ~313 slots ZPASS em `0x0124xxxx`. O jogo reinicia cada slot para `FFFF…` e o walker grava `{timestamp, 0xFFFF, 0}` ("visível"), então não são elas que cortam.
   - Diagnóstico novo: `SPU_DMA_EA_DUMP`, `GCM_EXEC_WATCH`, `RSX_ENGINE_FP_LOG`, `GCM_MARKERS`, linhas `m` no `draws.txt`.
+  - **Visibilidade:** o workload wid 5 (`jobmod_e9f3f00d551e`, carregado de `0x6B4C80`) só **reinicia** os slots de consulta (PUT de `FFFF` em `0x2023FD00`); quem lê é o próprio EDGE (wids 15/16/17, pc `0xAF54`, GET de 16 bytes por objeto). `SPU_DMA_EA_GET` mostra o que ele lê: 96% `{timer, 0x0000FFFF, 0}` (visível) e 4% pendente. Então a oclusão não explica o corte.
+  - **A/B lift × interpretador:** o módulo de geometria EDGE é `jobmod_d93503647dd8` (imagem 225, carregado de `0x6FB300`). Com `SPU_NOLIFT_IMG=225 SPU_INTERP_UNLIFTED=1` os wids EDGE passam a ~86% interpretados, e o resultado é o mesmo: pré-passo de 161 draws, sem passada de cor. Não é bug do lift desse módulo, mas o interpretador usa os mesmos helpers de `spu_helpers.h`, e os fragmentos (300–339) continuam liftados.
   - **Próximo passo:** entender por que o job de geometria EDGE da passada de cor não emite nada. Hipóteses: culling do EDGE (matemática SPU) ou uma condição do lado PPU/SPU (visibilidade). Um oráculo seria o RPCS3 (`tools/rpcs3`).
 
 ### Próximos passos imediatos
