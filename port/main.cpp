@@ -615,10 +615,11 @@ int main(int argc, char** argv)
      * frame is a chain of dependent jobs across workloads; a timer tick per hop
      * halved the frame rate (measured 2.95 -> 6.25 game frames/s). */
     if (!getenv("SPURS_PASS_GREEDY")) _putenv_s("SPURS_PASS_GREEDY", "1");
-    /* SPURS_KERN_THREADS=spus: one host kernel thread per SPU of the instance ("Big"
-     * has 2), so two workloads' modules run side by side as on hardware (measured
-     * 8.8 -> 12.7 game frames/s). */
-    if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "spus");
+    /* SPURS_KERN_THREADS=2: two host kernel threads run the "Big" instance's policy
+     * modules side by side (measured 8.8 -> ~12 game frames/s). The instance has 6
+     * SPUs, but 3, 4 and 6 threads measured slower (9.2-10.1): the frame's job chain
+     * has too little parallel work and the extra threads only add lock contention. */
+    if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

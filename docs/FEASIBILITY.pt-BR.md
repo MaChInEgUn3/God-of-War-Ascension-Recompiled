@@ -361,7 +361,15 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - `SPURS_KERN_THREADS=<n>|spus` sobe N threads de kernel por instância.
   - Cada wid é reivindicado por CAS (`s_wid_busy`), então a PM de uma carga nunca roda em duas threads.
   - `g_spurs_pm_polls` e `g_spurs_pm_exited` passaram a ser por thread: o segundo decide o retorno de cada execução da PM.
-  - A/B entre t=60 s e t=120 s: **8,8 → 12,7 frames/s** com 2 threads (o "Big" tem `nSpus=2`). Padrão da porta: `spus`.
+  - A/B entre t=60 s e t=120 s: **8,8 → 12,7 frames/s** com 2 threads.
+- **Prioridades e `nSpus` (mesma data):**
+  - wid 8 (BrBDblBufWrkld) roda ~1800 jobs/s mesmo com o jogo parado (o novo contador `j<n>` do `[pm-prof]` conta as entradas de job), e ocupa ~71% de uma thread.
+  - As prioridades por SPU (`priority per SPU`, impressas no registro de cada carga) mostram que ela é **dedicada ao SPU 5**: prioridade 0 ("nunca") nos SPUs 0–4. O EDGE usa os SPUs 0–3 e 7.
+  - As tabelas citam 6 SPUs, mas o HLE dizia que o "Big" tinha 2. `_cellSpursAttributeInitialize` recebe `(attr, revision, sdkVersion, nSpus, …)`, e o HLE lia a `revision` (2) como `nSpus`. `PS3_HLE_ARGS=95180230` mostrou `r6 = 6`. Corrigido.
+  - Cada thread de kernel agora faz o papel de um SPU (índice k) e pula as cargas com prioridade 0 nele, desde que outra thread possa rodá-las.
+  - Medido, frames/s entre t=60 s e t=120 s: 2 threads **11,3**, 3 threads 9,7, 4 threads 9,2 e 6 threads (um por SPU, com o filtro de prioridade) 10,1. A cadeia de jobs do frame tem pouco trabalho paralelo, e threads extras só somam contenção (por exemplo o lock global de lock-line).
+  - Padrão da porta: `SPURS_KERN_THREADS=2`.
+- Parada rara com 2 threads: uma vez em ~3 h de jogo (run192, frame ~592, tudo ocioso menos a wid 8). Não se repetiu em 11 execuções nem em 30 min; o detector de parada fica ligado para pegá-la.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

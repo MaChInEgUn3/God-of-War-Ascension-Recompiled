@@ -133,9 +133,11 @@ Update: the EDGE fragments are lifted, one image per (source EA, LS placement), 
 code in the resident job module or fragment, not only in the policy module. Interpreted SPU time fell to ~0.1 s per
 20 s, and the game runs at **~8.6 frames/s**. The kernel thread is ~100% busy in lifted code (BrBDblBufWrkld 35%,
 EDGE0/1/2 16% each); a second kernel thread is next.
-Update: the SPURS kernel now runs one host thread per SPU of the instance (`SPURS_KERN_THREADS=spus`, a port
-default; the "Big" instance has 2). A per-workload claim keeps a module on one thread at a time: **~12.7 game
-frames/s** (was ~8.8).
+Update: the SPURS kernel now runs two host threads (`SPURS_KERN_THREADS=2`, a port default), with a per-workload
+claim that keeps a module on one thread at a time: **~11-12.7 game frames/s** (was ~8.8). The "Big" instance really
+has 6 SPUs: the HLE read `_cellSpursAttributeInitialize`'s revision argument as nSpus. Each kernel thread now honours
+the per-SPU workload priorities (BrBDblBufWrkld is pinned to SPU 5), but 3-6 threads measured slower than 2. Known: one
+rare stall with two threads (once in ~3 h of play, not reproduced since).
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
