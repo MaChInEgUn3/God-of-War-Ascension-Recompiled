@@ -10,7 +10,10 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `local/vfs/PS3_GAME/...`; the archives listed in `ARCHIVES` must be present (`LOCALIZED_ARCHIVES` lists the language ones).
 3. Load and lift: `ppu_loader`, then `ppu_lifter.py <elf> -o local/recompiled --functions ... --hle-stubs ...`
    (about 50 s, about 190 MB of C++). Regenerate the NID table:
-   `gen_hle_nids.py --all --out local/recompiled/ppu_hle_nids.cpp`.
+   `gen_hle_nids.py --all --out local/recompiled/ppu_hle_nids.cpp`. Rerun it whenever the patch adds an HLE function
+   (NIDs are computed from the names; GoW:A needs at least `cellVdecQueryAttrEx`/`cellVdecOpenEx`).
+   Optional: real MPEG-2 decoding of the menu video needs FFmpeg 9.0 (`-DPS3RECOMP_FFMPEG_RUNTIME=ON` with its headers,
+   `avcodec-63.dll`/`avutil` next to the exe); without it the video decodes to black.
 4. SPU images: `python analysis/make_spu_port.py <elf> spu/images.json port <ps3recomp>` (generates `port/spu/`, git-ignored).
    WWS job modules (33, embedded in the EBOOT):
    `python analysis/extract_gow_jobmods.py <elf> local/spu/jobmods`, then

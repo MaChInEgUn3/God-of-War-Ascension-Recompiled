@@ -156,6 +156,11 @@ target of a depth-only prepass, and a full-screen quad 0.93 units in front of th
 The texture at `0x20AB0000` is the MLAA copy of the (black) display buffer, not a missing video. Fixed on the way:
 fragment depth export (`SV_Depth` from r1.z) and the stencil byte when a D24S8 zeta is read as A8R8G8B8. Next: find on
 the SPU/PPU side who should emit the colour pass.
+Update (M0.33): that state was the game waiting for its menu video. It imports `libvdec` and calls
+`cellVdecQueryAttrEx`/`cellVdecOpenEx`, which were unregistered NIDs; with them forwarded to `QueryAttr`/`Open` the
+player opens two MPEG-2 decoders and the frame becomes one full-screen video draw. Pictures are black until a real
+decoder is present (FFmpeg 9.0 loaded at run time, `PS3RECOMP_FFMPEG_RUNTIME`). Also added: FP opcodes DDX/DDY and
+the PK/UP pack family.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

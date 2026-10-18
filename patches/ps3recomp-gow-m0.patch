@@ -45,6 +45,48 @@ index 94de794..1312807 100644
      if(glslang_FOUND AND TARGET glslang::glslang AND TARGET glslang::SPIRV)
          set_source_files_properties(
              "${CMAKE_CURRENT_SOURCE_DIR}/libs/video/rsx_shader_spirv.cpp"
+diff --git a/libs/codec/cellVdec.c b/libs/codec/cellVdec.c
+index a411dbd..c94ed29 100644
+--- a/libs/codec/cellVdec.c
++++ b/libs/codec/cellVdec.c
+@@ -183,6 +183,23 @@ s32 cellVdecOpen(const CellVdecType* type, const CellVdecResource* res,
+     return (s32)CELL_VDEC_ERROR_BUSY;
+ }
+ 
++/* The Ex variants take CellVdecTypeEx { s32 codecType; codecSpecificInfo* }
++ * and CellVdecResourceEx (SPURS instead of SPU-thread resources). Only the
++ * codec type is read, and it is the first word of both type structs; the
++ * attr layout is the same. GoW:A's menu video player calls only these, and
++ * with them unregistered QueryAttrEx failed and the menu background never
++ * started. */
++s32 cellVdecQueryAttrEx(const CellVdecType* type, void* attr)
++{
++    return cellVdecQueryAttr(type, attr);
++}
++
++s32 cellVdecOpenEx(const CellVdecType* type, const CellVdecResource* res,
++                   const CellVdecCb* cb, CellVdecHandle* handle)
++{
++    return cellVdecOpen(type, res, cb, handle);
++}
++
+ s32 cellVdecClose(CellVdecHandle handle)
+ {
+     printf("[cellVdec] Close(handle=%u)\n", handle);
+diff --git a/libs/codec/cellVdec.h b/libs/codec/cellVdec.h
+index 1fed514..401bb3b 100644
+--- a/libs/codec/cellVdec.h
++++ b/libs/codec/cellVdec.h
+@@ -102,6 +102,9 @@ typedef struct CellVdecCb {
+ 
+ s32 cellVdecOpen(const CellVdecType* type, const CellVdecResource* res,
+                   const CellVdecCb* cb, CellVdecHandle* handle);
++s32 cellVdecQueryAttrEx(const CellVdecType* type, void* attr);
++s32 cellVdecOpenEx(const CellVdecType* type, const CellVdecResource* res,
++                   const CellVdecCb* cb, CellVdecHandle* handle);
+ s32 cellVdecClose(CellVdecHandle handle);
+ 
+ s32 cellVdecStartSeq(CellVdecHandle handle);
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
 index 5e3b510..c26652a 100644
 --- a/libs/spurs/cellSpurs.c
@@ -2288,10 +2330,20 @@ index 1a3bc99..1aeba8a 100644
  
  /* ---- the engine --------------------------------------------------------- */
 diff --git a/libs/video/rsx_fp_decompiler.c b/libs/video/rsx_fp_decompiler.c
-index 545670f..dc63f56 100644
+index 545670f..1d1cf73 100644
 --- a/libs/video/rsx_fp_decompiler.c
 +++ b/libs/video/rsx_fp_decompiler.c
-@@ -392,6 +392,14 @@ static void dest_mask(u32 op0, char* m)
+@@ -95,6 +95,9 @@ const char* rsx_fp_opcode_name(u32 op)
+     case OP_DIV: return "DIV"; case OP_DP2: return "DP2"; case OP_NRM: return "NRM";
+     case OP_DIVSQ: return "DIVSQ"; case OP_LIF: return "LIF";
+     case OP_FENCT: return "FENCT"; case OP_FENCB: return "FENCB";
++    case OP_PK4B: return "PK4B"; case OP_UP4B: return "UP4B"; case OP_PK2H: return "PK2H";
++    case OP_UP2H: return "UP2H"; case OP_PK4UB: return "PK4UB"; case OP_UP4UB: return "UP4UB";
++    case OP_PK2US: return "PK2US"; case OP_UP2US: return "UP2US";
+     default:     return "?";
+     }
+ }
+@@ -392,6 +395,14 @@ static void dest_mask(u32 op0, char* m)
   * FragmentProgramDecompiler::BuildCode (gcm_enums.h). */
  #define FP_CTRL_32BIT_EXPORTS 0x40u
  
@@ -2306,15 +2358,57 @@ index 545670f..dc63f56 100644
  /* The four colour exports live at fixed register indices, one set per export
   * width: r0/r2/r3/r4 with 32-bit exports and h0/h4/h6/h8 with 16-bit ones
   * (rsx_commands.h, SHADER_CONTROL 0x40; RPCS3 FragmentProgramDecompiler's
-@@ -454,6 +462,7 @@ static int rsx_fp_decompile_internal(
+@@ -454,8 +465,10 @@ static int rsx_fp_decompile_internal(
       * [half][target]. The whole file is tracked, not just target 0, because
       * the highest one written decides how many SV_TARGETs come out. */
      int wrote[2][FP_MAX_COLOR_TARGETS];
 +    int wrote_r1 = 0;               /* r1 written: the depth export's source */
      memset(wrote, 0, sizeof wrote);
      int count = 0;
++    int uses_pack = 0;              /* PK and UP helpers needed in the preamble */
      u32 off = 0;
-@@ -814,6 +823,7 @@ static int rsx_fp_decompile_internal(
+     u32 constant_slot = 0;
+ 
+@@ -624,6 +637,24 @@ static int rsx_fp_decompile_internal(
+         case OP_MAX: snprintf(rhs, sizeof(rhs), "max((%s), (%s))", a, b); break;
+         case OP_FRC: snprintf(rhs, sizeof(rhs), "frac(%s)", a); break;
+         case OP_FLR: snprintf(rhs, sizeof(rhs), "floor(%s)", a); break;
++        /* Pack/unpack: the bits of one fp32 register reinterpreted (RPCS3
++         * FragmentProgramDecompiler: packHalf2x16, unpackUnorm4x8, ...). The
++         * packed scalar lands in every component. GoW:A reads packed data with
++         * PK2H + UP4UB in ~135 programs; unhandled, both left their
++         * destinations at 0. */
++        case OP_PK2H:  uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_pk2h(%s)", a); break;
++        case OP_UP2H:  uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_up2h(%s)", a); break;
++        case OP_PK4UB: uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_pk4ub(%s)", a); break;
++        case OP_UP4UB: uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_up4ub(%s)", a); break;
++        case OP_PK4B:  uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_pk4b(%s)", a); break;
++        case OP_UP4B:  uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_up4b(%s)", a); break;
++        case OP_PK2US: uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_pk2us(%s)", a); break;
++        case OP_UP2US: uses_pack = 1; snprintf(rhs, sizeof(rhs), "_rsx_up2us(%s)", a); break;
++        /* Screen-space derivatives. GoW:A's distance-field UI text scales its
++         * edge by max(|ddx|, |ddy|); left unhandled, the width was 0 and every
++         * glyph came out fully transparent. */
++        case OP_DDX: snprintf(rhs, sizeof(rhs), "ddx(%s)", a); break;
++        case OP_DDY: snprintf(rhs, sizeof(rhs), "ddy(%s)", a); break;
+         case OP_RCP: snprintf(rhs, sizeof(rhs), "(1.0 / (%s).x)", a); break;
+         /* Real RSX RSQ ignores the input's sign — 1/sqrt(|x|), not 1/sqrt(x)
+          * (oracle: RPCS3 FragmentProgramDecompiler.cpp, "RSQ ignores the sign
+@@ -731,9 +762,10 @@ static int rsx_fp_decompile_internal(
+             handled = 0;   /* no destination write */
+             break;
+         default:
+-            out_puts(&o, "    /* TODO: unhandled FP opcode ");
+-            out_puts(&o, rsx_fp_opcode_name(opcode));
+-            out_puts(&o, " */\n");
++            { char note[96];
++              snprintf(note, sizeof note, "    /* TODO: unhandled FP opcode %s (0x%02X) */\n",
++                       rsx_fp_opcode_name(opcode), opcode);
++              out_puts(&o, note); }
+             handled = 0;
+             break;
+         }
+@@ -814,6 +846,7 @@ static int rsx_fp_decompile_internal(
              if (has_dest) {
                  const int target = fp_export_target(dst_idx, dst_half);
                  if (target >= 0) wrote[dst_half][target] = 1;
@@ -2322,7 +2416,7 @@ index 545670f..dc63f56 100644
              }
          }
  
-@@ -851,7 +861,10 @@ static int rsx_fp_decompile_internal(
+@@ -851,7 +884,10 @@ static int rsx_fp_decompile_internal(
      for (u32 t = FP_MAX_COLOR_TARGETS; t-- > 1; )
          if (wrote[half_exports][t]) { targets = t + 1; break; }
  
@@ -2334,7 +2428,7 @@ index 545670f..dc63f56 100644
          char tail[96];
          snprintf(tail, sizeof(tail),
                   "    float4 _o = %s[0];\n"
-@@ -871,6 +884,8 @@ static int rsx_fp_decompile_internal(
+@@ -871,13 +907,15 @@ static int rsx_fp_decompile_internal(
                       t, t, t, t);
              out_puts(&o, line);
          }
@@ -2343,7 +2437,40 @@ index 545670f..dc63f56 100644
          out_puts(&o, "    return _out;\n}\n");
      }
  
-@@ -915,7 +930,7 @@ static int rsx_fp_decompile_internal(
+     /* Preamble: PSInput matches the backend's placeholder layout; temp/half
+      * register files; texture+sampler banks for TEX. Built here, in front of
+      * the body, now that the return type is known. */
+-    char preamble[2048];
++    char preamble[4096];
+     Out p = { preamble, sizeof(preamble), 0, 1 };
+     preamble[0] = '\0';
+     out_puts(&p,
+@@ -904,6 +942,24 @@ static int rsx_fp_decompile_internal(
+     out_puts(&p,
+         "SamplerState rsx_samp[16] : register(s0);\n"
+     );
++    if (uses_pack)
++        out_puts(&p,
++            "float4 _rsx_pk2h(float4 v) { return (float4)asfloat(f32tof16(v.x) | (f32tof16(v.y) << 16)); }\n"
++            "float4 _rsx_up2h(float4 v) { uint u = asuint(v.x);"
++            " float2 r = float2(f16tof32(u & 0xFFFFu), f16tof32(u >> 16)); return r.xyxy; }\n"
++            "float4 _rsx_pk4ub(float4 v) { uint4 q = (uint4)round(saturate(v) * 255.0);"
++            " return (float4)asfloat(q.x | (q.y << 8) | (q.z << 16) | (q.w << 24)); }\n"
++            "float4 _rsx_up4ub(float4 v) { uint u = asuint(v.x);"
++            " return float4(u & 0xFFu, (u >> 8) & 0xFFu, (u >> 16) & 0xFFu, u >> 24) / 255.0; }\n"
++            "float4 _rsx_pk4b(float4 v) { uint4 q = (uint4)(int4)round(clamp(v, -1.0, 1.0) * 127.0) & 0xFFu;"
++            " return (float4)asfloat(q.x | (q.y << 8) | (q.z << 16) | (q.w << 24)); }\n"
++            "float4 _rsx_up4b(float4 v) { int u = asint(v.x);"
++            " int4 b = int4(u << 24, u << 16, u << 8, u) >> 24; return clamp(float4(b) / 127.0, -1.0, 1.0); }\n"
++            "float4 _rsx_pk2us(float4 v) { uint2 q = (uint2)round(saturate(v.xy) * 65535.0);"
++            " return (float4)asfloat(q.x | (q.y << 16)); }\n"
++            "float4 _rsx_up2us(float4 v) { uint u = asuint(v.x);"
++            " float2 r = float2(u & 0xFFFFu, u >> 16) / 65535.0; return r.xyxy; }\n");
++
+     if (buffered) {
+         char constants_decl[192];
+         snprintf(
+@@ -915,7 +971,7 @@ static int rsx_fp_decompile_internal(
              buffered_constant_count ? buffered_constant_count : 1u);
          out_puts(&p, constants_decl);
      }
@@ -2352,7 +2479,7 @@ index 545670f..dc63f56 100644
          out_puts(&p, "float4 main(PSInput input) : SV_TARGET {\n");
      } else {
          out_puts(&p, "struct PSOutput {\n");
-@@ -925,6 +940,7 @@ static int rsx_fp_decompile_internal(
+@@ -925,6 +981,7 @@ static int rsx_fp_decompile_internal(
                       "    float4 t%u : SV_TARGET%u;\n", t, t);
              out_puts(&p, member);
          }
@@ -2689,10 +2816,10 @@ index 87ea864..e0dbb9c 100644
 -
 -#endif /* !_WIN32 */
 diff --git a/libs/video/tests/test_fp_decompiler.c b/libs/video/tests/test_fp_decompiler.c
-index c4ea4f2..ed09e3b 100644
+index c4ea4f2..f90ddd8 100644
 --- a/libs/video/tests/test_fp_decompiler.c
 +++ b/libs/video/tests/test_fp_decompiler.c
-@@ -182,6 +182,29 @@ int main(void)
+@@ -182,6 +182,53 @@ int main(void)
          check("h0_32bit", hlsl, "float4 _o = r[0];");
      }
  
@@ -2717,6 +2844,30 @@ index c4ea4f2..ed09e3b 100644
 +        check_absent("depth_off", hlsl, "SV_Depth");
 +        rsx_fp_decompile(prog, 16, CTRL_16BIT | 0x0Eu, hlsl, sizeof(hlsl));
 +        check_absent("depth_no_r1", hlsl, "SV_Depth");
++    }
++
++    /* Test 6c: PK2H then UP4UB -- two halves packed into one fp32's bits, read
++     * back as four unorm bytes -- and DDX, all through helpers/intrinsics. */
++    {
++        u8 prog[48];
++        put_word(prog +  0, OPC(0x24) | OUTMASK_ALL | INSRC(4) | OUTREG(1));   /* PK2H r1, TC0 */
++        put_word(prog +  4, T_INPUT | SWZ_IDENT | EXEC_ALWAYS);
++        put_word(prog +  8, 0);
++        put_word(prog + 12, 0);
++        put_word(prog + 16, OPC(0x28) | OUTMASK_ALL | OUTREG(2));              /* UP4UB r2, r1 */
++        put_word(prog + 20, T_TEMP | REG(1) | SWZ_IDENT | EXEC_ALWAYS);
++        put_word(prog + 24, 0);
++        put_word(prog + 28, 0);
++        put_word(prog + 32, OPC(0x15) | OUTMASK_ALL | END);                    /* DDX r0, r2 */
++        put_word(prog + 36, T_TEMP | REG(2) | SWZ_IDENT | EXEC_ALWAYS);
++        put_word(prog + 40, 0);
++        put_word(prog + 44, 0);
++        rsx_fp_decompile(prog, sizeof(prog), CTRL_32BIT, hlsl, sizeof(hlsl));
++        check("pk2h_call",   hlsl, "_rsx_pk2h(");
++        check("up4ub_call",  hlsl, "_rsx_up4ub(");
++        check("pack_helper", hlsl, "float4 _rsx_up4ub(float4 v) {");
++        check("ddx",         hlsl, "ddx(");
++        check_absent("pack_no_todo", hlsl, "unhandled");
 +    }
 +
      /* Test 7: MRT. The second colour export is r2 with 32-bit exports and h4
