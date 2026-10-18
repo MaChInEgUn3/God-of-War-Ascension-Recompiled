@@ -399,7 +399,9 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Com autorização do usuário, instalei o glslang 16.5.0 + spirv-tools 2026.3 localmente em `tools/glslang`. São pacotes `win-64` do conda-forge, com SHA-256 conferido. O `dxc` do Windows SDK não tem geração de SPIR-V.
   - O CMake do ps3recomp só procurava o glslang em UNIX; o patch adiciona a busca no ramo Vulkan.
   - Com `PS3RECOMP_VK_GUEST_PROGRAMS=1`, o frame despejado aos ~60 s mostra a **vinheta da Santa Monica Studio**, a primeira imagem real do jogo.
-  - Pendência visível: `colour target format 11 1280x720 not supported yet` (1311 vezes em 120 s). O formato 11 é `CELL_GCM_SURFACE_F_W16Z16Y16X16`, o alvo HDR RGBA16F do jogo, que o motor Vulkan ainda não aceita. Nada aqui segura os flips no vblank (flips e frames andam juntos), então quando houver apresentação real o número pode cair, e isso não será regressão.
+  - `colour target format 11 not supported yet` (1311 vezes em 120 s): o 11 é o enum `RSX_BE_FMT_R32F` (GCM `F_X32`), não um código GCM. O motor E2 passou a aceitar R32F como alvo, sem blending, como no RSX. O aviso sumiu e o logo aparece com brilho total.
+  - `PS3RECOMP_VK_DUMP` aceita `%u`/`%05u` (número do present), então uma execução deixa uma sequência de frames.
+  - Em 5 min a abertura completa renderiza: aviso de epilepsia → "Sony Computer Entertainment presents" → Santa Monica Studio → preto. Com a renderização ligada a lógica cai para ~17 frames/s. Nada aqui segura os flips no vblank (flips e frames andam juntos), então quando houver apresentação real o número pode cair, e isso não será regressão.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
