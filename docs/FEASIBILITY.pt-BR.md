@@ -355,6 +355,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - `spu_lifted_lookup` agora segue a mesma ordem do despacho: spans residentes, tarefa, overlay e imagem.
   - Resultado: tempo interpretado de ~1,5 s para **0,1 s a cada 20 s**, MeshProcJobs de 8% para 1% do kernel e **~8,6 frames/s**.
   - O kernel continua a ~100%, agora quase todo em código lifted (wid 8 35%, EDGE 16% cada). A próxima alavanca é a segunda thread de kernel.
+- **Segunda thread de kernel (run190 e A/B):**
+  - Antes de mexer na concorrência, medi a fração de execuções ociosas (`[pm-prof]` agora mostra `z<pct>%` por wid e `idle=`): só **2%**. O kernel estava mesmo ocupado com trabalho.
+  - A thread principal ainda esperava ~75% do tempo.
+  - `SPURS_KERN_THREADS=<n>|spus` sobe N threads de kernel por instância.
+  - Cada wid é reivindicado por CAS (`s_wid_busy`), então a PM de uma carga nunca roda em duas threads.
+  - `g_spurs_pm_polls` e `g_spurs_pm_exited` passaram a ser por thread: o segundo decide o retorno de cada execução da PM.
+  - A/B entre t=60 s e t=120 s: **8,8 → 12,7 frames/s** com 2 threads (o "Big" tem `nSpus=2`). Padrão da porta: `spus`.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

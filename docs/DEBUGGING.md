@@ -57,6 +57,9 @@ Lessons that cost days; keep them.
 * **SPURS kernel pacing**: `SPURS_PASS_SLEEP=<ms>` (default 1) is the pause between kernel passes;
   `SPURS_PASS_GREEDY=1` (GoW:A port default) skips it after a pass that found work; `SPURS_IDLE_MAX=<n>` caps the
   idle back-off (log2 passes, default 4).
+  `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default `spus`) runs n host kernel threads per instance, with a per-wid
+  claim. `[pm-prof]` shows `z<pct>%` per wid (share of its time spent in idle runs, polls == 0) and `idle=` overall;
+  a high idle share means the kernel is busy polling, not working.
 * **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
   then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on
