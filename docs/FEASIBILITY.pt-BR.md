@@ -392,6 +392,8 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
     - mais 4 linhas por task.
   - Correção: esses logs passam a ter limite. `SPURS_TASK_LOG=1` traz de volta os logs por task, e a porta usa `PS3_VERBOSE=0` por padrão (`PS3_VERBOSE=1` reativa). Agora são ~4 mil linhas em 150 s.
   - Resultado: `CreateTask2` caiu para ~2–3% do tempo de parede (0,13 ms por chamada). O jogo foi de ~18 para **~27–28 frames/s de lógica** (t=60→120 s), perto dos 30 do original. A wid 8 caiu de ~65% para 44% de uma thread.
+  - Os números de M0.28 foram medidos durante a enxurrada de log: o `RESUME-ELEMS` roda dentro do caminho `wrch`→StallAck, então o `m%` incluía tempo de log. Medido sem o log (run210): **EDGE ≈ 0,20 ms/job** (18% em 54.978 jobs/min) e wid 8 com m 15% (era 35%).
+  - Os 27–33 frames/s são a taxa de lógica sem limitador. Nada aqui segura os flips no vblank (flips e frames andam juntos), então quando houver apresentação real o número pode cair, e isso não será regressão.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
