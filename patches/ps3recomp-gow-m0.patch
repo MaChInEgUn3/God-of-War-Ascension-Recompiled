@@ -1082,7 +1082,7 @@ index b7dfd50..3a00f55 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index ac0a7a8..e12249d 100644
+index ac0a7a8..6addf76 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -20,6 +20,7 @@
@@ -1442,7 +1442,24 @@ index ac0a7a8..e12249d 100644
          /* Only remember offsets BELOW put -- those are positions in the
           * ring the title is writing. A park in another region is where the
           * walker gave up, not how far it got through the ring. */
-@@ -1722,15 +2014,26 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1702,7 +1994,15 @@ static void gcm_rsx_process_fifo_unlocked(void)
+              * "Command Buffer Overflow" forever. Past the threshold keep
+              * draining -- the intermediate presents are frames we are too far
+              * behind to show anyway. No-op for a title that is keeping up. */
+-            if (put < s_fifo_getoff ||
++            /* GCM_PARK_WAIT titles (GoW:A) leave `put` parked at the end of
++             * the ring and advance by patching self-JUMPs, so put - get reads
++             * megabytes behind even when the walker is right at the write
++             * head: never presenting (2650 presents in the first 30 s of
++             * boot, then ~10 per 30 s against ~500 flips). There the
++             * distance means nothing -- stop at every flip. */
++            static int s_flip_park = -1;
++            if (s_flip_park < 0) s_flip_park = getenv("GCM_PARK_WAIT") ? 1 : 0;
++            if (s_flip_park || put < s_fifo_getoff ||
+                 put - s_fifo_getoff < GCM_FIFO_CATCHUP_BYTES)
+                 { why = "flip"; break; }
+             continue;
+@@ -1722,15 +2022,26 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
                if (tgt == s_fifo_getoff) {
@@ -1470,7 +1487,7 @@ index ac0a7a8..e12249d 100644
                s_fifo_getoff = tgt; }
              continue;
          }
-@@ -1789,8 +2092,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1789,8 +2100,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      u32 m = (type == 0) ? method + i * 4 : method;
                      u32 v = vm_read32(dea);
                      u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
@@ -1487,7 +1504,7 @@ index ac0a7a8..e12249d 100644
                      if (m == 0x64u)      s_sema_offset = v;
                      else if (m == 0x6Cu) vm_write32(la, v);
                      else if (m == 0x68u && vm_read32(la) != v) {
-@@ -1803,7 +2112,23 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1803,7 +2120,23 @@ static void gcm_rsx_process_fifo_unlocked(void)
              if (blk) { sem_blocked = 1; break; }
          }
                  }
@@ -1512,7 +1529,7 @@ index ac0a7a8..e12249d 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -1936,7 +2261,32 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1936,7 +2269,32 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -1546,7 +1563,7 @@ index ac0a7a8..e12249d 100644
                          const u32 v = vm_read32(dea), idx = (v & 0xFFFFFFu) / 16u;
                          { static int rn = 0; if (rn++ < 6) printf("[GET_REPORT] type=%u idx=%u%c", v >> 24, idx, 10); }
                          if (idx < CELL_GCM_MAX_REPORT_COUNT) {
-@@ -1997,7 +2347,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1997,7 +2355,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
        } else burned = 0; }
  
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -1566,7 +1583,7 @@ index ac0a7a8..e12249d 100644
            if (++stuck >= 8) { gcm_fifo_dump_around(s_fifo_getoff);
                               gcm_fifo_resync_why("stuck-get", &s_fifo_getoff, put); stuck = 0; }
        } else { stuck = 0; last = s_fifo_getoff; } }
-@@ -2360,7 +2721,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2360,7 +2729,16 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * it spins on `ref` for good. Safe when the walker has left the head of
       * the ring well behind, which is the region the guest writes next. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -1584,7 +1601,7 @@ index ac0a7a8..e12249d 100644
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
          vm_write32(ctx + 8, begin);
-@@ -2637,14 +3007,101 @@ static u32 gcm_io_alloc(u32 size)
+@@ -2637,14 +3015,101 @@ static u32 gcm_io_alloc(u32 size)
      if (s_io_alloc_next == 0)
          s_io_alloc_next = (s_config.ioSize + 0xFFFFFu) & ~0xFFFFFu;
      if (s_io_alloc_next < 0x100000u) s_io_alloc_next = 0x100000u;
@@ -1686,7 +1703,7 @@ index ac0a7a8..e12249d 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -2684,6 +3141,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2684,6 +3149,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -1694,7 +1711,7 @@ index ac0a7a8..e12249d 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -2692,6 +3150,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -2692,6 +3158,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -1702,7 +1719,7 @@ index ac0a7a8..e12249d 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -2727,6 +3186,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -2727,6 +3194,16 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -1719,7 +1736,7 @@ index ac0a7a8..e12249d 100644
  /* NID: 0xDB23E867 (disambiguation by context) */
  s32 cellGcmUnmapEaIoAddress(u32 ea)
  {
-@@ -2744,8 +3213,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -2744,8 +3221,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -1859,6 +1876,44 @@ index d8506de..5d72aff 100644
          return 0;
      }
  
+diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
+index b438d87..22d03d8 100644
+--- a/libs/video/rsx_draw_engine.c
++++ b/libs/video/rsx_draw_engine.c
+@@ -2325,9 +2325,32 @@ static u32 eng_present_surface(u32 buffer_id)
+ 
+ static void eng_present(u32 buffer_id)
+ {
++    /* GCM_FLIPCOUNT: every 500 calls, how many presents reached the backend. */
++    { static unsigned s_calls, s_unready; static int s_dbg = -1;
++      if (s_dbg < 0) s_dbg = getenv("GCM_FLIPCOUNT") ? 1 : 0;
++      ++s_calls; if (!g.ready) ++s_unready;
++      if (s_dbg && (s_calls % 500u) == 0)
++          fprintf(stderr, "[rsx engine] present calls=%u unready=%u frames=%u buffer=%u\n",
++                  s_calls, s_unready, g.frames, buffer_id); }
+     if (!g.ready) return;
+     const u32 target = eng_present_surface(buffer_id);
+-    if (target == ENG_INVALID) return;
++    if (target == ENG_INVALID) {
++        /* Was silent: a title whose flips stop resolving to a surface just
++         * stops presenting. Say why, a few times. */
++        static unsigned s_n;
++        if (s_n++ < 8) {
++            const int dv = buffer_id < 8 && g.display_buffers[buffer_id].valid;
++            fprintf(stderr, "[rsx engine] present skipped: buffer=%u display(valid=%d loc=%u off=%08X) "
++                    "surfaces=%u current=none\n", buffer_id, dv,
++                    dv ? g.display_buffers[buffer_id].location : 0,
++                    dv ? g.display_buffers[buffer_id].offset : 0, g.n_surfaces);
++            for (u32 i = 0; i < g.n_surfaces && i < 16; ++i)
++                fprintf(stderr, "[rsx engine]   surface %u loc=%u offset=%08X %ux%u handle=%u\n", i,
++                        g.surfaces[i].location, g.surfaces[i].offset, g.surfaces[i].w, g.surfaces[i].h,
++                        g.surfaces[i].handle);
++        }
++        return;
++    }
+     if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
+         u32 current = eng_current_surface();
+         fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
 index 87ea864..175c9e1 100644
 --- a/libs/video/rsx_vulkan_backend.c

@@ -244,8 +244,9 @@ static DWORD WINAPI heartbeat(LPVOID arg)
         Sleep(ms);
         const uint8_t* p = vm_base ? vm_base + 0x9710C8u : nullptr;
         const unsigned frame = p ? ((unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]) : 0;
-        fprintf(stderr, "[heartbeat] t=%llus flips=%u game_frame=%u\n",
-                (unsigned long long)((GetTickCount64() - t0) / 1000), cellGcm_flip_request_count(), frame);
+        fprintf(stderr, "[heartbeat] t=%llus flips=%u game_frame=%u presents=%ld\n",
+                (unsigned long long)((GetTickCount64() - t0) / 1000), cellGcm_flip_request_count(), frame,
+                (long)g_frames_presented);
         fflush(stderr);
     }
     return 0;
