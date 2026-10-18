@@ -13,7 +13,10 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `gen_hle_nids.py --all --out local/recompiled/ppu_hle_nids.cpp`. Rerun it whenever the patch adds an HLE function
    (NIDs are computed from the names; GoW:A needs at least `cellVdecQueryAttrEx`/`cellVdecOpenEx`).
    Optional: real MPEG-2 decoding of the menu video needs FFmpeg 9.0 (`-DPS3RECOMP_FFMPEG_RUNTIME=ON` with its headers,
-   `avcodec-63.dll`/`avutil` next to the exe); without it the video decodes to black.
+   every DLL from the FFmpeg `bin` next to the exe -- avcodec alone fails to load on its dependencies); without it
+   the video decodes to black. Tested with BtbN `ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip` unpacked to
+   `local/tools/ffmpeg/sdk` (`scripts/cfg.bat` points there).
+5. Play: `scripts/play.bat` opens a window (`PS3RECOMP_VK_WINDOW=1`; without it the Vulkan backend renders headless).
 4. SPU images: `python analysis/make_spu_port.py <elf> spu/images.json port <ps3recomp>` (generates `port/spu/`, git-ignored).
    WWS job modules (33, embedded in the EBOOT):
    `python analysis/extract_gow_jobmods.py <elf> local/spu/jobmods`, then

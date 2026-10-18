@@ -67,6 +67,9 @@ Lessons that cost days; keep them.
     (topology, vertex fetch, pipeline, no target). `RSX_ENGINE_COHERENCE_LOG=<n>` logs the first n syncs to stderr.
   * `VK_ENG_DEBUG_NODS=<mask>` turns pipeline tests off: 1 depth, 2 stencil, 4 culling, 8 colour mask. If an
     image appears with a test off, that test is what rejects the draws.
+* **Video (cellVdec)**: `VDEC_LOG=<n>` logs the first n pictures handed to the title (format, destination, centre
+  luma: 16 is black), `VDEC_CALLS=<n>` the first n GetPicItem/GetPicture calls with their result; `Open` prints the
+  title's callback OPD. `PS3RECOMP_FFMPEG=0` forces the black-picture path.
 * **Log volume**: every log line from every thread goes through one stdio lock, so a chatty line slows the game
   (1.3 M lines in 70 s cost ~40% of the frame rate). The port defaults to `PS3_VERBOSE=0`; set `PS3_VERBOSE=1` for the
   `[WAIT]`/`[evt]` lines. Per-task lines print for the first tasks only; `SPURS_TASK_LOG=1` prints all of them.

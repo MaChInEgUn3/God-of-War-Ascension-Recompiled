@@ -161,6 +161,9 @@ Update (M0.33): that state was the game waiting for its menu video. It imports `
 player opens two MPEG-2 decoders and the frame becomes one full-screen video draw. Pictures are black until a real
 decoder is present (FFmpeg 9.0 loaded at run time, `PS3RECOMP_FFMPEG_RUNTIME`). Also added: FP opcodes DDX/DDY and
 the PK/UP pack family.
+Update (M0.34): FFmpeg 9.0 is installed and the menu video decodes (synthesized PTS, MPEG-2 `frame_rate_code` in
+the picture info, which the player paces by). The pictures reach guest memory but no draw composites them yet.
+`scripts/play.bat` runs the game in a window.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
