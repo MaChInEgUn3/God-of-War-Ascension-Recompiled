@@ -60,7 +60,11 @@ Lessons that cost days; keep them.
   * `RSX_ENGINE_PASS_DUMP=<dir>` (with `_AFTER=<s>`, `_MAX=<passes>`, `_DRAWS=1`) writes `passes.txt` (targets, zeta,
     depth/blend/stencil state per pass) and `draws.txt`, one line per draw with the viewport, vertex attribute 0
     (location/offset and first element) and transform constants 264..267. `RSX_ENGINE_SHADER_DUMP=<dir>` writes each
-    pipeline's HLSL.
+    pipeline's HLSL. Stencil reads `st <on> sf <func> ref <ref> m <func mask>/<write mask> op <fail>/<zfail>/<zpass>`.
+    `passes.txt` also gets, in pass order, an `xfer read|wrote` line for every 2D transfer that syncs guest memory
+    with an engine surface (source/destination surface, non-zero pixel count: shows where a copy-out of the scene
+    falls and whether it carried anything) and a `drop (<reason>)` line for every guest draw the engine dropped
+    (topology, vertex fetch, pipeline, no target). `RSX_ENGINE_COHERENCE_LOG=<n>` logs the first n syncs to stderr.
   * `VK_ENG_DEBUG_NODS=<mask>` turns pipeline tests off: 1 depth, 2 stencil, 4 culling, 8 colour mask. If an
     image appears with a test off, that test is what rejects the draws.
 * **Log volume**: every log line from every thread goes through one stdio lock, so a chatty line slows the game

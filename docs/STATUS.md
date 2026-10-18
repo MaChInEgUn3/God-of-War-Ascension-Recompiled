@@ -150,6 +150,12 @@ translation without glslang.
 Update (M0.30): glslang is installed locally (see BUILDING.md), and guest shaders run on Vulkan
 (`PS3RECOMP_VK_GUEST_PROGRAMS=1`). The first real frame is the Santa Monica Studio intro logo. Next: the HDR colour
 target (`F_W16Z16Y16X16`, GCM format 11), which the Vulkan engine rejects ("not supported yet").
+Update (M0.31/M0.32): format 11 is R32F and is supported; the whole intro renders. After it the 3D frames are black
+because the scene's colour pass is never emitted: the HDR target `0x00E10000` that the tonemap reads is only ever the
+target of a depth-only prepass, and a full-screen quad 0.93 units in front of the camera hides every mesh and particle.
+The texture at `0x20AB0000` is the MLAA copy of the (black) display buffer, not a missing video. Fixed on the way:
+fragment depth export (`SV_Depth` from r1.z) and the stencil byte when a D24S8 zeta is read as A8R8G8B8. Next: find on
+the SPU/PPU side who should emit the colour pass.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
