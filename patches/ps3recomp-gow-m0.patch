@@ -1877,7 +1877,7 @@ index d8506de..5d72aff 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index b438d87..08b7818 100644
+index b438d87..2b7f377 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -1979,9 +1979,10 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
@@ -1894,7 +1894,7 @@ index b438d87..08b7818 100644
          for (u32 u = 0; u < RSX_BE_MAX_TEXTURES; u++) {
              if (!(tex_mask & (1u << u))) continue;
              rsx_dsp_texture t;
-@@ -1989,6 +1990,29 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -1989,6 +1990,45 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
              fprintf(s_pd.draws_log, " t%u %u:0x%08X f%02X %ux%u", u, t.location, t.offset,
                      t.format & 0xFFu, t.width, t.height);
          }
@@ -1903,6 +1903,7 @@ index b438d87..08b7818 100644
 +         * constants 264..267 -- a draw that never writes a pixel usually has
 +         * one of these zero or garbage. */
 +        { rsx_dsp_viewport vp; rsx_dsp_get_viewport(&g.rsx, &vp);
++          fprintf(s_pd.draws_log, " | win %08X", rsx_dsp_reg(&g.rsx, 0x1D88));
 +          fprintf(s_pd.draws_log, " | vp %u,%u %ux%u s(%g %g %g) t(%g %g %g)", vp.x, vp.y, vp.w, vp.h,
 +                  vp.scale[0], vp.scale[1], vp.scale[2], vp.translate[0], vp.translate[1], vp.translate[2]);
 +          rsx_dsp_vertex_attr a; rsx_dsp_get_vertex_attr(&g.rsx, 0, &a);
@@ -1914,6 +1915,21 @@ index b438d87..08b7818 100644
 +              if (p) fprintf(s_pd.draws_log, " v0 %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X",
 +                             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
 +              else fprintf(s_pd.draws_log, " v0 <unresolved>");
++              /* Float streams: the first four elements as numbers. */
++              if (a.type == 2 && a.stride) {
++                  const u8* q = eng_guest_ptr(NULL, a.location,
++                                              a.offset + rsx_dsp_vertex_data_base_offset(&g.rsx), a.stride * 4u);
++                  for (u32 e = 0; q && e < 4; e++) {
++                      fprintf(s_pd.draws_log, " [");
++                      for (u32 c = 0; c < a.size && c < 4; c++) {
++                          const u8* b = q + e * a.stride + c * 4u;
++                          const u32 bits = (u32)b[0] << 24 | (u32)b[1] << 16 | (u32)b[2] << 8 | b[3];
++                          float f; memcpy(&f, &bits, 4);
++                          fprintf(s_pd.draws_log, "%s%.4g", c ? " " : "", f);
++                      }
++                      fprintf(s_pd.draws_log, "]");
++                  }
++              }
 +          }
 +          if (s_pd.draws < 2)
 +              for (u32 c = 264; c < 268; c++) {
@@ -1924,7 +1940,7 @@ index b438d87..08b7818 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2231,6 +2255,28 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2231,6 +2271,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
      g.be->draw(g.be->user, topology, dc.verts, uploaded, layout.stride,
                 indexed ? g.indices : NULL, indexed ? n_draw : 0);
@@ -1944,8 +1960,47 @@ index b438d87..08b7818 100644
 +                if (d[i] > hi) hi = d[i];
 +                if (cmp && d[i] != s_prev[i]) changed++;
 +            }
-+            fprintf(s_pd.draws_log, "    after: topo %u verts %u idx %u | z %.6g..%.6g changed %s%zu\n",
++            fprintf(s_pd.draws_log, "    after: topo %u verts %u idx %u | z %.6g..%.6g changed %s%zu",
 +                    (unsigned)topology, uploaded, indexed ? n_draw : 0u, lo, hi, cmp ? "" : "(first) ", changed);
++            /* First triangle: guest index order and its framebuffer winding
++             * under constants 264..267 (valid for a plain matrix VS only). */
++            if (n_draw >= 3 && layout.slot_by_attr[0] >= 0) {
++                float sx[3], sy[3];
++                fprintf(s_pd.draws_log, " | tri0 refs");
++                for (u32 k = 0; k < 3; k++) {
++                    const u32 vi = indexed ? g.indices[k] : k;
++                    if (indexed && k < dc.n_refs) fprintf(s_pd.draws_log, " %u", dc.refs[k].vertex_id);
++                    const float* v = (const float*)((const u8*)dc.verts + (size_t)vi * layout.stride
++                                                    + (size_t)layout.slot_by_attr[0] * 16u);
++                    float c[4];
++                    for (u32 r = 0; r < 4; r++) {
++                        c[r] = 0;
++                        for (u32 col = 0; col < 4; col++) {
++                            float m; memcpy(&m, &rsx_dsp_constant(&g.rsx, 264 + col)[r], 4);
++                            c[r] += (col < 3 ? v[col] : 1.0f) * m;
++                        }
++                    }
++                    const float w = c[3] != 0 ? c[3] : 1;
++                    sx[k] = (c[0] * xf[0] + w * xf[4]) / w;
++                    sy[k] = (c[1] * xf[1] + w * xf[5]) / w;
++                }
++                const float area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
++                fprintf(s_pd.draws_log, " ndc (%.2f,%.2f)(%.2f,%.2f)(%.2f,%.2f) area %+.3g",
++                        sx[0], sy[0], sx[1], sy[1], sx[2], sy[2], area);
++                /* The same three vertices as uploaded (attr0 x,y): the input a
++                 * pass-through VS (fullscreen passes) uses as its position. */
++                float rx[3], ry[3];
++                for (u32 k = 0; k < 3; k++) {
++                    const u32 vi = indexed ? g.indices[k] : k;
++                    const float* v = (const float*)((const u8*)dc.verts + (size_t)vi * layout.stride
++                                                    + (size_t)layout.slot_by_attr[0] * 16u);
++                    rx[k] = v[0]; ry[k] = v[1];
++                }
++                fprintf(s_pd.draws_log, " raw (%.3g,%.3g)(%.3g,%.3g)(%.3g,%.3g) rawarea %+.3g",
++                        rx[0], ry[0], rx[1], ry[1], rx[2], ry[2],
++                        (rx[1] - rx[0]) * (ry[2] - ry[0]) - (rx[2] - rx[0]) * (ry[1] - ry[0]));
++            }
++            fprintf(s_pd.draws_log, "\n");
 +            free(s_prev); s_prev = d; s_prev_n = n; s_prev_slot = zslot; d = NULL;
 +        }
 +        free(d);
@@ -1953,7 +2008,7 @@ index b438d87..08b7818 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2294,6 +2340,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2294,6 +2395,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -1967,7 +2022,7 @@ index b438d87..08b7818 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2325,9 +2378,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2325,9 +2433,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
