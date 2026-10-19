@@ -507,6 +507,7 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - `analysis/frame_wait.py` mede, por quadro, a espera e o resto da thread principal a partir do `PS3_POLLTOP`. Quadros por 300 s variaram ±12% entre builds idênticos, então essa é a métrica de A/B agora.
   - Ganho: o áudio (BrBDblBufWrkld, wid 8) numa thread de kernel própria na SPU 5, como no hardware (`SPURS_KERN_SPUS=0,1,5`, agora padrão do port). Espera de 458–483 para 389–390 ms por quadro, de ~80–85 para ~100 quadros por minuto, em duas rodadas cada.
   - Sem ganho: 4 threads simples (o áudio ocupou a thread extra); remover as sondas de depuração dos acessos ao LS (43% menos instruções numa função EDGE quente, mesmo tempo por job); leituras PPU inline (`analysis/patch_ppu_inline_loads.py`, mantido porque é o que o lifter atual gera).
+  - `SPURS_KEEP_READY=1 SPURS_PM_RERUN_US=2000` por cima: espera de 435 ms por quadro (pior) e queda em ~850 s (a tid 14 chama um ponteiro de função lixo). Descartado.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

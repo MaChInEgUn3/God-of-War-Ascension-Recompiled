@@ -239,6 +239,8 @@ frames rose from ~80-85 to ~100 per minute (two runs each). Tried without gain: 
 more jobs, audio took the extra thread), probes compiled out of the SPU LS accessors (43% fewer instructions in a hot
 EDGE function, same time per job), inline PPU guest loads (`analysis/patch_ppu_inline_loads.py`, kept: it is what
 the current lifter emits).
+`SPURS_KEEP_READY=1 SPURS_PM_RERUN_US=2000` on top of that: wait 435 ms per frame (worse) and a crash at ~850 s
+(tid 14 calls through a garbage function pointer); dropped.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
