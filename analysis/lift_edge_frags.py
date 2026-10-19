@@ -15,7 +15,8 @@ function entries. Output: <port>/spu/edgefrag_<ea>_<lsa>/spu_recomp.{c,h} and
 <port>/spu/edgefrags_register.c (image ids 300+). Derived from the game: keep it out
 of the repository.
 
-Usage: python analysis/lift_edge_frags.py <EBOOT.elf> <port_dir> <ps3recomp_dir> <log or .c>...
+Usage: python analysis/lift_edge_frags.py [--merge-chunks] <EBOOT.elf> <port_dir> <ps3recomp_dir> <log or .c>...
+--merge-chunks is passed through to spu_lifter.py (gotos instead of trampolines between chunks).
 Copy port/spu/edgefrags_register.c aside first: it is rewritten.
 """
 import os, re, subprocess, sys
@@ -26,7 +27,9 @@ MAX_SIZE = 0x2000             # code fragments; the 4-16 KB tables at LS 0x10000
 IMAGE_BASE = 300
 
 def main():
-    elf, port, sdk, logs = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+    args = [a for a in sys.argv[1:] if a != "--merge-chunks"]
+    merge = len(args) != len(sys.argv) - 1
+    elf, port, sdk, logs = args[0], args[1], args[2], args[3:]
     data = open(elf, "rb").read()
     py = sys.executable
     frags, misses = {}, []
@@ -55,6 +58,8 @@ def main():
                               stdout=subprocess.DEVNULL)
         cmd = [py, os.path.join(sdk, "tools", "spu_lifter.py"), "--auto-functions", elf_out,
                "--symbol-prefix", name + "_", "-o", d]
+        if merge:
+            cmd += ["--merge-chunks"]
         extra = sorted({m for m in misses if lsa <= m < lsa + n})
         if extra:
             cmd += ["--extra-funcs", ",".join(hex(m) for m in extra)]

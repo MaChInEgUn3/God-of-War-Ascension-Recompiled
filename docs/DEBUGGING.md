@@ -152,6 +152,9 @@ Lessons that cost days; keep them.
   thread instead (lifted SPU job modules and overlay fragments are not in the guest map); resolve with
   `python repo/analysis/samp_resolve.py run.log build_vk/MyGameRecomp.map t<seconds> [top]` (the build links
   with `/MAP`). It prints the top symbols overall and per thread.
+* **EDGE cost per job**: `python repo/analysis/pmprof_edge.py run.log...` reads the `SPURS_PM_PROF=60` lines and
+  prints the median time per EDGE job (wids 15-17) over the windows where EDGE is busy. Two runs reach the level
+  at different times and in different scenes, so frames/s alone is a noisy A/B; this is the steadier number.
 * **FIFO walker latency**: `GCM_PARK_SPIN_US=<us>` (port default 4000, 0 = off): when the walker stops on a
   self-JUMP park, the frame loop yield-polls that word instead of sleeping its 4 ms tick, so each EDGE segment
   patch is followed at once.

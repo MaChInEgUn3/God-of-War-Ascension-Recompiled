@@ -497,6 +497,11 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Descartado no caminho: idioma. O host em português faz o jogo rodar em PT-BR (`PS3_LANG` força outro), mas o texto também faltava em inglês.
   - PRs upstream abertos: #378, #379, #380, #382, #383, #384.
   - Áudio: o mix do jogo funciona (picos de 0,1 a 0,37; a captura `AUDIO_WAV` tem a música do menu). O backend WASAPI falhava quando o dispositivo não estava em 48 kHz estéreo float (`0x88890008`); agora pede conversão no modo compartilhado (PR #385). Sem dispositivo de saída (`0x80070490`), o jogo segue mudo.
+- **M0.42: desempenho SPU, blocos unidos (2026-10-19, prof42/merge1/merge2/memo1):**
+  - O perfil da fase mostrou ~27% das threads SPU no despachante (`spu_task_launch_check`, `spu_drain_call`, `spu_indirect_branch`, `spu_lookup`, `spu_check_stack_reset`, `yz_lockstep_tick`). O lifter gerava cada bloco básico como uma função, com cada desvio entre blocos voltando ao laço de dreno.
+  - Os módulos de job e os fragmentos EDGE agora são liftados com `--merge-chunks` do upstream (desvios internos viram `goto`). `lift_jobmods.py` e `analysis/lift_edge_frags.py` ganharam a opção.
+  - Custo por job EDGE (mediana, janelas com EDGE ocupado, `analysis/pmprof_edge.py`): 0,49 ms antes, 0,33 ms com os módulos unidos, 0,31 ms com os fragmentos também. A imagem da fase segue correta, sem HALT nem erro de dreno.
+  - Descartado: cache por thread na frente do `spu_lookup` (sem ganho, revertido).
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

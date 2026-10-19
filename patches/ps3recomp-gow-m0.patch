@@ -7019,7 +7019,7 @@ index 195c75e..d3140aa 100644
  #endif
  }
 diff --git a/tools/lift_jobmods.py b/tools/lift_jobmods.py
-index d2e6b07..64c4b87 100644
+index d2e6b07..5422cb7 100644
 --- a/tools/lift_jobmods.py
 +++ b/tools/lift_jobmods.py
 @@ -57,6 +57,14 @@ CODE_END = {
@@ -7037,9 +7037,23 @@ index d2e6b07..64c4b87 100644
  
  def manual_link_targets(raw, base=BASE):
      """Return targets built into the link register by hand:
-@@ -169,7 +177,8 @@ def main():
+@@ -135,6 +143,10 @@ def main():
+     ap.add_argument("--symbol-prefix", default="port", metavar="NAME",
+                     help="C symbol prefix for the registration functions, so two "
+                          "ports linked in one tree cannot collide (default: port).")
++    ap.add_argument("--merge-chunks", action="store_true",
++                    help="Pass --merge-chunks to spu_lifter.py: each run of chunks "
++                         "between call targets becomes one C function with gotos "
++                         "instead of chunks linked by trampolines.")
+     args = ap.parse_args()
+     JOBMODS = args.jobmods
+     OUTDIR  = args.out
+@@ -168,8 +180,11 @@ def main():
+                "--source-name", "spu_recomp.c", "--header-name", "spu_recomp.h"]
          if name in CODE_END:
              cmd += ["--code-end", hex(CODE_END[name])]
++        if args.merge_chunks:
++            cmd += ["--merge-chunks"]
          # Only offer addresses that fall inside THIS module's image.
 -        inside = [a for a in EXTRA_FUNCS if BASE <= int(a, 0) < BASE + len(raw)]
 +        inside = [a for a in EXTRA_FUNCS + EXTRA_BY_MODULE.get(name, [])

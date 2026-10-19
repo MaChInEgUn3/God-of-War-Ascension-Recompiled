@@ -223,6 +223,13 @@ frame rate), #382 (sub-clip surface reuse), #383 (DMA repeat guard wall time), #
 Audio: the game's mix is fine (`AUDIO_PEAK` 0.1-0.37, `AUDIO_WAV` captures the menu music). The WASAPI backend
 failed on a device not running 48 kHz stereo float (`0x88890008`); it now asks for shared-mode conversion
 (upstream PR #385). A machine with no output device reports `0x80070490` and runs silent, as before.
+Update (M0.42): the job modules and EDGE fragments are now lifted with `--merge-chunks` (the lifter otherwise emits
+every basic block as its own function, linked by trampolines through the drain loop). Median EDGE time per job in
+the level, from `SPURS_PM_PROF` windows where EDGE is busy (`analysis/pmprof_edge.py`): 0.49 ms before, 0.33 ms with
+merged job modules, 0.31 ms with merged fragments too. The dispatch helpers (`spu_task_launch_check`, `spu_drain_call`,
+`spu_indirect_branch`, `spu_lookup`, `spu_check_stack_reset`, `yz_lockstep_tick`) fell from ~27% to ~10% of all host
+samples at t=900 s. A per-thread
+memo in front of `spu_lookup` was tried and changed nothing (reverted).
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

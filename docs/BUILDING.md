@@ -23,12 +23,12 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    WWS job modules (33, embedded in the EBOOT):
    `python analysis/extract_gow_jobmods.py <elf> local/spu/jobmods`, then
    `JOBMOD_EXTRA_FUNCS_JSON=spu/jobmod_extra.json python <ps3recomp>/tools/lift_jobmods.py --jobmods local/spu/jobmods
-   --out port/spu --register port/spu/jobmods_register.c --symbol-prefix gow` (image ids 200-232, matched at run
+   --out port/spu --register port/spu/jobmods_register.c --symbol-prefix gow --merge-chunks` (image ids 200-232, matched at run
    time by the 16-byte module header). `spu/jobmod_extra.json` lists entries reached only indirectly; refresh it
    with `SPU_INTERP_MISS=1` runs and `analysis/interp_miss_to_extra.py` (see DEBUGGING.md).
    EDGE code fragments (EBOOT blobs the EDGE jobs stage at LS `0x11090+`, one lift per placement): run with
    `SPU_LSA_GETLOG=10000-3E000 SPU_LSA_GETLOG_EA=10000-820000 SPU_INTERP_MISS=1`, then
-   `python analysis/lift_edge_frags.py <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
+   `python analysis/lift_edge_frags.py --merge-chunks <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
    `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted. Pass a copy of
    the previous `edgefrags_register.c` among the inputs to keep its placements (the menu and the first level use 360),
    then re-run `scripts\cfg.bat` so CMake picks up the new directories.
