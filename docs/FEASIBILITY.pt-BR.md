@@ -483,6 +483,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - **Decrementer SPU:** estourava 64 bits 231 s após o boot (correção do upstream 7e257f7 aplicada).
   - **Gargalo da fase (aberto):** cada execução do PM wwsjob roda ~1 job e devolve a SPU. O poll HLE `selectWorkload` responde r3 = 0 ("trocar para o wid 0"), e o PM compara com o próprio wid (LS `0x37A4`). Com ~550 jobs EDGE por lista por quadro, cada job paga uma passada inteira do kernel. As duas tentativas de manter o módulo rodando (`SPURS_PM_POLL_SLICE_US`, `SPURS_PM_RERUN_US`) travam o jogo, então ficam desligadas. Suspeitos: o decremento de readyCount por despacho e a limpeza do bit de sinal no kernel HLE.
   - **Upstream:** o ps3recomp está na v0.15.0 (207 commits após a nossa base). Várias correções coincidem com as nossas; rebase em andamento numa pasta separada.
+- **M0.40: base no ps3recomp v0.16.0 (2026-10-19, v015a/b, menu_vk/menu_v015):**
+  - O patch do projeto foi rebaseado sobre o upstream `749182e` (v0.16.0). Um agente resolveu 59 blocos de conflito da v0.15; os conflitos da v0.16 foram resolvidos à mão. O port compila e chega à fase sem travar.
+  - **Superexposição resolvida:** o modelo de float de precisão simples do upstream é exato como o hardware (truncamento, faixa estendida). O nosso arredondava para o mais próximo, e isso inflava a exposição/HDR calculada na SPU.
+  - O upstream já tinha: a correção de `bisl` no interpretador, o layout do argumento do policy module e um fast path AVX2 para o float exato (eu tinha portado o NEON deles para AVX2 em paralelo, com teste bit a bit; ficou o deles).
+  - **Armadilha de medição:** o cache FIOS do jogo (`vfs/cache/BCUS98232/fios`) persiste entre execuções. Com cache quente o menu fazia ~30 quadros/s, com cache frio ~20, e a comparação "v0.15 mais lenta" era isso. Com o mesmo estado (cache vazio) as duas versões empatam. Os scripts de A/B agora apagam o cache antes de cada execução.
+  - `SPURS_KEEP_READY=1` + `SPURS_PM_RERUN_US` não trava mais o jogo, mas também não aumenta a taxa de quadros da fase: o gargalo é o custo por job EDGE (~0,36 ms, de 10 a 20 vezes acima de uma SPU), com os registradores em memória (`ctx->gpr[]`) no código SPU liftado.
+  - **PRs upstream:** correções genéricas viram PRs pequenos (o primeiro é a tabela de pipelines do Vulkan, sp00nznet/ps3recomp#378).
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

@@ -207,6 +207,14 @@ so more kernel threads do not raise the level's frame rate. The level still runs
 wwsjob PM run executes about one job and hands the SPU back (the HLE poll answer means "switch to wid 0"), so a
 frame of ~550 EDGE jobs per list pays one kernel pass per job. Keeping the module running (poll answer = own wid,
 or an immediate re-run) stops the game; not solved yet.
+Update (M0.40, toolkit v0.16.0): the port now builds against upstream ps3recomp v0.16.0 (`749182e`) with this
+project's patch rebased on it. Upstream's hardware-exact SPU single precision (truncation, extended range) removed the
+level's overexposure, which came from our round-to-nearest float model. Upstream also already had our
+interpreter `bisl` fix, the policy-module argument layout and an AVX2 fast path for the exact float model. Menu
+speed is the same as before once runs start from the same FIOS cache state (an earlier "30 vs 17 game frames/s"
+comparison was a warm cache against a cold one). The kernel no longer consumes a workload's readyCount on dispatch
+under `SPURS_KEEP_READY=1`, and with it `SPURS_PM_RERUN_US` no longer stops the game, but it does not raise the
+level's frame rate either. Generic fixes are being sent upstream as small PRs (first: the Vulkan pipeline table).
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

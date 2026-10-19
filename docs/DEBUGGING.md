@@ -143,6 +143,10 @@ Lessons that cost days; keep them.
   `SPURS_PM_POLL_SLICE_US=<us>` answers the module's own wid for <us> of its run, and `SPURS_PM_RERUN_US=<us>`
   re-runs a workload at once after a run that executed jobs. The kernel's per-dispatch readyCount decrement and
   the signal-bit clear are the first suspects.
+* **A/B timing hygiene**: the game keeps a FIOS cache of archive data at
+  `vfs/cache/BCUS98232/fios/cache.{idx,dat}` that survives between runs. A warm cache made the menu ~30 game
+  frames/s against ~20 with a cold one, and a cache left by a run killed mid-write once made the next build loop
+  reopening it. Delete both files before every timed run (the `work/ab_*.sh` scripts do).
 * **Host-side profile**: `PS3_SAMPLE=<ms>` samples every thread's RIP (reports every 10 s: guest functions,
   host modules, per-thread busy/ntdll split). `PS3_SAMPLE_HOST=1` buckets every sample by executable RVA and
   thread instead (lifted SPU job modules and overlay fragments are not in the guest map); resolve with
