@@ -220,7 +220,9 @@ X16 texture sampled through crossbar 0xAAEE (G and B sources); the runtime prese
 ARGB lanes, where G and B are empty, so every glyph had zero colour and alpha. X16 is now presented like B8 (value in
 R, G and B). Upstream PRs open: #378 (Vulkan pipeline table), #379 (cellVdec Ex entry points), #380 (MPEG-2 PTS and
 frame rate), #382 (sub-clip surface reuse), #383 (DMA repeat guard wall time), #384 (X16 presentation).
-Audio: the host WASAPI init fails (`0x88890008`) and the game runs silent -- open.
+Audio: the game's mix is fine (`AUDIO_PEAK` 0.1-0.37, `AUDIO_WAV` captures the menu music). The WASAPI backend
+failed on a device not running 48 kHz stereo float (`0x88890008`); it now asks for shared-mode conversion
+(upstream PR #385). A machine with no output device reports `0x80070490` and runs silent, as before.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

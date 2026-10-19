@@ -45,6 +45,42 @@ index 04ab80c..871d4f7 100644
      if(glslang_FOUND AND TARGET glslang::glslang AND TARGET glslang::SPIRV)
          set_source_files_properties(
              "${CMAKE_CURRENT_SOURCE_DIR}/libs/video/rsx_shader_spirv.cpp"
+diff --git a/libs/audio/cellAudio.c b/libs/audio/cellAudio.c
+index 9e3a2d9..edefb13 100644
+--- a/libs/audio/cellAudio.c
++++ b/libs/audio/cellAudio.c
+@@ -282,10 +282,21 @@ static int audio_backend_init(void)
+     REFERENCE_TIME buf_duration = 200000; /* 20ms in 100ns units */
+     s_wasapi_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+ 
++    /* Shared mode only takes the device's own mix format unless the stream
++     * asks the audio engine to convert: on a device not running 48 kHz stereo
++     * float (a 44.1 kHz or 5.1 output) Initialize failed with
++     * AUDCLNT_E_UNSUPPORTED_FORMAT and every title ran silent. */
++#ifndef AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
++#define AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM      0x80000000
++#endif
++#ifndef AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
++#define AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY 0x08000000
++#endif
++    const DWORD convert = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+     hr = s_wasapi_client->lpVtbl->Initialize(
+         s_wasapi_client,
+         AUDCLNT_SHAREMODE_SHARED,
+-        AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
++        AUDCLNT_STREAMFLAGS_EVENTCALLBACK | convert,
+         buf_duration, 0, &wfx, NULL);
+ 
+     if (FAILED(hr)) {
+@@ -293,7 +304,7 @@ static int audio_backend_init(void)
+         hr = s_wasapi_client->lpVtbl->Initialize(
+             s_wasapi_client,
+             AUDCLNT_SHAREMODE_SHARED,
+-            0, buf_duration, 0, &wfx, NULL);
++            convert, buf_duration, 0, &wfx, NULL);
+         if (FAILED(hr)) {
+             printf("[cellAudio] WASAPI Initialize failed: 0x%08lX\n", hr);
+             s_wasapi_client->lpVtbl->Release(s_wasapi_client);
 diff --git a/libs/codec/cellVdec.c b/libs/codec/cellVdec.c
 index a411dbd..95741b2 100644
 --- a/libs/codec/cellVdec.c

@@ -496,7 +496,7 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - Correção: X16 apresentado como B8 (valor em R, G e B, A opaco). Agora o menu mostra "Latest News", "Single Player", "Options" e o número de build, igual ao hardware.
   - Descartado no caminho: idioma. O host em português faz o jogo rodar em PT-BR (`PS3_LANG` força outro), mas o texto também faltava em inglês.
   - PRs upstream abertos: #378, #379, #380, #382, #383, #384.
-  - Aberto: o áudio do host (WASAPI `0x88890008`); o jogo roda sem som.
+  - Áudio: o mix do jogo funciona (picos de 0,1 a 0,37; a captura `AUDIO_WAV` tem a música do menu). O backend WASAPI falhava quando o dispositivo não estava em 48 kHz estéreo float (`0x88890008`); agora pede conversão no modo compartilhado (PR #385). Sem dispositivo de saída (`0x80070490`), o jogo segue mudo.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
