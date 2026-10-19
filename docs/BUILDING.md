@@ -32,6 +32,10 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted. Pass a copy of
    the previous `edgefrags_register.c` among the inputs to keep its placements (the menu and the first level use 360),
    then re-run `scripts\cfg.bat` so CMake picks up the new directories.
+   PPU lifts made before ps3recomp's inline guest loads: `python analysis/patch_ppu_inline_loads.py <ps3recomp>
+   <recompiled>/ppu_recomp.h` copies the lifter's `vm_read*_inl` block into the header (a full PPU rebuild follows,
+   about 45 min). Measured neutral on GoW:A's level; kept so the header matches what the lifter emits. Read
+   diagnostics (`PPU_RWATCH`, `PPU_HOTMAP`, `PPU_HOTREAD`, `PPU_FORCE_READ_ADDR`, ...) turn the inline path off.
 5. `scripts\cfg.bat`, then `scripts\build.bat` (first build about 7 min and about 8 GB RAM; incremental builds take
    seconds unless the lifted header changes). The link writes `build_vk\MyGameRecomp.map` (`/MAP`), which
    `analysis/samp_resolve.py` uses to name `PS3_SAMPLE_HOST` samples. The lifted SPU sources build with `-O2 -march=x86-64-v3

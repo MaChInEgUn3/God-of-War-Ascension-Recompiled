@@ -634,6 +634,15 @@ int main(int argc, char** argv)
      * modules side by side (measured 8.8 -> ~12 game frames/s). The instance has 6
      * SPUs, but 3, 4 and 6 threads measured slower (9.2-10.1): the frame's job chain
      * has too little parallel work and the extra threads only add lock contention. */
+    /* SPURS_KERN_SPUS=0,1,5: a third kernel thread plays SPU 5, where BrBDblBufWrkld
+     * (the audio DSP rack, priority 1 there and 0 elsewhere) lives, as on hardware.
+     * Sharing two threads, the free-running audio workload took ~57% of one and the
+     * EDGE jobs waited behind it. Level, frame split from PS3_POLLTOP (two runs each):
+     * main-thread wait 458-483 -> 389-390 ms/frame, game frames ~80-85 -> ~100 per
+     * minute. Set only when neither variable is given, so SPURS_KERN_THREADS=<n> still
+     * selects plain threads. */
+    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS"))
+        _putenv_s("SPURS_KERN_SPUS", "0,1,5");
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE

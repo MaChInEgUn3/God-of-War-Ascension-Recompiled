@@ -155,6 +155,12 @@ Lessons that cost days; keep them.
 * **EDGE cost per job**: `python repo/analysis/pmprof_edge.py run.log...` reads the `SPURS_PM_PROF=60` lines and
   prints the median time per EDGE job (wids 15-17) over the windows where EDGE is busy. Two runs reach the level
   at different times and in different scenes, so frames/s alone is a noisy A/B; this is the steadier number.
+* **Frame split (main thread)**: run with `PS3_POLLTOP=60 GOW_HEARTBEAT=30`, then
+  `python repo/analysis/frame_wait.py run.log` prints, per 60 s window, the ms per game frame the main thread
+  sleeps at `lr=0x003E8388` (the frame's wait for WWS job lists; the policy module `gowpm0` clears the flag at
+  `0x0099AAC0` by DMA when the list completes) and the rest (its own work and other spins). Frames per 300 s
+  varied +-12% between identical builds; compare these medians instead. Do not compare a run made with
+  `PS3_SAMPLE` against one without: the sampler slows the threads it samples.
 * **FIFO walker latency**: `GCM_PARK_SPIN_US=<us>` (port default 4000, 0 = off): when the walker stops on a
   self-JUMP park, the frame loop yield-polls that word instead of sleeping its 4 ms tick, so each EDGE segment
   patch is followed at once.
