@@ -633,6 +633,11 @@ int main(int argc, char** argv)
      * lock they skew exactly the runs that measure timing. Set PS3_VERBOSE=1 to
      * get them back. */
     if (!getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
+    /* SPURS_PM_ARG_BE=1: hand the wwsjob PM its 64-bit workload argument as the
+     * hardware does (high half in word 0). With the low half in word 0 the PM
+     * wrote status rows into BatchJobList's list 1 and the level stopped on
+     * "BATCHJOB: Waiting for batch job list 1 to finish (22/21)". */
+    if (!getenv("SPURS_PM_ARG_BE")) _putenv_s("SPURS_PM_ARG_BE", "1");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

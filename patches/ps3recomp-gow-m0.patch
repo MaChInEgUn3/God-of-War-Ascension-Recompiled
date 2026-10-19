@@ -7017,7 +7017,7 @@ index 6a19d5b..9bd564d 100644
      CloseHandle(th);   /* detached */
  #else
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 4f82063..f64833a 100644
+index 4f82063..44e8302 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -30,10 +30,96 @@
@@ -7151,7 +7151,30 @@ index 4f82063..f64833a 100644
      KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
      KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
      KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
-@@ -179,6 +274,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -165,6 +260,22 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+     ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;          /* claim reads word1   */
+     ctx->gpr[4]._u32[2] = (uint32_t)(wkl_data >> 32);
+     ctx->gpr[4]._u32[3] = (uint32_t)(wkl_data >> 32);
++    /* SPURS_PM_ARG_BE=1: the 64-bit workload argument as the hardware hands it
++     * over, big-endian in the preferred doubleword (word 0 = high half, word 1
++     * = low half). GoW:A's wwsjob PM (entry 0x2C30) takes the job-list header
++     * from word 1 and an optional status area from word 0, skipped when it is
++     * zero. With the low half copied into word 0 as above, it wrote its per-SPU
++     * status rows (0xFFFFFFFF, 0x10) at header + 0x130 -- inside job list 1 --
++     * so a list of exactly 7 jobs read a garbage 8th entry, counted 22 of 21
++     * and the batch-job wait never finished. */
++    { static int s_be = -1;
++      if (s_be < 0) { const char* e = getenv("SPURS_PM_ARG_BE"); s_be = e && *e == '1'; }
++      if (s_be) {
++          ctx->gpr[4]._u32[0] = (uint32_t)(wkl_data >> 32);
++          ctx->gpr[4]._u32[1] = (uint32_t)wkl_data;
++          ctx->gpr[4]._u32[2] = 0;
++          ctx->gpr[4]._u32[3] = 0;
++      } }
+     ctx->gpr[5]._u32[0] = 0;                           /* poll status */
+ 
+     g_spurs_pm_polls  = 0;
+@@ -179,6 +290,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static unsigned long s_runs = 0;
      unsigned long runno = ++s_runs;
      int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
@@ -7166,7 +7189,7 @@ index 4f82063..f64833a 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -265,18 +368,91 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -265,18 +384,91 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -7270,7 +7293,7 @@ index 4f82063..f64833a 100644
  
      if (s_claimlog) {
          unsigned claims = g_spu_putllc_sync_hit - claim_before;
-@@ -303,12 +479,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -303,12 +495,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */

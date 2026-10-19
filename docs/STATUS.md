@@ -186,8 +186,16 @@ rings) renders in full. Fixes on the way:
   1280x720 scene) recreated the surface and lost the scene, so the copy-out for the SPU anti-aliasing left a black
   quarter. A same-format, same-pitch surface at least that large is now reused, as depth already was.
 Open: the level runs at 1-3 flips/s (wid 8 `BrBDblBufWrkld` takes ~75% of a kernel thread, and the main thread spends
-most of its frame in batch-job waits), and it stops after a few minutes on
-`BATCHJOB: Waiting for batch job list 1 to finish (22/21 jobs completed)` (3 of 3 long runs). Menu text is not drawn.
+most of its frame in batch-job waits). Menu text is not drawn.
+Update (M0.38): the level no longer stops on `BATCHJOB: Waiting for batch job list 1 to finish (22/21 jobs completed)`
+(4 of 4 runs before, none in a 1600 s run after). The policy-module emulation handed the wwsjob PM its 64-bit
+workload argument with the low half in both word 0 and word 1 (a layout another title's PM needed). GoW:A's PM takes
+the job-list header from word 1 and an optional status area from word 0, skipped when zero; with the header in word 0
+it wrote its per-SPU status rows at header + 0x130, inside BatchJobList's list 1. A list of exactly 7 jobs then read
+a garbage 8th entry (`FFFFFFFF`), counted 22 of 21 and the wait never ended. `SPURS_PM_ARG_BE=1` (port default) passes
+the argument big-endian in the preferred doubleword, as the hardware does. The real-time intro now plays on (Megaera,
+the chains breaking); its image is overexposed. Open: performance (main thread 68% in the EDGE wait, wid 8 ~80% of a
+kernel thread), menu text, the overexposure.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

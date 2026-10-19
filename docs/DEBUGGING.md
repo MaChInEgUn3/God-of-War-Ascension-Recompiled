@@ -114,6 +114,11 @@ Lessons that cost days; keep them.
 * **Where blobs land in local store**: `SPU_LSA_GETLOG=<lo>-<hi>` (hex LS) prints each distinct (lsa, ea, size)
   GET into that range with the workload and the first words (GoW:A: EDGE code fragments at LS `0x11090+`).
   `analysis/lift_edge_frags.py` also takes the previous `edgefrags_register.c` as an input and keeps its placements.
+* **WWS job lists (GoW:A)**: `PPU_TRACE_ADDRS=464F1C PPU_TRACE_DUMP=464F1C,<list array EA>,100
+  PPU_TRACE_DUMP2=464F1C,3,80,1` shows a BatchJobList's entries and its header rows at every batch wait. An entry is
+  8 bytes, type in the first halfword: 0 end, 1 job, 2 sync, 3 nop, 4 jump to list. Anything else in a list is
+  corruption; `SPU_DMA_EA=<lo>-<hi>` on it names the writer. `SPURS_PM_ARG_BE=1` (port default) passes the PM's
+  64-bit workload argument big-endian (word 0 high, word 1 low).
 * **Stuck DMA guard**: a job that re-issues the same transfer `SPU_DMA_REPEAT_LIMIT` times (default 256) for
   `SPU_DMA_REPEAT_SECS` of wall time (default 30) is halted with `[spu-dma] ... identical transfers`. Polling a
   value another agent writes (EDGE waits on the RSX label `0x70000C80` for ring space) is the same transfer too,
