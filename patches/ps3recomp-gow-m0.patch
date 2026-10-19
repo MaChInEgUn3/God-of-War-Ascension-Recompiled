@@ -2122,10 +2122,65 @@ index d8506de..5d72aff 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index b438d87..771b01c 100644
+index b438d87..e414507 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
-@@ -682,6 +682,9 @@ static u8* eng_coherence_buffer(u32 bytes)
+@@ -527,9 +527,16 @@ static const void* eng_surface_seed(u32 location, u32 offset, u32 w, u32 h,
+ 
+ /* The colour target for this (location, offset), created or reallocated when
+  * the size or format moved. Returns a slot index, or ENG_INVALID.
+- * rsx_live_draw.c's surface_get (2605-2690). */
++ * rsx_live_draw.c's surface_get (2605-2690).
++ *
++ * A smaller clip on the same rows is the same memory, not a new surface: with
++ * the same format and pitch, RSX draws into the top-left of what is already
++ * there. GoW:A renders its scene into a 1280x720 target, then runs a 640x360
++ * pass at the same address and pitch and copies the full 1280x720 out for its
++ * SPU anti-aliasing; recreating the target at 640x360 lost the scene and left
++ * that quarter of the frame black. The depth targets follow the same rule. */
+ static u32 eng_surface_get(u32 location, u32 offset, u32 want_w, u32 want_h,
+-                          rsx_be_format want_fmt)
++                          rsx_be_format want_fmt, u32 pitch)
+ {
+     if (!want_w) want_w = g.width;
+     if (!want_h) want_h = g.height;
+@@ -537,8 +544,10 @@ static u32 eng_surface_get(u32 location, u32 offset, u32 want_w, u32 want_h,
+     u32 slot = ENG_MAX_SURFACES;
+     for (u32 i = 0; i < g.n_surfaces; i++)
+         if (g.surfaces[i].location == location && g.surfaces[i].offset == offset) {
+-            if (g.surfaces[i].w == want_w && g.surfaces[i].h == want_h &&
+-                g.surfaces[i].fmt == want_fmt)
++            const eng_surface* s = &g.surfaces[i];
++            if (s->fmt == want_fmt &&
++                ((s->w == want_w && s->h == want_h) ||
++                 (pitch && s->pitch == pitch && s->w >= want_w && s->h >= want_h)))
+                 return i;
+             slot = i;
+             break;
+@@ -597,7 +606,7 @@ static u32 eng_current_target_set(u32 slots[RSX_BE_MAX_COLOR_TARGETS])
+     const u32 sel = (sf.color_target == CELL_GCM_SURFACE_TARGET_1) ? 1u : 0u;
+     const rsx_be_format fmt = eng_surface_format(sf.color_format);
+     const u32 first = eng_surface_get(sf.color_location[sel], sf.color_offset[sel],
+-                                      sf.clip_w, sf.clip_h, fmt);
++                                      sf.clip_w, sf.clip_h, fmt, sf.color_pitch[sel]);
+     if (first == ENG_INVALID) return 0;
+     g.surfaces[first].pitch = sf.color_pitch[sel];
+     slots[0] = first;
+@@ -609,9 +618,12 @@ static u32 eng_current_target_set(u32 slots[RSX_BE_MAX_COLOR_TARGETS])
+     };
+     for (u32 i = 0; i < 3; i++) {
+         if (sf.color_target < mrt_from[i]) break;
++        /* At A's size, which may be larger than the clip (see above): the
++         * framebuffer takes A's extent, and every attachment must cover it. */
+         const u32 slot = eng_surface_get(sf.color_location[i + 1],
+                                          sf.color_offset[i + 1],
+-                                         sf.clip_w, sf.clip_h, fmt);
++                                         g.surfaces[first].w, g.surfaces[first].h, fmt,
++                                         sf.color_pitch[i + 1]);
+         if (slot == ENG_INVALID) break;
+         g.surfaces[slot].pitch = sf.color_pitch[i + 1];
+         /* A set naming one buffer twice would attach the same target twice,
+@@ -682,6 +694,9 @@ static u8* eng_coherence_buffer(u32 bytes)
      return s_coherence_rows;
  }
  
@@ -2135,7 +2190,7 @@ index b438d87..771b01c 100644
  void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32 h)
  {
      if (!g.ready || !g.be->readback || !pitch || !w || !h) return;
-@@ -691,6 +694,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
+@@ -691,6 +706,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
          if (eng_coherence_log())
              fprintf(stderr, "[rsx engine] guest_read %u:0x%08X %ux%u: no surface\n",
                      location, offset, w, h);
@@ -2143,7 +2198,7 @@ index b438d87..771b01c 100644
          return;
      }
      const eng_surface* s = &g.surfaces[slot];
-@@ -704,6 +708,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
+@@ -704,6 +720,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
          fprintf(stderr, "[rsx engine] guest_read %u:0x%08X %ux%u <- surface 0x%08X at %u,%u:"
                          " %u non-zero pixels\n", location, offset, w, h, s->offset, x, y,
                  eng_nonzero_pixels(rows, w * h));
@@ -2151,7 +2206,7 @@ index b438d87..771b01c 100644
      const int rgba = rsx_texture_argb_is_rgba();
      for (u32 r = 0; r < h; r++) {
          u8* dst = (u8*)eng_guest_ptr(NULL, location, offset + r * pitch, w * 4u);
-@@ -725,6 +730,7 @@ void rsx_draw_engine_guest_wrote(u32 location, u32 offset, u32 pitch, u32 w, u32
+@@ -725,6 +742,7 @@ void rsx_draw_engine_guest_wrote(u32 location, u32 offset, u32 pitch, u32 w, u32
          if (eng_coherence_log())
              fprintf(stderr, "[rsx engine] guest_wrote %u:0x%08X %ux%u: no surface\n",
                      location, offset, w, h);
@@ -2159,7 +2214,7 @@ index b438d87..771b01c 100644
          return;
      }
      const eng_surface* s = &g.surfaces[slot];
-@@ -1052,6 +1058,9 @@ static u32 s_depth_cap;
+@@ -1052,6 +1070,9 @@ static u32 s_depth_cap;
   * Z16 as one big-endian 16-bit value, Z24S8 as a big-endian word with the
   * depth in the top 24 bits. The stencil byte is written as 0: the host depth
   * target keeps no stencil to copy. Returns 0 when it cannot. */
@@ -2169,7 +2224,7 @@ index b438d87..771b01c 100644
  static int eng_zdepth_to_guest(u32 slot)
  {
      eng_zdepth* z = &g.zdepths[slot];
-@@ -1071,10 +1080,22 @@ static int eng_zdepth_to_guest(u32 slot)
+@@ -1071,10 +1092,22 @@ static int eng_zdepth_to_guest(u32 slot)
      if (g.be->depth_readback(g.be->user, z->handle, 0, 0, w, h, s_depth_rows,
                               w * (u32)sizeof(float)) != 0)
          return 0;
@@ -2192,7 +2247,7 @@ index b438d87..771b01c 100644
          for (u32 c = 0; c < w; c++) {
              float d = src[c];
              if (!(d > 0.0f)) d = 0.0f;
-@@ -1084,7 +1105,8 @@ static int eng_zdepth_to_guest(u32 slot)
+@@ -1084,7 +1117,8 @@ static int eng_zdepth_to_guest(u32 slot)
                  dst[0] = (u8)(v >> 8); dst[1] = (u8)v;
              } else {
                  const u32 v = (u32)(d * 16777215.0f + 0.5f);
@@ -2202,7 +2257,7 @@ index b438d87..771b01c 100644
              }
              dst += bpp;
          }
-@@ -1356,7 +1378,8 @@ static u32 eng_pipeline_get(const rsx_vertex_layout_plan* layout,
+@@ -1356,7 +1390,8 @@ static u32 eng_pipeline_get(const rsx_vertex_layout_plan* layout,
          key = eng_fnv1a(vp_uc, vp_instrs * 16u, key);
          key = rsx_fp_structural_hash(fp_uc, fp_size, key);
          if (!key) return 0;
@@ -2212,7 +2267,7 @@ index b438d87..771b01c 100644
          key = eng_fnv1a(&fp_ctrl_key, sizeof fp_ctrl_key, key);
          key = eng_fnv1a(&cube_mask, sizeof cube_mask, key);
          key = eng_fnv1a(&vtex_mask, sizeof vtex_mask, key);
-@@ -1979,16 +2002,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -1979,16 +2014,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
      }
      if (s_pd.draws_log) {
          fprintf(s_pd.draws_log, "pass %03u draw %u: pipe %u cmask %08X blend %u %X/%X"
@@ -2307,7 +2362,7 @@ index b438d87..771b01c 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2036,6 +2134,41 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -2036,6 +2146,41 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
  /* Called on every present: arm on the first frame heavy enough when no delay
   * was asked for, and while capturing, close the pass in progress and write
   * the presented surface. */
@@ -2349,7 +2404,7 @@ index b438d87..771b01c 100644
  static void pd_present(u32 presented)
  {
      if (s_pd.state == 0) pd_capturing();
-@@ -2060,7 +2193,13 @@ static void pd_present(u32 presented)
+@@ -2060,7 +2205,13 @@ static void pd_present(u32 presented)
  static void sink_end(void* user, const rsx_dispatch* r)
  {
      (void)user; (void)r;
@@ -2364,7 +2419,7 @@ index b438d87..771b01c 100644
  
      const u32 prim = g.rsx.current_primitive;
      /* Everything that becomes triangles -- lists, strips, fans, quads, quad
-@@ -2075,33 +2214,33 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2075,33 +2226,33 @@ static void sink_end(void* user, const rsx_dispatch* r)
      int scratch = 0;
      const int rebuild = eng_topology_rebuild(prim, 0, &scratch) != 0;
      if (!rebuild) {
@@ -2404,7 +2459,7 @@ index b438d87..771b01c 100644
      const u32 target = targets[0];
  
      rsx_dsp_surface sf;
-@@ -2120,7 +2259,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2120,7 +2271,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
      const u32 pipeline = eng_pipeline_get(&layout, &rs,
                                            eng_surface_format(sf.color_format),
                                            n_targets, &pipeline_is_fixed, &tex_used);
@@ -2413,7 +2468,7 @@ index b438d87..771b01c 100644
  
      /* Textures before any pipeline or target binding: a cache refresh can
       * replace a resource, and the backend is free to submit while doing it. */
-@@ -2138,7 +2277,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2138,7 +2289,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
                                                      vsamplers);
  
      if (indexed) {
@@ -2422,7 +2477,7 @@ index b438d87..771b01c 100644
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
              dc.refs_remapped ? dc.ref_remap.occurrence_to_unique : NULL,
-@@ -2231,6 +2370,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2231,6 +2382,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
      g.be->draw(g.be->user, topology, dc.verts, uploaded, layout.stride,
                 indexed ? g.indices : NULL, indexed ? n_draw : 0);
@@ -2490,7 +2545,7 @@ index b438d87..771b01c 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2294,6 +2494,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2294,6 +2506,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -2504,7 +2559,7 @@ index b438d87..771b01c 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2325,9 +2532,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2325,9 +2544,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -2538,7 +2593,7 @@ index b438d87..771b01c 100644
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
-@@ -2447,6 +2677,26 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+@@ -2447,6 +2689,26 @@ void rsx_draw_engine_method(u32 method, u32 arg)
       * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
       * preserve them with the wider mask. */
      u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
@@ -2742,7 +2797,7 @@ index 545670f..1d1cf73 100644
                       "PSOutput main(PSInput input) {\n");
      }
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index 87ea864..e0dbb9c 100644
+index 87ea864..574ec7f 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -3017,7 +3072,31 @@ index 87ea864..e0dbb9c 100644
  /* ---- E2: pipelines and draws ---------------------------------------------
   * A pipeline handle carries the two translated modules and the render state
   * the engine keyed it on. Topology is not part of that key (Metal sets it on
-@@ -2805,10 +2961,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+@@ -2475,7 +2631,10 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
+  * samplers s0..s3 would alias the pixel samplers' binding), colour targets
+  * other than RGBA8 and RGBA16F, depth-only passes, and stencil (the depth format
+  * has no stencil aspect yet, so the test is inert). */
+-#define VK_ENG_MAX_PIPE   512
++/* As many as the engine keeps (ENG_MAX_PIPELINES): GoW:A selects ~740 distinct
++ * fragment programs in its first level, on top of the menu's, and a full
++ * table made every later pipeline fail silently -- the level drew nothing. */
++#define VK_ENG_MAX_PIPE   8192
+ #define VK_ENG_TOPOLOGIES 5
+ #define VK_ENG_FB_CACHE   64
+ 
+@@ -2707,7 +2866,10 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
+     if (rt_count > RSX_BE_MAX_COLOR_TARGETS) rt_count = RSX_BE_MAX_COLOR_TARGETS;
+     u32 slot = VK_ENG_MAX_PIPE;
+     for (u32 i = 0; i < VK_ENG_MAX_PIPE; i++) if (!s_epipe[i].used) { slot = i; break; }
+-    if (slot == VK_ENG_MAX_PIPE) return 0;
++    if (slot == VK_ENG_MAX_PIPE) {
++        if (!(s_e2.warned & 0x100u)) { VK_LOG("engine: pipeline table full (%u), draws will drop\n", (unsigned)VK_ENG_MAX_PIPE); s_e2.warned |= 0x100u; }
++        return 0;
++    }
+     vk_eng_pipe* P = &s_epipe[slot];
+     memset(P, 0, sizeof *P);
+     if (vk_eng_translate(vs_hlsl, RSX_SHADER_STAGE_VERTEX, &P->vs)) return 0;
+@@ -2805,10 +2967,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
      if ((rs->color_mask >>  8) & 0xFFu) wm |= VK_COLOR_COMPONENT_G_BIT;
      if ((rs->color_mask >>  0) & 0xFFu) wm |= VK_COLOR_COMPONENT_B_BIT;
      if ((rs->color_mask >> 24) & 0xFFu) wm |= VK_COLOR_COMPONENT_A_BIT;
@@ -3046,7 +3125,7 @@ index 87ea864..e0dbb9c 100644
              .srcColorBlendFactor = vk_gcm_blend_factor(rs->sf_rgb),
              .dstColorBlendFactor = vk_gcm_blend_factor(rs->df_rgb),
              .colorBlendOp = vk_gcm_blend_op(rs->eq_rgb),
-@@ -3184,6 +3357,7 @@ static const rsx_draw_backend s_vk_engine_backend = {
+@@ -3184,6 +3363,7 @@ static const rsx_draw_backend s_vk_engine_backend = {
      .present              = vk_eng_present,
      .readback             = vk_eng_readback,
      .depth_readback       = vk_eng_depth_readback,
@@ -3054,7 +3133,7 @@ index 87ea864..e0dbb9c 100644
      .color_target_write   = vk_eng_color_target_write,
  };
  
-@@ -3394,7 +3568,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3394,7 +3574,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -3063,7 +3142,7 @@ index 87ea864..e0dbb9c 100644
      free(s_vk.cpu_verts);
      memset(&s_vk, 0, sizeof s_vk);
  }
-@@ -3429,5 +3603,3 @@ u32 rsx_vulkan_backend_guest_draws(void)
+@@ -3429,5 +3609,3 @@ u32 rsx_vulkan_backend_guest_draws(void)
  {
      return s_vk.eng_active ? rsx_draw_engine_guest_draws() : s_g.last_draws;
  }
@@ -3259,7 +3338,7 @@ index acbaf12..f9ae67d 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index bf75dc8..57f4b2f 100644
+index bf75dc8..b322598 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -1051,6 +1051,7 @@ static volatile uint32_t  s_guard_ea   = 0;   /* guest ea being watched */
@@ -3497,7 +3576,7 @@ index bf75dc8..57f4b2f 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -3915,3 +4086,81 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -3915,3 +4086,85 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -3530,19 +3609,23 @@ index bf75dc8..57f4b2f 100644
 +            addr, (unsigned long long)ctx->thread_id, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
 +            (uint32_t)ctx->gpr[5], (uint32_t)ctx->gpr[6], (uint32_t)ctx->gpr[7],
 +            (uint32_t)ctx->lr, (uint32_t)ctx->gpr[1]);
-+    /* PPU_TRACE_DUMP=<hex fn>,<reg>,<hex len>: also dump len bytes at gpr[reg] on entry to fn. */
-+    static uint32_t dfn = 1, dreg = 0, dlen = 0, ddef = 0;   /* ddef = extra pointer hops before dumping */
-+    if (dfn == 1) { dfn = 0; const char* e = getenv("PPU_TRACE_DUMP");
-+        if (e) { char* p = nullptr; dfn = (uint32_t)strtoul(e, &p, 16);
-+                 if (p && *p == ',') { dreg = (uint32_t)strtoul(p + 1, &p, 0);   /* >=32: absolute guest EA (use 0x...) */
-+                     if (p && *p == ',') { dlen = (uint32_t)strtoul(p + 1, &p, 16);
-+                         if (p && *p == ',') ddef = (uint32_t)strtoul(p + 1, &p, 10); } } } }
-+    if (dfn && addr == dfn && dlen) {
-+        uint32_t base = dreg < 32 ? (uint32_t)ctx->gpr[dreg] : dreg;
-+        for (uint32_t h = 0; h < ddef; h++) base = vm_read32(base);
-+        fprintf(stderr, "[FN %08X]   mem@%08X:", addr, base);
-+        for (uint32_t o = 0; o < dlen && o < 0x200; o += 4) fprintf(stderr, " %08X", vm_read32(base + o));
-+        fprintf(stderr, "\n");
++    /* PPU_TRACE_DUMP=<hex fn>,<reg>,<hex len>[,<hops>]: also dump len bytes at gpr[reg] on entry
++     * to fn, after <hops> pointer dereferences. PPU_TRACE_DUMP2 takes a second spec of the same
++     * form, so one entry can show an object and a block it points to. */
++    static uint32_t dfn[2] = { 1, 1 }, dreg[2], dlen[2], ddef[2];
++    for (int k = 0; k < 2; k++) {
++        if (dfn[k] == 1) { dfn[k] = 0; const char* e = getenv(k ? "PPU_TRACE_DUMP2" : "PPU_TRACE_DUMP");
++            if (e) { char* p = nullptr; dfn[k] = (uint32_t)strtoul(e, &p, 16);
++                     if (p && *p == ',') { dreg[k] = (uint32_t)strtoul(p + 1, &p, 0);   /* >=32: absolute guest EA (use 0x...) */
++                         if (p && *p == ',') { dlen[k] = (uint32_t)strtoul(p + 1, &p, 16);
++                             if (p && *p == ',') ddef[k] = (uint32_t)strtoul(p + 1, &p, 10); } } } }
++        if (dfn[k] && addr == dfn[k] && dlen[k]) {
++            uint32_t base = dreg[k] < 32 ? (uint32_t)ctx->gpr[dreg[k]] : dreg[k];
++            for (uint32_t h = 0; h < ddef[k]; h++) base = vm_read32(base);
++            fprintf(stderr, "[FN %08X]   mem@%08X:", addr, base);
++            for (uint32_t o = 0; o < dlen[k] && o < 0x200; o += 4) fprintf(stderr, " %08X", vm_read32(base + o));
++            fprintf(stderr, "\n");
++        }
 +    }
 +}
 +
@@ -3611,7 +3694,7 @@ index 718392f..9aedcc5 100644
      if (s) {
          uint32_t own = vm_read32(lwmutex + LWM_OWNER);
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 2a74e51..84c2154 100644
+index 2a74e51..5821443 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -21,9 +21,9 @@
@@ -3949,7 +4032,7 @@ index 2a74e51..84c2154 100644
  }
  
  /* ---- Swappable code overlays (see spu_context.resident_ovl) --------------
-@@ -1470,10 +1571,10 @@ spu_lifted_fn spu_lifted_lookup(const spu_context* ctx, uint32_t lsa)
+@@ -1470,12 +1571,22 @@ spu_lifted_fn spu_lifted_lookup(const spu_context* ctx, uint32_t lsa)
   * the image id its lifted functions were registered under. The MFC GET path
   * marks that overlay resident in the streaming context; dispatch retries a
   * primary-image miss against the resident overlay's registry. */
@@ -3958,20 +4041,35 @@ index 2a74e51..84c2154 100644
  /* 6 FMOD codec/DSP overlays + up to 89 WWS job-code modules (all stream into
   * the same job code buffer at LS 0x4000, dispatched by content signature). */
 -#define SPU_OVL_SRC_MAX 128
-+#define SPU_OVL_SRC_MAX 512
++/* GoW:A's EDGE jobs alone stage 360 (fragment, LSA) placements, one image each. */
++#define SPU_OVL_SRC_MAX 2048
  static spu_ovl_src s_ovl_src[SPU_OVL_SRC_MAX];
  static int s_ovl_src_count = 0;
++/* Every MFC GET looks itself up here, so the table is indexed: source-EA entries
++ * by a hash of the EA (chains hold index+1, 0 ends), signature entries in a list.
++ * Entries are only added at registration time, before the SPUs run. */
++#define SPU_OVL_HASH 4096u
++static int s_ovl_head[SPU_OVL_HASH];
++static int s_ovl_next[SPU_OVL_SRC_MAX];
++static int s_ovl_sig[SPU_OVL_SRC_MAX];
++static int s_ovl_sig_count = 0;
++static inline unsigned spu_ovl_hash(uint32_t ea) { return ((ea >> 4) ^ (ea >> 16)) & (SPU_OVL_HASH - 1u); }
  
-@@ -1483,6 +1584,8 @@ void spu_overlay_register_source(uint32_t content_ea, int image_id)
+ void spu_overlay_register_source(uint32_t content_ea, int image_id)
+ {
+@@ -1483,6 +1594,11 @@ void spu_overlay_register_source(uint32_t content_ea, int image_id)
          s_ovl_src[s_ovl_src_count].src_ea = content_ea;
          s_ovl_src[s_ovl_src_count].image_id = image_id;
          s_ovl_src[s_ovl_src_count].has_sig = 0;
 +        s_ovl_src[s_ovl_src_count].span = 0;
 +        s_ovl_src[s_ovl_src_count].lsa = 0;
++        const unsigned h = spu_ovl_hash(content_ea);
++        s_ovl_next[s_ovl_src_count] = s_ovl_head[h];
++        s_ovl_head[h] = s_ovl_src_count + 1;
          s_ovl_src_count++;
      }
  }
-@@ -1496,6 +1599,16 @@ void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_i
+@@ -1496,6 +1612,16 @@ void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_i
      s_ovl_src[s_ovl_src_count - 1].span = span;
  }
  
@@ -3988,7 +4086,15 @@ index 2a74e51..84c2154 100644
  /* Register one-way runtime entries that replace the guest call stack.
   * Matching the resolved function, not just its LS address, avoids affecting
   * unrelated overlays using the same address. Registration precedes execution. */
-@@ -1647,7 +1760,29 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
+@@ -1585,6 +1711,7 @@ void spu_overlay_register_sig(const uint8_t sig[16], int image_id)
+         s_ovl_src[s_ovl_src_count].image_id = image_id;
+         memcpy(s_ovl_src[s_ovl_src_count].sig, sig, 16);
+         s_ovl_src[s_ovl_src_count].has_sig = 1;
++        s_ovl_sig[s_ovl_sig_count++] = s_ovl_src_count;
+         s_ovl_src_count++;
+     }
+ }
+@@ -1647,7 +1774,29 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
  {
      uint32_t lsa = (uint32_t)(ls - ctx->ls);
      spu_ovl_dump(ctx, ea, lsa, ls, size);
@@ -4019,13 +4125,28 @@ index 2a74e51..84c2154 100644
          if (!ctx->resident_code[slot].image_id) continue;
          uint32_t base = ctx->resident_code[slot].lsa;
          uint32_t end = base + ctx->resident_code[slot].size;
-@@ -1658,11 +1793,11 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
-     for (int i = 0; i < s_ovl_src_count; i++) {
-         const spu_ovl_src* o = &s_ovl_src[i];
-         int hit = o->has_sig ? (size >= 512 && memcmp(ls, o->sig, 16) == 0)
+@@ -1655,14 +1804,22 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
+             (lsa < base || ea != ctx->resident_code[slot].source_ea + (lsa - base)))
+             ctx->resident_code[slot].image_id = 0;
+     }
+-    for (int i = 0; i < s_ovl_src_count; i++) {
+-        const spu_ovl_src* o = &s_ovl_src[i];
+-        int hit = o->has_sig ? (size >= 512 && memcmp(ls, o->sig, 16) == 0)
 -                             : (o->src_ea == ea);
-+                             : (o->src_ea == ea && (!o->lsa || o->lsa == lsa));
-         if (hit) {
+-        if (hit) {
++    /* The first registered entry that matches wins, as in a scan in order. */
++    int best = -1;
++    if (size >= 512)
++        for (int k = 0; k < s_ovl_sig_count; k++)
++            if (memcmp(ls, s_ovl_src[s_ovl_sig[k]].sig, 16) == 0) { best = s_ovl_sig[k]; break; }
++    for (int j = s_ovl_head[spu_ovl_hash(ea)]; j; j = s_ovl_next[j - 1]) {
++        const spu_ovl_src* o = &s_ovl_src[j - 1];
++        if (!o->has_sig && o->src_ea == ea && (!o->lsa || o->lsa == lsa) && (best < 0 || j - 1 < best))
++            best = j - 1;
++    }
++    if (best >= 0) {
++        const spu_ovl_src* o = &s_ovl_src[best];
++        {
              if (o->span) {
                  if (lsa + o->span > SPU_LS_SIZE) return;
 -                for (unsigned slot = 0; slot < 4; ++slot) {
@@ -4033,7 +4154,7 @@ index 2a74e51..84c2154 100644
                      if (ctx->resident_code[slot].image_id && ctx->resident_code[slot].lsa != lsa)
                          continue;
                      ctx->resident_code[slot].lsa = lsa;
-@@ -1892,6 +2027,7 @@ void spu_spurs_taskset_syscall(spu_context* ctx)   /* non-static: also called by
+@@ -1892,6 +2049,7 @@ void spu_spurs_taskset_syscall(spu_context* ctx)   /* non-static: also called by
  static int spu_smc_microstep(spu_context* ctx)
  {
      uint32_t pc = ctx->pc & SPU_LS_MASK & ~3u;
@@ -4041,7 +4162,7 @@ index 2a74e51..84c2154 100644
      for (int steps = 0; steps < 4096; steps++) {
          uint32_t w = ((uint32_t)ctx->ls[pc] << 24) | ((uint32_t)ctx->ls[pc+1] << 16) |
                       ((uint32_t)ctx->ls[pc+2] << 8) | ctx->ls[pc+3];
-@@ -1969,7 +2105,10 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -1969,7 +2127,10 @@ static int spu_smc_microstep(spu_context* ctx)
              pc += 4; continue;
          }
          if (op9 == 0x041 || op9 == 0x061) {                   /* stqa / lqa (abs) */
@@ -4053,7 +4174,7 @@ index 2a74e51..84c2154 100644
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
              pc += 4; continue;
-@@ -2038,10 +2177,89 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2038,10 +2199,89 @@ static int spu_smc_microstep(spu_context* ctx)
                        " microstep set -- handing to the interpreter (steps=%d)\n",
                        ctx->image_id, pc, w, steps); }
          ctx->pc = pc;
@@ -4147,7 +4268,7 @@ index 2a74e51..84c2154 100644
      }
      { static int _n = 0; if (_n++ < 4)
          fprintf(stderr, "[spu-smc] microstep img=%d runaway (4096 steps from 0x%05X)\n",
-@@ -2072,7 +2290,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2072,7 +2312,7 @@ void spu_indirect_branch(spu_context* ctx)
       * these two reserved addresses as exitToKernelAddr / selectWorkloadAddr in
       * the SpursKernelContext (spurs_policy.c). */
      if (ctx->policy_mode) {
@@ -4156,7 +4277,7 @@ index 2a74e51..84c2154 100644
          if (ctx->pc == SPURS_PM_EXIT_TO_KERNEL_LS) {
              /* Module exit: the workload returned to the kernel (drained/yield).
               * Print gated: fires once per policy run = thousands/sec. */
-@@ -2090,9 +2308,13 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2090,9 +2330,13 @@ void spu_indirect_branch(spu_context* ctx)
              /* cellSpursModulePoll: report "no contention — keep running".
               * (One virtual SPU per workload here, so nothing ever preempts.) */
              unsigned n = ++g_spurs_pm_polls;
@@ -4173,7 +4294,7 @@ index 2a74e51..84c2154 100644
              ctx->gpr[3] = spu_make_preferred_u32(0);
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
-@@ -2211,7 +2433,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2211,7 +2455,7 @@ void spu_indirect_branch(spu_context* ctx)
       * is 0 outside the region, so this only ever fires for genuine task code.) */
      spu_fn fn = NULL;
      int code_owner = 0;
@@ -4182,7 +4303,7 @@ index 2a74e51..84c2154 100644
          if (ctx->resident_code[slot].image_id && ctx->pc >= ctx->resident_code[slot].lsa &&
              ctx->pc - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size) {
              code_owner = ctx->resident_code[slot].image_id;
-@@ -2226,6 +2448,12 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2226,6 +2470,12 @@ void spu_indirect_branch(spu_context* ctx)
       * may also be registered (historical junk lifts) and must lose. */
      if (!code_owner && !fn && ctx->resident_ovl) fn = spu_lookup(ctx->pc, ctx->resident_ovl);
      if (!code_owner && !fn) fn = spu_lookup(ctx->pc, ctx->image_id);
@@ -4195,7 +4316,7 @@ index 2a74e51..84c2154 100644
      /* The job returned through the link register we planted: it is finished.
       * Its outermost frame ends in `bi $r0`, and r0 was 0 -- so without this the
       * return landed on LS 0, which is the job's OWN entry, and it ran a second
-@@ -2340,12 +2568,35 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2340,12 +2590,35 @@ void spu_indirect_branch(spu_context* ctx)
       * ila header identifies which of the 89 lifted job modules it is; match it and
       * mark that overlay resident so the module's lifted functions dispatch. The
       * module arrives via a DMA LIST, so the single-GET note_get hook never fired. */
@@ -4232,7 +4353,7 @@ index 2a74e51..84c2154 100644
              if (img) {
                  if (ctx->resident_ovl != img) {
                      ctx->resident_ovl = img;
-@@ -2598,6 +2849,35 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2598,6 +2871,35 @@ void spu_indirect_branch(spu_context* ctx)
              fflush(stderr);
          }
      }
@@ -4268,7 +4389,7 @@ index 2a74e51..84c2154 100644
      /* No lifted function at this PC: it may be RUNTIME-GENERATED code (the
       * WWS jobmanager writes a save/restore stub above its static
       * image and calls it). Interpret the live LS bytes; on success the next
-@@ -2612,9 +2892,16 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2612,9 +2914,16 @@ void spu_indirect_branch(spu_context* ctx)
        static int _bt0[BT0_MAX_IMG];
        unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
                       ? (unsigned)ctx->image_id : 0;
@@ -4600,7 +4721,7 @@ index 8d8e4aa..291f6ee 100644
   * Preferred slot extraction
   *
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 90f3221..15c611d 100644
+index 90f3221..ac080b7 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -168,6 +168,15 @@ static inline int mfc_is_fence(uint32_t cmd)
@@ -4678,7 +4799,46 @@ index 90f3221..15c611d 100644
      return rc;
  }
  
-@@ -1359,7 +1400,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1175,14 +1216,24 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+      * count only REJECTED transfers, so once the EA check started committing
+      * pages on demand the counter never advanced and a spinning job simply hung
+      * the chain walker instead. Count repeats whether or not the transfer
+-     * succeeds, and halt at a known pc rather than hanging silently. */
++     * succeeds, and halt at a known pc rather than hanging silently.
++     * The count alone is not enough: polling a value another agent writes is
++     * also the same transfer over and over. EDGE geometry jobs wait for ring
++     * space by re-reading the RSX label 0x70000C80 until the GPU catches up,
++     * and 256 reads take well under a millisecond, so a count-only rule halted
++     * a healthy job and wedged the frame (M0.37). Halt only after the repeats
++     * have also lasted SPU_DMA_REPEAT_SECS (default 30) of wall time. */
+     { static uint32_t s_last_ea, s_last_lsa, s_rep;
+-      static uint32_t s_limit = 0;
++      static uint32_t s_limit = 0; static unsigned long long s_secs, s_since;
++      extern unsigned long long ps3_ms_now(void);
+       if (!s_limit) { const char* e = getenv("SPU_DMA_REPEAT_LIMIT");
+-                      s_limit = e ? (uint32_t)strtoul(e, 0, 0) : 256u; }
++                      s_limit = e ? (uint32_t)strtoul(e, 0, 0) : 256u;
++                      e = getenv("SPU_DMA_REPEAT_SECS");
++                      s_secs = e ? strtoull(e, 0, 0) : 30u; }
+       if ((uint32_t)ea == s_last_ea && lsa == s_last_lsa) {
+-          if (++s_rep >= s_limit) {
+-              s_rep = 0;   /* re-arm: the chain may run this job again */
++          if (++s_rep >= s_limit && !s_since) s_since = ps3_ms_now();
++          if (s_rep >= s_limit && ps3_ms_now() - s_since >= s_secs * 1000u) {
++              s_rep = 0; s_since = 0;   /* re-arm: the chain may run this job again */
+               extern void spu_halt(spu_context*);
+               fprintf(stderr, "[spu-dma] img=%d pc=0x%05X: %u identical "
+                       "transfers to ea=0x%08X -- halting the SPU\n",
+@@ -1191,7 +1242,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+               fflush(stderr);
+               spu_halt(spu);
+           }
+-      } else { s_last_ea = (uint32_t)ea; s_last_lsa = lsa; s_rep = 0; } }
++      } else { s_last_ea = (uint32_t)ea; s_last_lsa = lsa; s_rep = 0; s_since = 0; } }
+ 
+     /* Mark tag as in-progress */
+     mfc->tag_completed &= ~(1u << tag);
+@@ -1359,7 +1410,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -4783,7 +4943,7 @@ index 90f3221..15c611d 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1391,11 +1529,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1391,11 +1539,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -4825,7 +4985,7 @@ index 90f3221..15c611d 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1546,6 +1714,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1546,6 +1724,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }

@@ -7,14 +7,16 @@ Lifted code is keyed by LS address, so each (source EA, LSA) placement is lifted
 its own and registered with spu_overlay_register_region_at(): the runtime marks it
 resident when that exact GET happens and dispatches the span to it.
 
-Inputs: run logs with SPU_LSA_GETLOG lines
+Inputs: run logs with SPU_LSA_GETLOG lines (and/or a previous edgefrags_register.c, whose
+placements are kept, so a re-lift from new logs never drops one)
   [lsa-get] wid=<w> img=<i> lsa=0x<lsa> ea=0x<ea> size=0x<n> ...
 and optionally SPU_INTERP_MISS logs, whose targets inside a placement become extra
 function entries. Output: <port>/spu/edgefrag_<ea>_<lsa>/spu_recomp.{c,h} and
 <port>/spu/edgefrags_register.c (image ids 300+). Derived from the game: keep it out
 of the repository.
 
-Usage: python analysis/lift_edge_frags.py <EBOOT.elf> <port_dir> <ps3recomp_dir> <log>...
+Usage: python analysis/lift_edge_frags.py <EBOOT.elf> <port_dir> <ps3recomp_dir> <log or .c>...
+Copy port/spu/edgefrags_register.c aside first: it is rewritten.
 """
 import os, re, subprocess, sys
 
@@ -30,6 +32,10 @@ def main():
     frags, misses = {}, []
     for log in logs:
         t = open(log, encoding="latin1").read()
+        if log.endswith(".c"):   # a previous edgefrags_register.c: keep its placements
+            for ea, lsa, n in re.findall(r"spu_overlay_register_region_at\(0x([0-9A-F]+)u, 0x([0-9A-F]+)u, 0x([0-9A-F]+)u", t):
+                frags[(int(ea, 16), int(lsa, 16))] = int(n, 16)
+            continue
         for w, lsa, ea, n in re.findall(r"\[lsa-get\] wid=(-?\d+) img=\d+ lsa=0x([0-9A-F]+) ea=0x([0-9A-F]+) size=0x([0-9A-F]+)", t):
             w, lsa, ea, n = int(w), int(lsa, 16), int(ea, 16), int(n, 16)
             if w in WIDS and EBOOT_LO <= ea < EBOOT_HI and n <= MAX_SIZE and lsa >= 0x11000:

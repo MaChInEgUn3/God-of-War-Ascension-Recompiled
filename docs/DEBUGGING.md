@@ -20,7 +20,8 @@ Lessons that cost days; keep them.
 * **Run-time selectable tracer**: lift once with `PPU_TRACE_FUNCS=all`, then pick functions per run with
   `PPU_TRACE_ADDRS=3c93e8,2a0000-2b0000` (hex, ranges allowed) and cap with `PPU_TRACE_MAX`. Each line shows
   `tid`, `r3..r7` and `lr`. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
-  absolute guest address; `hops` follows pointers first). The `all` build is slower; relift without it for normal runs.
+  absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
+  so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.
 * **Guest memory probes** (port): `GOW_PEEK=<ea>,<words>[;<ea>,<words>...]` logs every change (20 ms poll; up to 8
   regions of 32 words; in Bash write `GOW_PEEK="a,n;b,m"` so the `;` is not a command separator); `GOW_SCAN=<hex bytes>`
   logs where a byte pattern appears. Both are host threads; times are ms since start.
@@ -112,6 +113,13 @@ Lessons that cost days; keep them.
   The micro-stepper advances a few instructions before handing off, so only the entry pc is a valid target.
 * **Where blobs land in local store**: `SPU_LSA_GETLOG=<lo>-<hi>` (hex LS) prints each distinct (lsa, ea, size)
   GET into that range with the workload and the first words (GoW:A: EDGE code fragments at LS `0x11090+`).
+  `analysis/lift_edge_frags.py` also takes the previous `edgefrags_register.c` as an input and keeps its placements.
+* **Stuck DMA guard**: a job that re-issues the same transfer `SPU_DMA_REPEAT_LIMIT` times (default 256) for
+  `SPU_DMA_REPEAT_SECS` of wall time (default 30) is halted with `[spu-dma] ... identical transfers`. Polling a
+  value another agent writes (EDGE waits on the RSX label `0x70000C80` for ring space) is the same transfer too,
+  so the count alone is not a hang.
+* **Draws that vanish**: `[rsx engine] pipeline table full` / `drop (pipeline)` lines in `passes.txt` mean the
+  backend could not create a pipeline; GoW:A's first level needs about 1300 (the table holds 8192).
 * **SPURS kernel pacing**: `SPURS_PASS_SLEEP=<ms>` (default 1) is the pause between kernel passes;
   `SPURS_PASS_GREEDY=1` (GoW:A port default) skips it after a pass that found work; `SPURS_IDLE_MAX=<n>` caps the
   idle back-off (log2 passes, default 4).

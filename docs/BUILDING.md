@@ -27,7 +27,9 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    EDGE code fragments (EBOOT blobs the EDGE jobs stage at LS `0x11090+`, one lift per placement): run with
    `SPU_LSA_GETLOG=10000-3E000 SPU_LSA_GETLOG_EA=10000-820000 SPU_INTERP_MISS=1`, then
    `python analysis/lift_edge_frags.py <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
-   `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted.
+   `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted. Pass a copy of
+   the previous `edgefrags_register.c` among the inputs to keep its placements (the menu and the first level use 360),
+   then re-run `scripts\cfg.bat` so CMake picks up the new directories.
 5. `scripts\cfg.bat`, then `scripts\build.bat` (first build about 7 min and about 8 GB RAM; incremental builds take
    seconds unless the lifted header changes). The lifted SPU sources build with `-O2 -march=x86-64-v3
    -ffp-contract=off` (AVX2 + FMA). On a CPU without AVX2/FMA, configure with `-DSPU_HOST_ARCH=-msse4.2`. Do not

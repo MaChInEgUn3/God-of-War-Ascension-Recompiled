@@ -170,6 +170,24 @@ culler (`0xD618` in the geometry module, called only when the job's flags lack `
 extended-range number, and 0 times it is 0). The float helpers used host IEEE floats, so the lane became NaN, `gb`
 saw bit 1, and every triangle was culled. The helpers now follow SPU rules (extended range, denormals are zero,
 saturation; the old fast path is kept for ordinary normals). The menu cinematic and the title screen now render.
+Update (M0.37): the game reaches its first level. The menu is real-time 3D (EDGE draws it; the decoder is closed),
+the intro is a video. `START`@130/150 s, `CROSS`@170 s, then `CROSS` about every 60 s (main menu, the profile save
+dialog, the next prompts) loads the Prison of the Damned at about 530-600 s; the real-time intro (Kratos chained, the
+rings) renders in full. Fixes on the way:
+* The SPU DMA guard that halts a job after 256 identical transfers also halted EDGE jobs that poll the RSX label
+  `0x70000C80` for ring space (a healthy wait); it now also needs `SPU_DMA_REPEAT_SECS` (default 30) of wall time.
+  This was one rare stall.
+* The Vulkan backend had 512 pipeline slots; the level selects about 740 new fragment programs, so every later
+  pipeline failed silently and the level was white. Now 8192, with a warning when full.
+* With the colour pass back, EDGE runs 360 (fragment, LSA) placements instead of 45; the 315 new ones ran in the
+  interpreter (~70% of EDGE time). All are lifted now (EDGE 0% interpreted); the overlay table is 2048 entries with
+  an EA hash, since every MFC GET looks itself up.
+* A colour target re-bound at the same address and pitch with a smaller clip (GoW:A's 640x360 pass over its
+  1280x720 scene) recreated the surface and lost the scene, so the copy-out for the SPU anti-aliasing left a black
+  quarter. A same-format, same-pitch surface at least that large is now reused, as depth already was.
+Open: the level runs at 1-3 flips/s (wid 8 `BrBDblBufWrkld` takes ~75% of a kernel thread, and the main thread spends
+most of its frame in batch-job waits), and it stops after a few minutes on
+`BATCHJOB: Waiting for batch job list 1 to finish (22/21 jobs completed)` (3 of 3 long runs). Menu text is not drawn.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
