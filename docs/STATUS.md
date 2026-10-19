@@ -164,6 +164,12 @@ the PK/UP pack family.
 Update (M0.34): FFmpeg 9.0 is installed and the menu video decodes (synthesized PTS, MPEG-2 `frame_rate_code` in
 the picture info, which the player paces by). The pictures reach guest memory but no draw composites them yet.
 `scripts/play.bat` runs the game in a window.
+Update (M0.35/M0.36): the colour pass was missing because EDGE culled every static/colour object. Its triangle
+culler (`0xD618` in the geometry module, called only when the job's flags lack `0x800`) ORs masks in with
+`fnms rt, mask, 0xFFFFFFFF, rc`, which relies on SPU single precision having no NaN (`0xFFFFFFFF` is a huge
+extended-range number, and 0 times it is 0). The float helpers used host IEEE floats, so the lane became NaN, `gb`
+saw bit 1, and every triangle was culled. The helpers now follow SPU rules (extended range, denormals are zero,
+saturation; the old fast path is kept for ordinary normals). The menu cinematic and the title screen now render.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
