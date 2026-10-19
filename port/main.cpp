@@ -95,6 +95,7 @@ void     cellGcmTickVBlank(void);
 void     cellGcmTickFlip(void);
 int      cellGcm_take_flip_pending(void);
 void     cellGcm_rsx_process_fifo(void);      /* drain get -> put */
+int      cellGcm_park_spin(unsigned max_us);  /* -1 not parked, 1 released, 0 timeout */
 unsigned cellGcm_flip_request_count(void);
 }
 
@@ -317,7 +318,13 @@ static DWORD WINAPI frame_clock(LPVOID)
 
     for (;;) {
         CLOCK_PHASE(0);
-        Sleep(4);
+        /* GCM_PARK_SPIN_US=<us> (default 4000, 0 = off): when the last walk ended on
+         * a self-JUMP park, yield-poll that word instead of sleeping the tick, so
+         * the walker follows each EDGE segment patch at once (the first level ran
+         * at ~1 frame/s on 4 ms naps per hole). */
+        { static int s_ps = -1;
+          if (s_ps < 0) { const char* e = getenv("GCM_PARK_SPIN_US"); s_ps = e ? atoi(e) : 4000; }
+          if (s_ps <= 0 || cellGcm_park_spin((unsigned)s_ps) < 0) Sleep(4); }
         ULONGLONG now = GetTickCount64();
 
         int fired = 0;

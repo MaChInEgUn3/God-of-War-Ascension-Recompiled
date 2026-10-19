@@ -31,7 +31,8 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    the previous `edgefrags_register.c` among the inputs to keep its placements (the menu and the first level use 360),
    then re-run `scripts\cfg.bat` so CMake picks up the new directories.
 5. `scripts\cfg.bat`, then `scripts\build.bat` (first build about 7 min and about 8 GB RAM; incremental builds take
-   seconds unless the lifted header changes). The lifted SPU sources build with `-O2 -march=x86-64-v3
+   seconds unless the lifted header changes). The link writes `build_vk\MyGameRecomp.map` (`/MAP`), which
+   `analysis/samp_resolve.py` uses to name `PS3_SAMPLE_HOST` samples. The lifted SPU sources build with `-O2 -march=x86-64-v3
    -ffp-contract=off` (AVX2 + FMA). On a CPU without AVX2/FMA, configure with `-DSPU_HOST_ARCH=-msse4.2`. Do not
    drop below SSE4.1: the `shufb` and quadword byte-rotate helpers fall back to byte loops, and `fma`/`fms`/`fnms`
    become libm `fmaf` calls; the SPU jobs then run about 2x slower.

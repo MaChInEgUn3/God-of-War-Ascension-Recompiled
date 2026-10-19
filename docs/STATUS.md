@@ -196,6 +196,17 @@ a garbage 8th entry (`FFFFFFFF`), counted 22 of 21 and the wait never ended. `SP
 the argument big-endian in the preferred doubleword, as the hardware does. The real-time intro now plays on (Megaera,
 the chains breaking); its image is overexposed. Open: performance (main thread 68% in the EDGE wait, wid 8 ~80% of a
 kernel thread), menu text, the overexposure.
+Update (M0.39, performance): a host-side profile (`PS3_SAMPLE_HOST=1` + link map) showed the SPU float helpers
+(`fa/fs/fm/fma/fnms/fcgt`) at ~27% of the kernel threads: they were per-lane calls that sent every lane with a zero
+operand through doubles. An SSE4.1/FMA vector fast path (exact for ordinary normals and zeros, the reference path for
+the rest; 200k-vector differential test) removed them from the profile. The FIFO walker slept its 4 ms tick on every
+self-JUMP park; it now yield-polls the park (`GCM_PARK_SPIN_US`), menu/intro 22 -> 27-31 game frames/s. The SPU
+decrementer overflowed 231 s after boot (upstream fix 7e257f7 applied). Wid 8 (`BrBDblBufWrkld`) is the audio
+DSP rack (`brbProc`), free-running: it takes whatever kernel time is left (60k -> 106k jobs/min with more threads),
+so more kernel threads do not raise the level's frame rate. The level still runs at ~1-1.5 game frames/s: every
+wwsjob PM run executes about one job and hands the SPU back (the HLE poll answer means "switch to wid 0"), so a
+frame of ~550 EDGE jobs per list pays one kernel pass per job. Keeping the module running (poll answer = own wid,
+or an immediate re-run) stops the game; not solved yet.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

@@ -135,6 +135,22 @@ Lessons that cost days; keep them.
   `m<pct>%c<pct>%` is the share of the wid's time spent in SPU channel writes (MFC commands, i.e. DMA copies) and
   channel reads (tag/event waits), measured only under `SPURS_PM_PROF`. `[pm-prof]` shows `z<pct>%` per wid (share of its time spent in idle runs, polls == 0) and `idle=` overall;
   a high idle share means the kernel is busy polling, not working.
+  `SPURS_PM_EXITSTAT=<n>` prints, every n module exits, the most common exit paths (wid, last two function
+  entries, r3). Divide `j` by the run count in `[pm-prof]` for jobs per module run: GoW:A's wwsjob PM runs about
+  one job per run, because the HLE `selectWorkload` poll answers r3 = 0 (= "switch to wid 0") and the PM compares
+  the answer with its own wid (LS `0x37A4`). Two experiments to keep a module draining, both OFF by default
+  because both stop the game (all lists idle, main thread waiting on RenJobSet or the SPU task batch):
+  `SPURS_PM_POLL_SLICE_US=<us>` answers the module's own wid for <us> of its run, and `SPURS_PM_RERUN_US=<us>`
+  re-runs a workload at once after a run that executed jobs. The kernel's per-dispatch readyCount decrement and
+  the signal-bit clear are the first suspects.
+* **Host-side profile**: `PS3_SAMPLE=<ms>` samples every thread's RIP (reports every 10 s: guest functions,
+  host modules, per-thread busy/ntdll split). `PS3_SAMPLE_HOST=1` buckets every sample by executable RVA and
+  thread instead (lifted SPU job modules and overlay fragments are not in the guest map); resolve with
+  `python repo/analysis/samp_resolve.py run.log build_vk/MyGameRecomp.map t<seconds> [top]` (the build links
+  with `/MAP`). It prints the top symbols overall and per thread.
+* **FIFO walker latency**: `GCM_PARK_SPIN_US=<us>` (port default 4000, 0 = off): when the walker stops on a
+  self-JUMP park, the frame loop yield-polls that word instead of sleeping its 4 ms tick, so each EDGE segment
+  patch is followed at once.
 * **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
   then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on

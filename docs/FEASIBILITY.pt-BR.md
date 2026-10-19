@@ -476,6 +476,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - **Correção:** `SPURS_PM_ARG_BE=1` (padrão do port) passa o argumento big-endian no doubleword preferido (palavra 0 = metade alta, palavra 1 = metade baixa), como o hardware.
   - **Resultado:** nenhum stall em 1600 s (antes 4 de 4 entre 900 e 1200 s). A introdução segue (Megera, as correntes se rompendo). A imagem está superexposta.
   - **Aberto:** desempenho (thread principal 68% na espera do EDGE, wid 8 ~80% de uma thread do kernel), texto do menu, superexposição.
+- **M0.39: desempenho (2026-10-19, ab_*, samp1–3, spin1, slice1, rr0, rr2000):**
+  - **wid 8 = áudio.** `BrBDblBufWrkld` é o rack de DSP de áudio (`brbProc::PrepareRackUnit`, "RACK UNIT/JOB LIST"). Ele roda sem parar: com mais threads de kernel passa de 60k para 106k jobs/min e ocupa todo o tempo que sobra. A/B de layout de threads (`0,1,5`, `0,1,2,5`) não mudou a taxa de quadros da fase, que varia ~3x entre cenas.
+  - **Perfil do host** (`PS3_SAMPLE_HOST=1` + `/MAP` + `samp_resolve.py`): os helpers de float SPU somavam ~27% das amostras, porque eram chamadas por lane que mandavam toda lane com operando zero para o caminho em `double`. O fast path vetorial SSE4.1/FMA (exato para normais e zeros, caminho de referência para o resto) tirou esses helpers do perfil. Teste diferencial com 200k vetores.
+  - **Walker do FIFO:** dormia o tick de 4 ms em cada park (self-JUMP). Agora faz yield-poll no park (`GCM_PARK_SPIN_US`). Menu e intro: 22 → 27–31 quadros de jogo/s.
+  - **Decrementer SPU:** estourava 64 bits 231 s após o boot (correção do upstream 7e257f7 aplicada).
+  - **Gargalo da fase (aberto):** cada execução do PM wwsjob roda ~1 job e devolve a SPU. O poll HLE `selectWorkload` responde r3 = 0 ("trocar para o wid 0"), e o PM compara com o próprio wid (LS `0x37A4`). Com ~550 jobs EDGE por lista por quadro, cada job paga uma passada inteira do kernel. As duas tentativas de manter o módulo rodando (`SPURS_PM_POLL_SLICE_US`, `SPURS_PM_RERUN_US`) travam o jogo, então ficam desligadas. Suspeitos: o decremento de readyCount por despacho e a limpeza do bit de sinal no kernel HLE.
+  - **Upstream:** o ps3recomp está na v0.15.0 (207 commits após a nossa base). Várias correções coincidem com as nossas; rebase em andamento numa pasta separada.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

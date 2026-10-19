@@ -33,3 +33,4 @@ libsre_*
 *.pem
 *.key
 .env
+__pycache__/
