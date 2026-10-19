@@ -490,6 +490,13 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - **Armadilha de medição:** o cache FIOS do jogo (`vfs/cache/BCUS98232/fios`) persiste entre execuções. Com cache quente o menu fazia ~30 quadros/s, com cache frio ~20, e a comparação "v0.15 mais lenta" era isso. Com o mesmo estado (cache vazio) as duas versões empatam. Os scripts de A/B agora apagam o cache antes de cada execução.
   - `SPURS_KEEP_READY=1` + `SPURS_PM_RERUN_US` não trava mais o jogo, mas também não aumenta a taxa de quadros da fase: o gargalo é o custo por job EDGE (~0,36 ms, de 10 a 20 vezes acima de uma SPU), com os registradores em memória (`ctx->gpr[]`) no código SPU liftado.
   - **PRs upstream:** correções genéricas viram PRs pequenos (o primeiro é a tabela de pipelines do Vulkan, sp00nznet/ps3recomp#378).
+- **M0.41: texto do menu (2026-10-19, pd_menu2, menux16):**
+  - Os draws de texto existiam (pipe 997, 54 draws na passada final da UI), com o atlas de fonte em `0x0F2B4500` no formato X16 (`0x94`, um canal de 16 bits) e crossbar `0xAAEE`, que lê G e B para todas as saídas.
+  - O runtime decodifica X16 como R16 e o apresentava pelas lanes ARGB, onde G e B são vazias. Cada glyph saía com cor e alfa zero. Os ícones de botão (DXT) apareciam, o que confundia.
+  - Correção: X16 apresentado como B8 (valor em R, G e B, A opaco). Agora o menu mostra "Latest News", "Single Player", "Options" e o número de build, igual ao hardware.
+  - Descartado no caminho: idioma. O host em português faz o jogo rodar em PT-BR (`PS3_LANG` força outro), mas o texto também faltava em inglês.
+  - PRs upstream abertos: #378, #379, #380, #382, #383, #384.
+  - Aberto: o áudio do host (WASAPI `0x88890008`); o jogo roda sem som.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

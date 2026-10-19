@@ -215,6 +215,12 @@ speed is the same as before once runs start from the same FIOS cache state (an e
 comparison was a warm cache against a cold one). The kernel no longer consumes a workload's readyCount on dispatch
 under `SPURS_KEEP_READY=1`, and with it `SPURS_PM_RERUN_US` no longer stops the game, but it does not raise the
 level's frame rate either. Generic fixes are being sent upstream as small PRs (first: the Vulkan pipeline table).
+Update (M0.41): menu text renders ("Latest News", "Single Player", "Options", build number). The font atlas is an
+X16 texture sampled through crossbar 0xAAEE (G and B sources); the runtime presented X16's R16 resource through the
+ARGB lanes, where G and B are empty, so every glyph had zero colour and alpha. X16 is now presented like B8 (value in
+R, G and B). Upstream PRs open: #378 (Vulkan pipeline table), #379 (cellVdec Ex entry points), #380 (MPEG-2 PTS and
+frame rate), #382 (sub-clip surface reuse), #383 (DMA repeat guard wall time), #384 (X16 presentation).
+Audio: the host WASAPI init fails (`0x88890008`) and the game runs silent -- open.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
