@@ -50,6 +50,8 @@
  * there is nothing to shim: the 15.6 ms default timer granularity this works
  * around is a Windows problem. */
 #include <timeapi.h>
+/* K32GetProcessMemoryInfo for the heartbeat's memory columns (kernel32, no psapi.lib). */
+#include <psapi.h>
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -245,9 +247,15 @@ static DWORD WINAPI heartbeat(LPVOID arg)
         Sleep(ms);
         const uint8_t* p = vm_base ? vm_base + 0x9710C8u : nullptr;
         const unsigned frame = p ? ((unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]) : 0;
-        fprintf(stderr, "[heartbeat] t=%llus flips=%u game_frame=%u presents=%ld\n",
+        /* ws/priv: this process's working set and private commit (MB), to tell a run
+         * that grows from one the rest of the machine squeezed. */
+        PROCESS_MEMORY_COUNTERS_EX mc = {};
+        mc.cb = sizeof mc;
+        K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&mc, sizeof mc);
+        fprintf(stderr, "[heartbeat] t=%llus flips=%u game_frame=%u presents=%ld ws=%lluMB priv=%lluMB\n",
                 (unsigned long long)((GetTickCount64() - t0) / 1000), cellGcm_flip_request_count(), frame,
-                (long)g_frames_presented);
+                (long)g_frames_presented, (unsigned long long)(mc.WorkingSetSize >> 20),
+                (unsigned long long)(mc.PrivateUsage >> 20));
         fflush(stderr);
     }
     return 0;

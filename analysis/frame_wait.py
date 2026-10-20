@@ -50,7 +50,8 @@ def main():
                 continue
             t0, g0 = before[-1][1], before[-1][2]
             frames = (g1 - g0) * 60.0 / (t1 - t0)
-            if frames <= 0:
+            # a report without the site (ms 0) or a torn game_frame read is not a window
+            if frames <= 0 or frames > 10000 or ms == 0:
                 continue
             if rows and rows[-1][0] == t1:
                 continue
