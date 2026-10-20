@@ -244,9 +244,10 @@ the current lifter emits).
 `SPURS_PASS_SLEEP=0` (no 1 ms nap after an empty kernel pass): wait 425 ms per frame, no gain. The game itself
 peaks at ~1.8 GB private (`ws=`/`priv=` now in the heartbeat); a run stopped for low memory was the rest of the
 machine, not the game.
-Reverted as default: with `SPURS_KERN_SPUS=0,1,5`, 4 of 8 level runs corrupted guest state between 510 and 930 s
-(1 with no other knob: def1 at ~840 s, tid 14 calls through a garbage pointer, EDGE wid 17's policy run sticks, the
-frame counter is overwritten, private memory jumps 1.2 GB); 0 of 8 runs with two kernel threads did. The port
+Reverted as default: with `SPURS_KERN_SPUS=0,1,5`, 3 of 8 level runs clearly corrupted guest state between 510 and
+930 s and 1 is ambiguous (only its frame counter read turned to garbage). One had no other knob (def1 at ~840 s: tid 14 calls through a garbage pointer, EDGE wid 17's policy run sticks, the
+frame counter is overwritten, private memory jumps 1.2 GB); the other two had experimental knobs on top. 0 of 8 runs with two kernel threads
+corrupted anything. `GCM_PARK_SPIN_US=30000` was tested on three threads and corrupted at 510 s, so it is untested. The port
 default is two threads again until the race is found.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
