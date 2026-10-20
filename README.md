@@ -5,12 +5,20 @@
 > Some long runs still corrupt guest memory around the same point of the level; the current hunt is in
 > [docs/STATUS.md](docs/STATUS.md). Generic fixes go upstream to ps3recomp as small PRs.
 
+![Kratos chained in the first level, rendered by the recompiled game on Vulkan](docs/screenshots/level.jpg)
+
 An attempt to statically recompile *God of War: Ascension* (PS3, `BCUS98232`) into a native Windows executable,
 built on top of the [ps3recomp](https://github.com/sp00nznet/ps3recomp) toolkit (PPU lifter, SPU lifter,
 HLE runtime, Vulkan/D3D12 RSX backends).
 
 **This repository contains no game data, no firmware and no code derived from them.** You need your own legally
 acquired copy of the game and (optionally) your own PS3 firmware dump. See [docs/LEGAL.md](docs/LEGAL.md).
+
+| Main menu (text, music) | Intro movie (MPEG-2 through cellVdec) |
+|---|---|
+| ![Main menu](docs/screenshots/main-menu.jpg) | ![Intro movie](docs/screenshots/intro.jpg) |
+
+Captured from the port's own Vulkan output (`PS3RECOMP_VK_DUMP`) on 2026-10-20, at 1280x720.
 
 ## What lives here
 

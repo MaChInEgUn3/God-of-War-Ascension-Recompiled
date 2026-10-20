@@ -13,3 +13,5 @@ This is not legal advice.
   keys and no code that circumvents protection.
 * `.gitignore` and the CI check `no-forbidden-files` are guard rails, not a substitute for judgement: review
   `git status` before every commit.
+* The only game-derived pictures are the few screenshots in `docs/screenshots/` (JPEG, 1280x720, captured from
+  the port's own output) that show the project's state. Raw frame dumps (`.ppm`) stay local; the CI rejects them.
