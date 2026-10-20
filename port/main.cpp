@@ -647,10 +647,11 @@ int main(int argc, char** argv)
      * Sharing two threads, the free-running audio workload took ~57% of one and the
      * EDGE jobs waited behind it. Level, frame split from PS3_POLLTOP (two runs each):
      * main-thread wait 458-483 -> 389-390 ms/frame, game frames ~80-85 -> ~100 per
-     * minute. Set only when neither variable is given, so SPURS_KERN_THREADS=<n> still
-     * selects plain threads. */
-    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS"))
-        _putenv_s("SPURS_KERN_SPUS", "0,1,5");
+     * minute. NOT the default: in 4 of 8 level runs with it (3 of them with another
+     * experimental knob on top, 1 with none), guest state was
+     * corrupted (a PPU thread calling through garbage pointers, an EDGE policy run
+     * stuck, the frame counter overwritten) between 510 and 930 s; 0 of 8 runs with
+     * two threads. Opt in with SPURS_KERN_SPUS=0,1,5 until the race is found. */
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE

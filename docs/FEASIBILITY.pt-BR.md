@@ -505,10 +505,11 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
 - **M0.43: o que o quadro espera (2026-10-19, waitflag/guard/kspu015/kspu2/inl0/inl1):**
   - A thread principal passa a maior parte de cada quadro da fase em `0x003E7A34`, dormindo 30 µs por vez até zerar a meia-palavra em `0x0099AAC0`. Quem a zera é o policy module WWS (`gowpm0`, função `0x2628`), por DMA, quando a lista de jobs do quadro termina (achado com `PPU_WW_GUARD`).
   - `analysis/frame_wait.py` mede, por quadro, a espera e o resto da thread principal a partir do `PS3_POLLTOP`. Quadros por 300 s variaram ±12% entre builds idênticos, então essa é a métrica de A/B agora.
-  - Ganho: o áudio (BrBDblBufWrkld, wid 8) numa thread de kernel própria na SPU 5, como no hardware (`SPURS_KERN_SPUS=0,1,5`, agora padrão do port). Espera de 458–483 para 389–390 ms por quadro, de ~80–85 para ~100 quadros por minuto, em duas rodadas cada.
+  - Ganho: o áudio (BrBDblBufWrkld, wid 8) numa thread de kernel própria na SPU 5, como no hardware (`SPURS_KERN_SPUS=0,1,5`, opcional; ver abaixo). Espera de 458–483 para 389–390 ms por quadro, de ~80–85 para ~100 quadros por minuto, em duas rodadas cada.
   - Sem ganho: 4 threads simples (o áudio ocupou a thread extra); remover as sondas de depuração dos acessos ao LS (43% menos instruções numa função EDGE quente, mesmo tempo por job); leituras PPU inline (`analysis/patch_ppu_inline_loads.py`, mantido porque é o que o lifter atual gera).
   - `SPURS_KEEP_READY=1 SPURS_PM_RERUN_US=2000` por cima: espera de 435 ms por quadro (pior) e queda em ~850 s (a tid 14 chama um ponteiro de função lixo). Descartado.
   - `SPURS_PASS_SLEEP=0` (sem a pausa de 1 ms após uma passada vazia do kernel): 425 ms de espera por quadro, sem ganho. O jogo usa no máximo ~1,8 GB privados (agora no heartbeat, `ws=`/`priv=`); a parada por falta de memória veio do resto da máquina.
+  - **Revertido como padrão:** com `SPURS_KERN_SPUS=0,1,5`, 4 de 8 rodadas da fase corromperam o estado do jogo entre 510 e 930 s (uma delas sem nenhuma outra variável: def1, ~840 s, a tid 14 chama um ponteiro lixo, o PM do EDGE wid 17 trava, o contador de quadros é sobrescrito e a memória privada salta 1,2 GB). Com duas threads, 0 de 8. O padrão volta a duas threads até achar a corrida.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

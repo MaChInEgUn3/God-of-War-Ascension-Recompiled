@@ -234,7 +234,7 @@ Update (M0.43): the main thread spends most of each level frame at `0x003E7A34`,
 halfword at `0x0099AAC0` clears; the WWS policy module (`gowpm0`, fn `0x2628`) clears it by DMA when the frame's job
 list completes. `analysis/frame_wait.py` turns `PS3_POLLTOP` reports into wait and work ms per game frame. With the
 audio DSP workload (BrBDblBufWrkld, wid 8) given its own kernel thread on SPU 5 as on hardware
-(`SPURS_KERN_SPUS=0,1,5`, now the port default), the wait fell from 458-483 to 389-390 ms per frame and game
+(`SPURS_KERN_SPUS=0,1,5`, opt-in; see below), the wait fell from 458-483 to 389-390 ms per frame and game
 frames rose from ~80-85 to ~100 per minute (two runs each). Tried without gain: 4 plain kernel threads (EDGE ran
 more jobs, audio took the extra thread), probes compiled out of the SPU LS accessors (43% fewer instructions in a hot
 EDGE function, same time per job), inline PPU guest loads (`analysis/patch_ppu_inline_loads.py`, kept: it is what
@@ -244,6 +244,10 @@ the current lifter emits).
 `SPURS_PASS_SLEEP=0` (no 1 ms nap after an empty kernel pass): wait 425 ms per frame, no gain. The game itself
 peaks at ~1.8 GB private (`ws=`/`priv=` now in the heartbeat); a run stopped for low memory was the rest of the
 machine, not the game.
+Reverted as default: with `SPURS_KERN_SPUS=0,1,5`, 4 of 8 level runs corrupted guest state between 510 and 930 s
+(1 with no other knob: def1 at ~840 s, tid 14 calls through a garbage pointer, EDGE wid 17's policy run sticks, the
+frame counter is overwritten, private memory jumps 1.2 GB); 0 of 8 runs with two kernel threads did. The port
+default is two threads again until the race is found.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
