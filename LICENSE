@@ -1,6 +1,14 @@
 MIT License
 
-Copyright (c) 2026 MaChInEgUn3
+Copyright (c) 2026 MaChInEgUn3 and the God of War: Ascension Recompiled contributors
+
+This license covers the original work in this repository: port/, analysis/,
+scripts/, spu/, docs/ and the changes in patches/. It does not cover upstream
+ps3recomp (https://github.com/sp00nznet/ps3recomp, MIT, by its authors),
+whose code the patch modifies and which keeps its own license, nor
+God of War: Ascension, its data or the PS3 firmware, which belong to Sony
+Interactive Entertainment. No game data, firmware or code lifted from them is
+part of this repository or of this license.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

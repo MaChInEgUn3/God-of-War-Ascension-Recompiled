@@ -1,8 +1,9 @@
 # God of War: Ascension — static recompilation (PS3)
 
-> **Status: research / early bring-up (private).** The game boots through its CRT, FIOS, 19 PSARC archives, the
-> SPURS/WWS job system and Ice::Render GCM initialisation, then stalls before the first draw call.
-> Nothing is playable yet. See [docs/STATUS.md](docs/STATUS.md) for the current blocker.
+> **Status: research / early bring-up. Not playable.** The game boots, plays its intro movies, shows the main menu
+> with text and music, and reaches the first level with the Vulkan backend, at about 1.5 game frames per second.
+> Some long runs still corrupt guest memory around the same point of the level; the current hunt is in
+> [docs/STATUS.md](docs/STATUS.md). Generic fixes go upstream to ps3recomp as small PRs.
 
 An attempt to statically recompile *God of War: Ascension* (PS3, `BCUS98232`) into a native Windows executable,
 built on top of the [ps3recomp](https://github.com/sp00nznet/ps3recomp) toolkit (PPU lifter, SPU lifter,
@@ -36,5 +37,10 @@ XenonRecomp / UnleashedRecomp, N64: Recompiled, and others.
 
 ## License
 
-MIT for the code in this repository (see [LICENSE](LICENSE)). Upstream ps3recomp is MIT as well. Game assets,
-firmware and anything derived from them are **not** covered and must never be committed.
+The original work here (`port/`, `analysis/`, `scripts/`, `spu/`, `docs/` and the changes in `patches/`) is
+[MIT](LICENSE): keep the copyright notice and please link back here. It builds on
+[ps3recomp](https://github.com/sp00nznet/ps3recomp) (MIT) by its authors. Game assets, firmware and anything lifted
+from them are **not** covered and must never be committed.
+
+God of War is a trademark of Sony Interactive Entertainment LLC. This is a fan research project, not affiliated with
+or endorsed by Sony Interactive Entertainment or Santa Monica Studio.
