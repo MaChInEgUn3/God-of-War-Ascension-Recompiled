@@ -651,7 +651,10 @@ int main(int argc, char** argv)
      * state between 510 and 930 s (one with no other knob, two with experimental
      * knobs on top; a PPU thread calls through garbage pointers, an EDGE policy run
      * sticks, the frame counter is overwritten) and 1 more is ambiguous; 0 of 8 runs
-     * with two threads did. Opt in with SPURS_KERN_SPUS=0,1,5 until the cause is found. */
+     * with two threads did. The gain is the third thread, not SPU 5: 0,1,2 is as
+     * fast (394-431 ms/frame) and 0,5 is as slow as two threads; 0,1,2 corrupted 2
+     * of 8 runs and 0,5 1 of 3, so it is a three-thread race, not the SPU-5 thread.
+     * Opt in with SPURS_KERN_SPUS=0,1,2 until the cause is found. */
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE

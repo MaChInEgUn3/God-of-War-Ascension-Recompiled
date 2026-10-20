@@ -285,7 +285,7 @@ index e634dd4..eb769bb 100644
  
  typedef void (*vdec_ff_emit_fn)(void* ctx, const VdecFfPicture* pic);
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 015913a..2b1a235 100644
+index 015913a..9790961 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -68,7 +68,10 @@ typedef struct {
@@ -1056,7 +1056,7 @@ index 015913a..2b1a235 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1653,184 +1910,328 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1653,184 +1910,333 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1357,6 +1357,21 @@ index 015913a..2b1a235 100644
 +             *
 +             * readyCount/wklSignal are still honoured when a title DOES use them:
 +             * consume one unit so a kick-driven title paces the same as before. */
++            /* Per-SPU priority 0 = this workload never runs on this SPU (GoW:A's
++             * BrBDblBufWrkld runs on SPU 5 only). Skip it here as long as another
++             * of this instance's kernel threads may run it -- BEFORE touching its
++             * readyCount or signal bit: a thread that will not run the workload
++             * must not consume its kick. (With SPURS_KERN_SPUS=0,1,5 the SPU 5
++             * thread used to take one unit of wid 0's readyCount on every pass and
++             * then skip it; that was the only kernel-side difference from the
++             * configurations that never corrupted guest state.) */
++            if (si->nkern > 1 && my_spu < CELL_SPURS_MAX_SPU && !s_workloads[wid].priority[my_spu]) {
++                int elsewhere = 0;
++                for (int q = 0; q < si->nkern && q < 8; q++)
++                    if (si->kspu[q] < CELL_SPURS_MAX_SPU && s_workloads[wid].priority[si->kspu[q]]) {
++                        elsewhere = 1; break; }
++                if (elsewhere) continue;
++            }
 +            volatile u8* rdy = vm_base + ea + spurs_off_ready(wid);
 +            u32 sigoff = spurs_off_signal(wid);                   /* be u16 @0x70 / @0x74 */
 +            u32 sig = vm_read32(ea + sigoff) >> 16;
@@ -1393,16 +1408,6 @@ index 015913a..2b1a235 100644
 +                /* One kernel thread per instance SPU (SPURS_KERN_THREADS): a workload's
 +                 * module must never run on two of them at once (one persistent PM
 +                 * context per lane). Claim it; another thread skips it this pass. */
-+                /* Per-SPU priority 0 = this workload never runs on this SPU (GoW:A's
-+                 * BrBDblBufWrkld runs on SPU 5 only). Skip it here as long as another
-+                 * of this instance's kernel threads may run it. */
-+                if (si->nkern > 1 && my_spu < CELL_SPURS_MAX_SPU && !s_workloads[wid].priority[my_spu]) {
-+                    int elsewhere = 0;
-+                    for (int q = 0; q < si->nkern && q < 8; q++)
-+                        if (si->kspu[q] < CELL_SPURS_MAX_SPU && s_workloads[wid].priority[si->kspu[q]]) {
-+                            elsewhere = 1; break; }
-+                    if (elsewhere) continue;
-+                }
 +                if (InterlockedCompareExchange(&s_wid_busy[wid], 1, 0) != 0) continue;
 +                extern SPU_THREAD_LOCAL volatile unsigned g_spurs_pm_polls;
 +                u32 polls_before = g_spurs_pm_polls;   /* heuristic only */
@@ -1539,7 +1544,7 @@ index 015913a..2b1a235 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1838,30 +2239,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1838,30 +2244,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
              printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
          _n++;
      }
@@ -1579,7 +1584,7 @@ index 015913a..2b1a235 100644
      return CELL_OK;
  }
  
-@@ -1869,19 +2266,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1869,19 +2271,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -1640,7 +1645,7 @@ index 015913a..2b1a235 100644
      return CELL_OK;
  }
  
-@@ -3043,6 +3473,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3043,6 +3478,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -1683,7 +1688,7 @@ index 015913a..2b1a235 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3050,7 +3516,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3050,7 +3521,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1692,7 +1697,7 @@ index 015913a..2b1a235 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3071,13 +3537,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3071,13 +3542,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -1723,7 +1728,7 @@ index 015913a..2b1a235 100644
      return CELL_OK;
  }
  
-@@ -3363,6 +3841,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3363,6 +3846,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  

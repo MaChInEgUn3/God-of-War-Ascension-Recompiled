@@ -249,6 +249,24 @@ Reverted as default: with `SPURS_KERN_SPUS=0,1,5`, 3 of 8 level runs clearly cor
 frame counter is overwritten, private memory jumps 1.2 GB); the other two had experimental knobs on top. 0 of 8 runs with two kernel threads
 corrupted anything. `GCM_PARK_SPIN_US=30000` was tested on three threads and corrupted at 510 s, so it is untested. The port
 default is two threads again until the race is found.
+Update (M0.44, 2026-10-20): the gain is the third kernel thread, not audio on its own SPU. Per config, level runs
+to 960 s that corrupted guest state: `0,1` (default) 0 of 8 (from several builds, not one), `0,1,5` 3 of 8 plus 1
+ambiguous, `0,5` 1 of 3, `0,1,2` 2 of 8. `0,5` is as slow as the default (465-468 ms wait per frame); `0,1,2` is
+as fast as `0,1,5` (394-431 ms against 389-391), so `SPURS_KERN_SPUS=0,1,2` is the faster opt-in, still with
+the race. The guess that SPU 5 was the cause is wrong: under `0,1,2` no thread skips a workload, and it still
+corrupted (k012_7 at ~850 s, k012_8 at ~880 s). Every corrupted run shows the same signature: fios thread tid 8
+(`fios scheduler 4`) reads through a NULL object field in guest functions `0x004A07C0`/`0x0048810C`, then the
+game itself prints `invalid size` and 482 `CopyLocalMemory ... offset error` lines (its own TTY output, offsets
+stepping by 16 MB off a garbage size), and wid 1's SPURS state byte reads as garbage. `bctr to NULL from
+func_00606898` is in every run, clean or not, and is not part of it.
+Two spuNum changes were tried and reverted (the kernel passes spuNum 0 to every policy module run, from every
+kernel thread): spuNum = the SPU the thread plays made EDGE wid 15 hang as SPU 5 (pc `0x5ED8`) and stalled the
+game ~180 s in 3 of 3 runs; spuNum = the thread index still corrupted 2 of 3 runs. The frame counter overwrite at
+`0x009710C8` is not an SPU DMA PUT (`SPU_DMA_EA` over that range logs nothing).
+Kernel change (built, effect untested): a thread now skips a workload whose priority on its SPU is 0 (when another
+thread may run it) before it touches the workload's readyCount or signal bit. Before, the SPU 5 thread of `0,1,5`
+took one unit of wid 0's readyCount on every pass and then skipped it. It changes nothing for `0,1` or `0,1,2`,
+where no thread skips.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
