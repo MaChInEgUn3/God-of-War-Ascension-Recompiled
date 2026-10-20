@@ -220,6 +220,16 @@ Lessons that cost days; keep them.
   can bypass the watch: then `GOW_GUARD=<ea> GOW_GUARD_RIP=auto` (page guard; guest stack on the first write from each
   distinct lifted-code instruction) names the writer. `PPU_DELAY_FN=<fn>,<ms>` sleeps on every entry to a guest
   function (timing experiments; needs the `PPU_TRACE_FUNCS=all` lift).
+* **Who overwrites a word, from any source**: `GOW_GUARD=<ea> GOW_GUARD_QUIET=1 GOW_GUARD_MAX=<hex>` reports the
+  write that takes the word past `<hex>` with the faulting rva, host thread and host stack (`[GUARD] OVER-MAX`, then
+  `host#n rva=`), however it was written (lifted code, a runtime memcpy, an HLE, the RSX walker). QUIET keeps one line
+  per distinct writer of the watched 32-byte line. Resolve the rvas with the link map
+  (`build_v015/MyGameRecomp.map`, image base 0x140000000); llvm-symbolizer finds nothing (no debug info). This is
+  how `nv3089_blit` was caught writing the frame counter (M0.45).
+* **RSX writes into main memory**: an NV3089 blit whose VRAM rectangle leaves VRAM is skipped and logged
+  (`[nv3089] blit leaves VRAM`); `GCM_BLIT_OOB=1` performs it as before (it wraps into main memory).
+  `GCM_SETTLE_MS=<ms>` (default 2, 0 = off): how long the FIFO walker re-reads a JUMP/CALL word to unmapped IO
+  before resyncing, for a park released while its segment is still being written.
 * **HLE that writes into the title's command context**: `_cellGcmSetFlipCommand(ctx, id)` writes a flip marker at
   `ctx->current`; its ring-wrap shortcut only applies to SDK-style contexts. Suspect HLE first when a title's
   `current` jumps without a store from title code.

@@ -267,6 +267,25 @@ Kernel change (built, effect untested): a thread now skips a workload whose prio
 thread may run it) before it touches the workload's readyCount or signal bit. Before, the SPU 5 thread of `0,1,5`
 took one unit of wid 0's readyCount on every pass and then skipped it. It changes nothing for `0,1` or `0,1,2`,
 where no thread skips.
+Update (M0.45, 2026-10-20): **the writer is our own RSX blit, not the game and not a thread race.** A page guard
+on `0x009710C8` with `GOW_GUARD_MAX=100000` caught the overwrite in both guarded runs that corrupted (grd_1,
+grd_3, 2 of 4 under `0,1,2`): the store comes from the FIFO walker's thread, `nv3089_blit` -> `gcm_row_copy`
+(memmove), named through the link map (`MyGameRecomp.map`). The NV3089 scaled-image blit resolves a VRAM offset as
+`localAddress + offset` in 32 bits, so an offset past the end of VRAM wraps into main memory; real RSX raises a DMA
+fault instead. That is the texture-looking garbage (DXT-like words) found over the frame counter, a FIOS object and
+the FIFO ring, and why no PPU store or SPU DMA was ever seen writing there. The game itself is already confused a
+few hundred log lines earlier (its own `invalid size` / `CopyLocalMemory ... offset error`), so the blit is at
+least the amplifier; whether an earlier out-of-VRAM blit is also the origin is being measured (runs oob_1..4, blits
+that leave VRAM are now skipped and logged, `GCM_BLIT_OOB=1` restores them).
+Also settled: corruption is not specific to three kernel threads. Two-thread runs that live long enough also fail
+(long2_3 hung at game frame 8447; earlier def1/snidx2 were two-thread), and the failures cluster at game frames
+~7800-8750, a point in the level. The FIOS seek/read interleave idea is falsified (a per-thread seek-position check
+found 0 mismatches and runs with the position pinned still corrupted). The `FIFO JUMP/CALL to unmapped IO` seen in
+every corrupted run is a victim: it always comes after the game's first error, and the bad word is still in the ring
+when dumped. A different, benign-looking case is a torn read: the walker follows a park released by an EDGE PUT
+whose first word lands before the rest (long2_3 read `0x3FBF7887`, the dump right after showed `0x00200A20`); the
+walker now re-reads such a word for up to `GCM_SETTLE_MS` (default 2) before resyncing. GCM map/unmap activity is
+not involved: the same `MapMainMemory` calls happen at level load in clean and corrupted runs alike.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
