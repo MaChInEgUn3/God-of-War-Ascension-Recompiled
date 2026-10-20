@@ -4047,7 +4047,7 @@ index d9ce0c3..2edc0fb 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index 148be1f..fe85539 100644
+index 148be1f..2693df7 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -535,17 +535,34 @@ static int samp_mod_hit(uintptr_t rip)
@@ -4145,7 +4145,7 @@ index 148be1f..fe85539 100644
  static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
  {
      /* Re-entrancy guard. The handler logs with fprintf, and if the guarded page
-@@ -1075,9 +1103,50 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
+@@ -1075,9 +1103,93 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
              char* mbase = (char*)GetModuleHandleA(NULL);
              { extern uint32_t ppu_prof_resolve_host(void*);
                uint32_t gfn = ppu_prof_resolve_host((void*)ep->ContextRecord->Rip);
@@ -4160,6 +4160,49 @@ index 148be1f..fe85539 100644
 +              if (s_gq < 0) s_gq = getenv("GOW_GUARD_QUIET") ? 1 : 0;
 +              const uint64_t wrva = (uint64_t)((char*)ep->ContextRecord->Rip - mbase);
 +              int say = !s_gq;
++              /* GOW_GUARD_PAGE=1 (with QUIET): every distinct writer of the
++               * whole page, keyed by its host call chain rather than its RIP --
++               * a runtime memmove has one RIP whoever called it. For a table
++               * the title fills and something else scribbles over, the odd
++               * chain out is the scribbler. */
++              { static int s_gpg = -1;
++                if (s_gpg < 0) s_gpg = getenv("GOW_GUARD_PAGE") ? 1 : 0;
++                if (s_gpg && s_gq) {
++                    void* bt[24]; unsigned nb = RtlCaptureStackBackTrace(0, 24, bt, 0);
++                    uint64_t key = wrva;
++                    for (unsigned i = 0; i < nb; i++) {
++                        uint64_t r = (uint64_t)((char*)bt[i] - mbase);
++                        if (r < 0x20000000ull) key = key * 1000003ull + r;
++                    }
++                    /* The title's own stores reach the page through lifted
++                     * code (inline or via the vm_write helpers); there are
++                     * thousands of such sites, so they are counted, not keyed.
++                     * The first frame past this handler that is not one of
++                     * the loader's own helpers decides. */
++                    extern int ppu_host_is_lifted(void*);
++                    int from_guest = 0;
++                    for (unsigned i = 1; i < nb; i++) {
++                        void* f = bt[i];
++                        if ((char*)f >= mbase && (char*)f < mbase + 0x20000000 &&
++                            (uint64_t)((char*)f - mbase) < 0x10000ull) continue;  /* vm_* helpers */
++                        if ((char*)f < mbase || (char*)f >= mbase + 0x20000000) continue;  /* system DLLs */
++                        from_guest = ppu_host_is_lifted(f);
++                        break;
++                    }
++                    static uint64_t s_pk[128]; static int s_npk = 0; int k = 0;
++                    if (from_guest) k = -1;
++                    else for (; k < s_npk; k++) if (s_pk[k] == key) break;
++                    if (k == s_npk && s_npk < 128) {
++                        s_pk[s_npk++] = key;
++                        fprintf(stderr, "[GUARD] PAGE-WRITER #%d guest=0x%08X rva=0x%llX tid=%lu chain:",
++                                s_npk, guest, (unsigned long long)wrva, (unsigned long)GetCurrentThreadId());
++                        for (unsigned i = 0; i < nb; i++) {
++                            uint64_t r = (uint64_t)((char*)bt[i] - mbase);
++                            if (r < 0x20000000ull) fprintf(stderr, " %llX", (unsigned long long)r);
++                        }
++                        fprintf(stderr, "\n");
++                    }
++                } }
 +              if ((guest & ~31u) == (s_guard_ea & ~31u)) {
 +                  /* Writer of the watched line, for the single-step check
 +                   * (GOW_GUARD_MAX) that sees the value it stored. */
@@ -4199,7 +4242,7 @@ index 148be1f..fe85539 100644
              /* On the watched word specifically, dump the guest call stack: with a
               * memset-style clear the writer is always the same memcpy body, and
               * the only useful question is WHO called it. */
-@@ -1152,7 +1221,27 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
+@@ -1152,7 +1264,27 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
                    fflush(stderr);
                    ppu_guest_callstack("guard-zeroed");
                }
@@ -4228,7 +4271,7 @@ index 148be1f..fe85539 100644
          DWORD old; VirtualProtect((void*)s_guard_page, 0x1000, PAGE_READONLY, &old);
          ep->ContextRecord->EFlags &= ~0x100u;
          return EXCEPTION_CONTINUE_EXECUTION;
-@@ -1772,8 +1861,74 @@ static void ww_arm_inline_window(uint32_t ww)
+@@ -1772,8 +1904,74 @@ static void ww_arm_inline_window(uint32_t ww)
      g_ww_lo = ww & ~15u;
      g_ww_hi = (ww & ~15u) + len;
  }
@@ -4303,7 +4346,24 @@ index 148be1f..fe85539 100644
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
       * it lands. PPU_WWATCH answers "who writes this address"; when a bad value is
       * copied from node to node down a list, that only ever catches the copy.
-@@ -2149,6 +2304,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
+@@ -2042,6 +2240,16 @@ extern "C" uint32_t ppu_prof_resolve_host(void* ra)
+     return lo ? g_inv[lo - 1].guest : 0;
+ }
+ 
++/* True when a host code address lies inside the lifted PPU functions. They
++ * link as one contiguous block, so the span of the function table is enough;
++ * the runtime, HLE modules and lifted SPU code all sit outside it. */
++int ppu_host_is_lifted(void* p)
++{
++    if (!g_inv_n) ppu_prof_resolve_host(p);
++    if (!g_inv_n) return 0;
++    return p >= g_inv[0].host && (char*)p < (char*)g_inv[g_inv_n - 1].host + 0x20000;
++}
++
+ static ppu_fn ppu_lookup(uint32_t a)
+ {
+     uint32_t i = (a * 2654435761u) & PPU_HASH_MASK;
+@@ -2149,6 +2357,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
  #endif
  }
  
@@ -4356,7 +4416,7 @@ index 148be1f..fe85539 100644
  extern "C" void ppu_dump_guest_stack(ppu_context* ctx, const char* tag)
  {
      if (!ctx || !vm_base) return;
-@@ -2476,6 +2677,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2476,6 +2730,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
  #endif
      uint32_t addr = (uint32_t)ctx->ctr;
      if (g_icall_target_set) { addr = g_icall_target; g_icall_target_set = 0; }
@@ -4382,7 +4442,7 @@ index 148be1f..fe85539 100644
      /* PS3_CALLTRACE=N: log the first N indirect calls (target + r3/r4) --
       * generic visibility into vtable/callback dispatch (e.g. which job body a
       * JobManager worker runs). */
-@@ -3132,13 +3352,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3132,13 +3405,25 @@ extern "C" void lv2_syscall(ppu_context* ctx)
      case 330: {   /* sys_mmapper_allocate_address(u64 size, u64 flags,
                     * u64 alignment, u32* alloc_addr) -> reserve guest VA range */
          static uint32_t s_next_va = 0x11000000u;   /* just past the loaded image */
@@ -4412,7 +4472,72 @@ index 148be1f..fe85539 100644
          if (out) vm_write32(out, va);
          ctx->gpr[3] = 0;
          return;
-@@ -3921,8 +4153,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
+@@ -3236,11 +3521,61 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+                 char bt[512]; uint32_t bn = wlen < 511 ? wlen : 511;
+                 for (uint32_t i = 0; i < bn; i++) bt[i] = (char)vm_read8(buf + i);
+                 bt[bn] = 0;
+-                if (strstr(bt, pat)) {
++                /* '|' separates alternatives: TTY_BT="invalid size|offset error" */
++                int hit = 0;
++                for (const char* p = pat; *p && !hit; ) {
++                    const char* e = strchr(p, '|');
++                    size_t pl = e ? (size_t)(e - p) : strlen(p);
++                    char one[96];
++                    if (pl && pl < sizeof(one)) {
++                        memcpy(one, p, pl); one[pl] = 0;
++                        hit = strstr(bt, one) != NULL;
++                    }
++                    p += pl + (e ? 1 : 0);
++                }
++                if (hit) {
+                     static int tn = 0;
+-                    if (tn++ < 3) {
+-                        fprintf(stderr, "%c[TTY_BT] \"%.90s\"%c", 10, bt, 10);
++                    if (tn++ < 6) {
++                        fprintf(stderr, "%c[TTY_BT] \"%.90s\" tid=%llu lr=0x%08X%c", 10, bt,
++                                (unsigned long long)ctx->thread_id, (uint32_t)ctx->lr, 10);
++                        /* The registers hold the bad value the title just
++                         * checked, and the stack the frames that loaded it. */
++                        for (int r = 0; r < 32; r += 8)
++                            fprintf(stderr, "[TTY_BT]   r%-2d: %08X %08X %08X %08X %08X %08X %08X %08X\n", r,
++                                    (uint32_t)ctx->gpr[r], (uint32_t)ctx->gpr[r+1], (uint32_t)ctx->gpr[r+2],
++                                    (uint32_t)ctx->gpr[r+3], (uint32_t)ctx->gpr[r+4], (uint32_t)ctx->gpr[r+5],
++                                    (uint32_t)ctx->gpr[r+6], (uint32_t)ctx->gpr[r+7]);
+                         ppu_log_host_chain("tty-bt");
++                        ppu_dump_guest_stack(ctx, "tty-bt");
++                        /* TTY_BT_DUMP=<ea>:<len>[,...]: guest memory to show
++                         * with it -- the table the bad value came from.
++                         * @<ea>:<n>:<len> treats ea as n big-endian pointers
++                         * and dumps len bytes at each (descriptor arrays). */
++                        static const char* dsp = (const char*)1;
++                        if (dsp == (const char*)1) dsp = getenv("TTY_BT_DUMP");
++                        static int dumped = 0;   /* the first hit is the one that matters */
++                        if (dumped++) dsp = NULL;
++                        for (const char* p = dsp; p && *p; ) {
++                            int deref = (*p == '@'); if (deref) p++;
++                            char* q; uint32_t ea = (uint32_t)strtoul(p, &q, 16), n = 1, len = 0;
++                            if (*q == ':') len = (uint32_t)strtoul(q + 1, &q, 16);
++                            if (deref && *q == ':') { n = len; len = (uint32_t)strtoul(q + 1, &q, 16); }
++                            for (uint32_t i = 0; i < n && i < 256; i++) {
++                                uint32_t a = deref ? vm_read32(ea + i * 4) : ea;
++                                if (deref && (!a || a >= 0x40000000u)) {
++                                    fprintf(stderr, "[TTY_BT] *%08X = %08X (not dumped)\n", ea + i * 4, a);
++                                    continue;
++                                }
++                                for (uint32_t o = 0; o < len && o < 0x2000; o += 32) {
++                                    fprintf(stderr, "[TTY_BT] %s%08X:", deref ? "*" : "", a + o);
++                                    for (uint32_t w = 0; w < 32 && o + w < len; w += 4)
++                                        fprintf(stderr, " %08X", vm_read32(a + o + w));
++                                    fprintf(stderr, "\n");
++                                }
++                            }
++                            p = q; while (*p == ',') p++;
++                            if (p == q && *p) break;
++                        }
+                     }
+                 }
+             }
+@@ -3921,8 +4256,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
           * an empty boot device before deadlocking on a data.toc it never loaded. */
          ctx.gpr[3] = argc_n;                        /* argc */
          ctx.gpr[4] = argv_base;                     /* argv */
@@ -4427,7 +4552,7 @@ index 148be1f..fe85539 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4033,3 +4269,85 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4033,3 +4372,85 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -5653,10 +5778,18 @@ index fa88c3f..17f14b0 100644
   * Preferred slot extraction
   *
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 9820cc2..4af962f 100644
+index 9820cc2..6a10ef3 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
-@@ -202,6 +202,15 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -23,6 +23,7 @@
+ #include <stdio.h>
+ #include <stdio.h>
+ #include "../platform/win32_compat.h"
++#include <emmintrin.h>   /* _mm_sfence */
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -202,6 +203,15 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
          spu_lockline_unlock();
          return 0;
      }
@@ -5672,7 +5805,48 @@ index 9820cc2..4af962f 100644
      /* SPU_DMA_WATCH=<hex>: report any transfer whose destination RANGE covers
       * this guest address. A DMA landing in the loaded ELF image is always a
       * bug, and it is invisible to the sampling traces -- YDKJ had an SPU job
-@@ -775,6 +784,27 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+@@ -678,16 +688,30 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+                 if (spu_coh_is_reserved(a)) { span_reserved = 1; break; }
+                 if (a == a1) break;
+             }
++            /* SPU_PUT_HEAD_LAST=1: store the first 16 bytes of a PUT last, behind
++             * a store fence. A title whose SPU job releases an RSX FIFO park
++             * with the PUT that also carries the segment (God of War:
++             * Ascension's EDGE jobs) has the walker poll the head word; with a
++             * plain memcpy it can see the released head while a later word of
++             * the same PUT is still the old one (torn read at +0x28). */
++            static int head_last = -1;
++            if (head_last < 0) { const char* e = getenv("SPU_PUT_HEAD_LAST"); head_last = e && *e == '1'; }
++#define SPU_PUT_COPY() do { \
++                if (head_last && size > 16u) { \
++                    memcpy((uint8_t*)ea_ptr + 16, (const uint8_t*)ls_ptr + 16, size - 16u); \
++                    _mm_sfence(); \
++                    memcpy(ea_ptr, ls_ptr, 16); \
++                } else memcpy(ea_ptr, ls_ptr, size); } while (0)
+             if (span_reserved) {
+                 spu_lockline_lock();
+-                memcpy(ea_ptr, ls_ptr, size);
++                SPU_PUT_COPY();
+                 for (uint32_t a = a0; ; a += 128u) {
+                     if (spu_coh_is_reserved(a)) spu_coh_notify_write_except(a, spu);
+                     if (a == a1) break;
+                 }
+                 spu_lockline_unlock();
+             } else {
+-                memcpy(ea_ptr, ls_ptr, size);
++                SPU_PUT_COPY();
+                 for (uint32_t a = a0; ; a += 128u) {
+                     if (spu_coh_is_reserved(a)) {
+                         spu_lockline_lock();
+@@ -697,6 +721,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+                     if (a == a1) break;
+                 }
+             }
++#undef SPU_PUT_COPY
+         }
+         /* Tell whoever is listening where this PUT landed.
+          *
+@@ -775,6 +800,27 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
  
          uint64_t ea = (ea_base & 0xFFFFFFFF00000000ull) | eal;
  
@@ -5700,7 +5874,7 @@ index 9820cc2..4af962f 100644
          if (xfer_size) {
              /* Each list element occupies whole LS quadwords, even for
               * 1/2/4/8-byte transfers. The EA supplies its byte offset within
-@@ -845,6 +875,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -845,6 +891,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
       * about to land. If the handler was supposed to fill in the claimed job's
       * EA and did not, the elements read back empty and the transfer is a no-op
       * -- which looks identical to "the pipeline never ran" from the PPU side. */
@@ -5709,7 +5883,7 @@ index 9820cc2..4af962f 100644
      { /* First 16 dumps per header call site, shared safely by its workers.
         * Saturate instead of wrapping the counter back into logging. */
        static volatile LONG _n = 0;
-@@ -865,11 +897,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -865,11 +913,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
          fprintf(stderr, "\n");
        }
      }
@@ -5728,7 +5902,7 @@ index 9820cc2..4af962f 100644
      return rc;
  }
  
-@@ -1222,14 +1261,24 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1222,14 +1277,24 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * count only REJECTED transfers, so once the EA check started committing
       * pages on demand the counter never advanced and a spinning job simply hung
       * the chain walker instead. Count repeats whether or not the transfer
@@ -5758,7 +5932,7 @@ index 9820cc2..4af962f 100644
                extern void spu_halt(spu_context*);
                fprintf(stderr, "[spu-dma] img=%d pc=0x%05X: %u identical "
                        "transfers to ea=0x%08X -- halting the SPU\n",
-@@ -1238,7 +1287,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1238,7 +1303,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                fflush(stderr);
                spu_halt(spu);
            }
@@ -5767,7 +5941,7 @@ index 9820cc2..4af962f 100644
  
      /* Mark tag as in-progress */
      mfc->tag_completed &= ~(1u << tag);
-@@ -1406,7 +1455,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1406,7 +1471,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -5872,7 +6046,29 @@ index 9820cc2..4af962f 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1438,11 +1584,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1428,6 +1590,21 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+      * carried in MFC_EAL (the PM writes EAL=list, LSA=dest) and each element
+      * supplies the low-32 EA; only EAH carries through. Passing `lsa` as the
+      * list address read list elements from the transfer DESTINATION. */
++    /* A fenced or barriered command must not start before every earlier
++     * command of its tag group has finished, and a list parked at a
++     * stall-and-notify element has not. This engine runs each command as it
++     * is issued, so such a command overtakes the parked list's remaining
++     * elements. Report it: a PUTF that releases an RSX park ahead of the
++     * segment it guards lets the FIFO walker read stale words. */
++    if ((mfc_is_fence(cmd) || mfc_is_barrier(cmd)) &&
++        (spu->list_stall_mask & (1u << (tag & 31u)))) {
++        static int _n = 0;
++        if (_n++ < 32)
++            fprintf(stderr, "[mfc] %s cmd=0x%02X tag=%u ea=0x%08X size=0x%X overtakes a stalled list"
++                    " (img=%d wid=%u pc=0x%05X)\n", mfc_is_barrier(cmd) ? "barrier" : "fence",
++                    cmd, tag, (uint32_t)ea, size, spu->image_id,
++                    spu->policy_mode ? spu->ls[0x1DF] : 255u, spu->pc & 0x3FFFF);
++    }
+     if (mfc_is_list(cmd)) {
+         /* List DMAs are rare, and they skip the per-element trace above, so
+          * they are easy to miss entirely while diagnosing a pipeline that
+@@ -1438,11 +1615,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -5914,7 +6110,7 @@ index 9820cc2..4af962f 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1594,6 +1770,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1594,6 +1801,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }

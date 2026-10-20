@@ -522,6 +522,11 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - O jogo já se confunde algumas centenas de linhas antes (`invalid size`, `CopyLocalMemory ... offset error`), então o blit é pelo menos o amplificador. Blits fora da VRAM agora são pulados e registrados (`GCM_BLIT_OOB=1` volta ao antigo); oob_1–4 medem se um deles vem antes do primeiro erro do jogo.
   - Não é exclusivo de três threads: rodadas longas com duas também falham (long2_3 travou no quadro 8447), e as falhas se concentram nos quadros ~7800–8750. FIOS descartado (0 divergências de posição; com a posição fixada ainda corrompe). O desvio para IO não mapeado na FIFO é vítima (sempre depois do primeiro erro do jogo). Map/unmap do GCM também não: as mesmas chamadas aparecem nas rodadas limpas.
   - Caso à parte: leitura rasgada da FIFO. O walker segue um park liberado por um PUT do EDGE cuja primeira palavra chega antes do resto (long2_3 leu `0x3FBF7887`; a dump logo depois mostrava `0x00200A20`). Agora ele relê a palavra por até `GCM_SETTLE_MS` (padrão 2) antes de abandonar o anel.
+- **M0.46 (2026-10-20, em andamento): o blit vem depois; o primeiro sintoma é um tamanho errado na fila de cópias do desfragmentador de VRAM do jogo:**
+  - O skip de blit fora da VRAM disparou pela primeira vez (fen_2), mas depois do `invalid size` do jogo. Fence/barrier do MFC passando na frente de lista parada: descartado (0 ocorrências em 3 rodadas, uma corrompida).
+  - `TTY_BT` na mensagem do jogo: vem do CopyLocalMemory dele (`0x374A80`, recusa tamanho ≥ 512 MB), chamado pelo esvaziamento da fila (`0x373690`, fila em `0x96E710`). Só o tamanho da entrada está errado; destino e origem são válidos. Empilhar e esvaziar rodam na thread principal.
+  - Estouro da lista de pendentes (32 entradas) descartado em rodadas limpas (pico da fila 9). Próximo: dump do alocador no primeiro `invalid size`.
+  - Rodadas agora chegam na fase em ~160 s (X pula a abertura; `work/nav_pad_fast.txt`).
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.

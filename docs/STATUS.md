@@ -286,6 +286,18 @@ when dumped. A different, benign-looking case is a torn read: the walker follows
 whose first word lands before the rest (long2_3 read `0x3FBF7887`, the dump right after showed `0x00200A20`); the
 walker now re-reads such a word for up to `GCM_SETTLE_MS` (default 2) before resyncing. GCM map/unmap activity is
 not involved: the same `MapMainMemory` calls happen at level load in clean and corrupted runs alike.
+Update (M0.46, 2026-10-20, in progress): **the blit is downstream; the first symptom is a bad size in the game's
+VRAM-defrag copy queue.** In fen_2 the out-of-VRAM skip fired for the first time, but only after the game's
+`invalid size`, so skipping the blit does not stop the corruption. A fence/barrier MFC command overtaking a stalled
+DMA list in the same tag was tested and ruled out (detector: 0 hits in three runs, one of them corrupted).
+`TTY_BT` on the game's own message (tty_2) shows it comes from the title's CopyLocalMemory (`0x374A80`, rejects
+sizes >= 512 MB), called from the defrag queue drain (`0x373690`, queue at `0x96E710`). In both corrupted runs only
+the entry's size word is garbage; its dst/src are valid, aligned VRAM offsets, so the entry was written by the game
+from a bad source value rather than scribbled over. Push and drain both run on the main thread (no cross-thread
+race there). An overflow of the 32-entry pending-move list was ruled out for clean runs (queue peak 9, pending list
+used twice in 25 min). Next: the allocator dump at the first `invalid size` (`TTY_BT_DUMP`) to find which
+descriptor carries the bad size. Separately, qp_2 hung at the end of the intro movie (main thread waiting at
+`0x3E84EC` in `0x3C6450`); not yet analysed. Runs now reach the level in ~160 s (intro skipped by CROSS).
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

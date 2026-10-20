@@ -230,6 +230,21 @@ Lessons that cost days; keep them.
   (`[nv3089] blit leaves VRAM`); `GCM_BLIT_OOB=1` performs it as before (it wraps into main memory).
   `GCM_SETTLE_MS=<ms>` (default 2, 0 = off): how long the FIFO walker re-reads a JUMP/CALL word to unmapped IO
   before resyncing, for a park released while its segment is still being written.
+* **The title's own error message as a breakpoint**: `TTY_BT="a|b"` (alternatives separated by `|`) dumps the
+  registers, host chain and guest stack of the thread that printed a matching line (first 6 hits).
+  `TTY_BT_DUMP=<ea>:<len>[,...]` adds guest memory to the first hit; `@<ea>:<n>:<len>` treats ea as n pointers and
+  dumps len bytes at each. GoW:A's `invalid size` comes from its CopyLocalMemory `0x374A80` (rejects sizes
+  >= 0x20000000), fed by the VRAM-defrag copy queue drained by `0x373690`: count `0x96E710`, 12-byte entries
+  `{dst, src, size}` at `0x96E714`, pushed on the main thread (by `0x372B70`/`0x3717B4` from the pending-move list
+  `0x96E58C`, count `0x96E70C`). In the corrupted runs only the size word is garbage.
+* **Every non-title writer of a page**: `GOW_GUARD=<ea> GOW_GUARD_QUIET=1 GOW_GUARD_PAGE=1` prints one
+  `[GUARD] PAGE-WRITER` line (host chain) per distinct writer of the whole page that is not lifted PPU code -- the
+  runtime, an HLE, the RSX walker, an SPU DMA. The title's own stores are not reported.
+* **SPU PUT ordering experiment**: `SPU_PUT_HEAD_LAST=1` stores the first 16 bytes of every SPU PUT last, behind a
+  store fence (for a FIFO park released by the PUT that also carries its segment). Off by default; untested.
+* **Faster runs**: `work/ab_exe.sh` reads the pad script from `NAV_PAD` (default `work/nav_pad_fast.txt`: CROSS
+  from 40 s skips the intro movie, then Continue Game) -- the level is reached at ~160 s instead of ~420 s.
+  `work/nav_pad_slow.txt` is the old schedule. `PPU_TRACE_ADDRS`/`PPU_TRACE_MAX` pass through to the run.
 * **HLE that writes into the title's command context**: `_cellGcmSetFlipCommand(ctx, id)` writes a flip marker at
   `ctx->current`; its ring-wrap shortcut only applies to SDK-style contexts. Suspect HLE first when a title's
   `current` jumps without a store from title code.
