@@ -311,6 +311,19 @@ against a descriptor that belongs to a smaller block: either the descriptor was 
 two apart, then find why the compactor selected that object. Reporting 249 MB of local memory
 (`GCM_LOCAL_SIZE=0F900000`, like a console) does not prevent it (ls249_8 corrupted). Everything on this path so
 far is main-thread lifted PPU code; the FIFO torn-read track is separate.
+Update (M0.46c, 2026-10-21): captured with the release trace (rba_2). The object released was `0x26128260`
+(`+0x1C` 0x28000, `+0x20` 0x2AAB0) and its descriptor #907 held **0x2AB0 = obj+0x20 - obj+0x1C**, the part
+without the top mips; the compactor (`0x372B70`, LRU pick under memory pressure) released the full `+0x1C`
+against it, and then released the same object again 50+ times in a row, each pass subtracting 0x28000 again
+(healthy releases happen once). nga_4 fits the same arithmetic (`0x5560 = 0x55560 - 0x50000`). No rebind
+(`0x36E804`) ran in that run, so "a rebind copied the resident flag" is out; the leading reading is that the
+LRU site at `0x3734BC` releases an object whose descriptor has nothing resident (the game's other release site
+`func_00371004` checks `desc+0x20 != 0` first, this one does not), so nothing is freed and the pressure loop
+picks it again. Being checked with a dump of the descriptor at each release
+(`PPU_TRACE_DUMP=370E48,4+0x44,30,1`). Also found and fixed on the way (toolkit 9a7138c): our `sys_lwcond_create`
+HLE wrote a word past the 8-byte `sys_lwcond_t`, clobbering the field after every lwcond (the sound-stream
+callback slot in GoW:A: all the `bctr to NULL from func_00606898` lines). It did not affect the corruption.
+Static notes on the defragmenter: `analysis/vram_defrag_re.md`.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

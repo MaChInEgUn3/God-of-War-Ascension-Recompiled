@@ -4059,7 +4059,7 @@ index d9ce0c3..2edc0fb 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index 148be1f..ed4a85d 100644
+index 148be1f..374df12 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -535,17 +535,34 @@ static int samp_mod_hit(uintptr_t rip)
@@ -4655,7 +4655,7 @@ index 148be1f..ed4a85d 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4033,3 +4422,112 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4033,3 +4422,115 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -4718,15 +4718,18 @@ index 148be1f..ed4a85d 100644
 +    /* PPU_TRACE_DUMP=<hex fn>,<reg>,<hex len>[,<hops>]: also dump len bytes at gpr[reg] on entry
 +     * to fn, after <hops> pointer dereferences. PPU_TRACE_DUMP2 takes a second spec of the same
 +     * form, so one entry can show an object and a block it points to. */
-+    static uint32_t dfn[2] = { 1, 1 }, dreg[2], dlen[2], ddef[2];
++    /* <reg>+<off>: start at gpr[reg]+off before the hops, so "4+0x44,30,1" dumps
++     * the block an object's +0x44 field points at. */
++    static uint32_t dfn[2] = { 1, 1 }, dreg[2], dlen[2], ddef[2], doff[2];
 +    for (int k = 0; k < 2; k++) {
 +        if (dfn[k] == 1) { dfn[k] = 0; const char* e = getenv(k ? "PPU_TRACE_DUMP2" : "PPU_TRACE_DUMP");
 +            if (e) { char* p = nullptr; dfn[k] = (uint32_t)strtoul(e, &p, 16);
 +                     if (p && *p == ',') { dreg[k] = (uint32_t)strtoul(p + 1, &p, 0);   /* >=32: absolute guest EA (use 0x...) */
++                         if (p && *p == '+') doff[k] = (uint32_t)strtoul(p + 1, &p, 0);
 +                         if (p && *p == ',') { dlen[k] = (uint32_t)strtoul(p + 1, &p, 16);
 +                             if (p && *p == ',') ddef[k] = (uint32_t)strtoul(p + 1, &p, 10); } } } }
 +        if (dfn[k] && addr == dfn[k] && dlen[k]) {
-+            uint32_t base = dreg[k] < 32 ? (uint32_t)ctx->gpr[dreg[k]] : dreg[k];
++            uint32_t base = (dreg[k] < 32 ? (uint32_t)ctx->gpr[dreg[k]] : dreg[k]) + doff[k];
 +            for (uint32_t h = 0; h < ddef[k]; h++) base = vm_read32(base);
 +            fprintf(stderr, "[FN %08X]   mem@%08X:", addr, base);
 +            for (uint32_t o = 0; o < dlen[k] && o < 0x200; o += 4) fprintf(stderr, " %08X", vm_read32(base + o));
@@ -4769,10 +4772,10 @@ index 148be1f..ed4a85d 100644
 +}
 +
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index 2362631..fc3e0e3 100644
+index 2362631..10430ab 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
-@@ -336,8 +336,15 @@ static void sys_lwcond_create(ppu_context* ctx)
+@@ -336,8 +336,17 @@ static void sys_lwcond_create(ppu_context* ctx)
      static uint32_t s_lwcond_id = 0x4C000000u;
      uint32_t lwcond  = (uint32_t)ctx->gpr[3];
      uint32_t lwmutex = (uint32_t)ctx->gpr[4];
@@ -4783,7 +4786,9 @@ index 2362631..fc3e0e3 100644
      vm_write32(lwcond + 0x00, lwmutex);
 -    vm_write32(lwcond + 0x04, ++s_lwcond_id);
 +    vm_write32(lwcond + 0x04, qid);
-+    vm_write32(lwcond + 0x08, qid);
++    /* Nothing at +0x08: it is the title's next field. GoW:A keeps a sound-stream
++     * callback pointer right after one lwcond; writing the id there made the
++     * stream code call a non-existent callback on every event. */
 +    { static int n = 0; if (getenv("PS3_LWCOND_TRACE") && n++ < 40)
 +          fprintf(stderr, "[lwcond] create cond=0x%08X mutex=0x%08X id=0x%08X\n", lwcond, lwmutex, qid); }
      ctx->gpr[3] = 0;

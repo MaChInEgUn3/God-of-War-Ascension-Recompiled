@@ -247,6 +247,8 @@ Lessons that cost days; keep them.
   ends past limit (`[DESC] bad`). GoW:A: `GOW_GUARD=2154B4C0 GOW_GUARD_LEN=23400 GOW_GUARD_NEG=80,C`,
   `PPU_DESC_CHECK=373690,96B51C,96DDBC,0C034B80`. The release that writes the size is `0x370E48` (object in r4:
   `+0x1C` size, `+0x44` descriptor). `GCM_LOCAL_SIZE=<hex>` overrides the reported local size.
+* **Following a pointer field in a trace**: `PPU_TRACE_DUMP=<fn>,<reg>+<off>,<len>,<hops>` starts at
+  `gpr[reg]+off` before the hops, e.g. `370E48,4+0x44,30,1` dumps the descriptor the released object points at.
 * **Two runs at once**: `INST=b` in `work/ab_exe.sh` gives the run its own `/dev_hdd1` (`vfs/cache_b`) and save
   root (`gamedata_b`); copy the build to `work/port/build_runA` / `build_runB` and run with `EXEDIR=runA|runB`
   so a rebuild never touches a running exe.
