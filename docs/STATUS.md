@@ -331,8 +331,20 @@ LRU. A/B over complete 18-minute runs: guard on 0 corrupted of 9 (vetoes fired i
 local-memory stress run did not raise the rate. **Toolkit base moved to ps3recomp v0.17.0**, which contains our eight
 earlier PRs. v0.17.0 as released ran GoW:A several times slower: `mfc_for()` called `getenv("SPU_PCSAMPLE")` on every
 MFC channel op while it was unset (Windows CRT environment lock), putting SPU policy modules at 74% time in channel
-writes (v0.16: 21%). Fixed in our patch and sent upstream (ps3recomp PR #442); with it v0.17 matches v0.16 in the level
+writes (v0.16: 21%). Fixed in our patch and sent upstream (PR #442, closed as a duplicate of the earlier PR #243 with the same fix); with it v0.17 matches v0.16 in the level
 (game frame ~2520-2820 at 1080 s vs ~2580) and three runs were clean. A player launcher is in `launcher/`.
+Update (M0.48, 2026-10-21): performance profile of the level (solo run, host samples after 300 s). Each of the two
+SPU kernel threads spends ~60% in lifted job code, 16-21% in dispatch (`spu_indirect_branch`, `spu_lookup`,
+`spu_task_launch_check`, `spu_drain_call`) and ~10% in debug helpers; the PPU main thread spent ~46% of its samples in
+`barrier_watch_hit`, the write-watch walk every guest store made with every watch off. Two overhead cuts, both
+neutral-or-better and within run-to-run noise (game frame at 1080 s 2001/2961 vs 2375/2864 base, no corruption):
+an inline gate in front of the write watches (`PPU_WDEC`/`PPU_WJUMPBACK`/`PPU_WVAL`/`PPU_WWATCH` are read once), and
+`/Zc:tlsGuards-` in `port/CMakeLists.txt` (clang-cl put an on-demand TLS init check, plus a second TLS lookup, on the
+trampoline store of every lifted SPU and PPU step; nothing in the tree has a dynamically initialized thread_local).
+Three SPU kernel threads (`SPURS_KERN_SPUS=0,1,2`) still hang: the EDGE policy module (wid 17) stayed in one run for
+588 s polling for something never delivered (its DMA tags complete) while the game froze. Two kernel threads stay the
+default. One run of the new build froze early (game frame 315, all workloads idle, main waiting in `func_003C6450`
+for a job list), like an earlier intro hang; the other two passed that point.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

@@ -3774,7 +3774,7 @@ index b44816b..4d5329f 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index f54150d..27daf34 100644
+index f54150d..b4fbb4a 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -536,17 +536,34 @@ static int samp_mod_hit(uintptr_t rip)
@@ -4089,15 +4089,24 @@ index f54150d..27daf34 100644
      fprintf(stderr, "[GUARD] armed on guest 0x%08X (host page %p)\n", guest_ea, (void*)s_guard_page);
      fflush(stderr);
  }
-@@ -1792,8 +1974,74 @@ static void ww_arm_inline_window(uint32_t ww)
+@@ -1792,8 +1974,82 @@ static void ww_arm_inline_window(uint32_t ww)
      g_ww_lo = ww & ~15u;
      g_ww_hi = (ww & ~15u) + len;
  }
+-static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra)
 +/* Called for every 4-byte guest store of an NV FIFO JUMP word (type bits 001)
 + * when set -- cellGcmSys under GCM_PARKLOG records the title's park releases. */
 +extern "C" { void (*g_ppu_jump_store_observer)(uint32_t ea, uint32_t v) = 0; }
- static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra)
++/* Every guest store calls barrier_watch_hit. Its watches are all off in a normal run,
++ * but walking them per store cost about half of the PPU main thread in GoW:A's level
++ * (host samples). The inline gate below returns at once unless a watch env var is set
++ * or a dynamic watch is armed; the full checks live out of line. */
++static int g_bw_env = -1;   /* -1 unknown, 0 no watch variable set, 1 some set */
++static __attribute__((noinline)) void barrier_watch_slow(uint32_t a, uint32_t v, int width, void* ra)
  {
++    if (g_bw_env < 0)
++        g_bw_env = (getenv("PPU_WDEC") || getenv("PPU_WJUMPBACK") || getenv("PPU_WVAL") ||
++                    getenv("PPU_WWATCH")) ? 1 : 0;
 +    if (g_ppu_jump_store_observer && width == 4 && (v >> 29) == 1u) g_ppu_jump_store_observer(a, v);
 +    /* PPU_WDEC=<hex ea>: log every 4-byte PPU store to ea whose value is LOWER than
 +     * the previous one (a write pointer moving back), with the guest function; a
@@ -4164,7 +4173,20 @@ index f54150d..27daf34 100644
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
       * it lands. PPU_WWATCH answers "who writes this address"; when a bad value is
       * copied from node to node down a list, that only ever catches the copy.
-@@ -2062,6 +2310,16 @@ extern "C" uint32_t ppu_prof_resolve_host(void* ra)
+@@ -1913,6 +2169,12 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+     }
+ }
+ 
++static inline __attribute__((always_inline)) void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra)
++{
++    if (__builtin_expect(g_bw_env == 0 && !g_ppu_jump_store_observer && !g_barrier_sync_watch, 1)) return;
++    barrier_watch_slow(a, v, width, ra);
++}
++
+ /* See the note on the forward declaration above ppu_stwcx32. */
+ extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* ra)
+ {
+@@ -2062,6 +2324,16 @@ extern "C" uint32_t ppu_prof_resolve_host(void* ra)
      return lo ? g_inv[lo - 1].guest : 0;
  }
  
@@ -4181,7 +4203,7 @@ index f54150d..27daf34 100644
  static ppu_fn ppu_lookup(uint32_t a)
  {
      uint32_t i = (a * 2654435761u) & PPU_HASH_MASK;
-@@ -2169,6 +2427,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
+@@ -2169,6 +2441,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
  #endif
  }
  
@@ -4234,7 +4256,7 @@ index f54150d..27daf34 100644
  extern "C" void ppu_dump_guest_stack(ppu_context* ctx, const char* tag)
  {
      if (!ctx || !vm_base) return;
-@@ -2496,6 +2800,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2496,6 +2814,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
  #endif
      uint32_t addr = (uint32_t)ctx->ctr;
      if (g_icall_target_set) { addr = g_icall_target; g_icall_target_set = 0; }
@@ -4260,7 +4282,7 @@ index f54150d..27daf34 100644
      /* PS3_CALLTRACE=N: log the first N indirect calls (target + r3/r4) --
       * generic visibility into vtable/callback dispatch (e.g. which job body a
       * JobManager worker runs). */
-@@ -3244,11 +3567,61 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3244,11 +3581,61 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                  char bt[512]; uint32_t bn = wlen < 511 ? wlen : 511;
                  for (uint32_t i = 0; i < bn; i++) bt[i] = (char)vm_read8(buf + i);
                  bt[bn] = 0;
@@ -4325,7 +4347,7 @@ index f54150d..27daf34 100644
                      }
                  }
              }
-@@ -3939,8 +4312,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
+@@ -3939,8 +4326,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
           * an empty boot device before deadlocking on a data.toc it never loaded. */
          ctx.gpr[3] = argc_n;                        /* argc */
          ctx.gpr[4] = argv_base;                     /* argv */
@@ -4340,7 +4362,7 @@ index f54150d..27daf34 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4051,3 +4428,115 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4051,3 +4442,115 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  

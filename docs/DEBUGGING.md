@@ -152,6 +152,8 @@ Lessons that cost days; keep them.
   thread instead (lifted SPU job modules and overlay fragments are not in the guest map); resolve with
   `python repo/analysis/samp_resolve.py run.log build_vk/MyGameRecomp.map t<seconds> [top]` (the build links
   with `/MAP`). It prints the top symbols overall and per thread.
+  A top count above 25 also lengthens the per-thread lists. Write watches (`PPU_WDEC`, `PPU_WJUMPBACK`,
+  `PPU_WVAL`, `PPU_WWATCH`) are read once; with none set, a guest store skips the watch walk entirely.
 * **EDGE cost per job**: `python repo/analysis/pmprof_edge.py run.log...` reads the `SPURS_PM_PROF=60` lines and
   prints the median time per EDGE job (wids 15-17) over the windows where EDGE is busy. Two runs reach the level
   at different times and in different scenes, so frames/s alone is a noisy A/B; this is the steadier number.
@@ -255,6 +257,10 @@ Lessons that cost days; keep them.
 * **Two runs at once**: `INST=b` in `work/ab_exe.sh` gives the run its own `/dev_hdd1` (`vfs/cache_b`) and save
   root (`gamedata_b`); copy the build to `work/port/build_runA` / `build_runB` and run with `EXEDIR=runA|runB`
   so a rebuild never touches a running exe.
+  A `REFRESH` file in a run dir naming a build dir (e.g. `build_v017`) makes the next `ab_exe.sh` run copy that
+  exe and map in first. Never edit `ab_exe.sh` while runs use it: `sh` reads the script as it goes, and a
+  changed file makes the running copy execute garbage (it truncated two logs once). Two game instances use
+  ~2 GB each; a full PPU rebuild beside them needs `ninja -j6` (`NINJA_JOBS`), not the default -j14.
 * **SPU PUT ordering experiment**: `SPU_PUT_HEAD_LAST=1` stores the first 16 bytes of every SPU PUT last, behind a
   store fence (for a FIFO park released by the PUT that also carries its segment). Off by default; untested.
 * **Faster runs**: `work/ab_exe.sh` reads the pad script from `NAV_PAD` (default `work/nav_pad_fast.txt`: CROSS

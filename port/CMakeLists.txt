@@ -66,6 +66,14 @@ endif()
 list(LENGTH RECOMP_SOURCES RECOMP_SOURCE_COUNT)
 message(STATUS "Lifted sources:  ${RECOMP_SOURCE_COUNT} file(s)")
 
+# clang-cl guards every thread-local access with an on-demand initialization check
+# (/Zc:tlsGuards, meant for C++ thread_local with dynamic initializers). Nothing here
+# has one, and the lifted code stores the trampoline TLS slot on every SPU and PPU
+# step, so the check and its second TLS lookup run millions of times a second.
+if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    add_compile_options(/Zc:tlsGuards-)
+endif()
+
 # ---------------------------------------------------------------------------
 # ps3recomp runtime library
 # ---------------------------------------------------------------------------

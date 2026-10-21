@@ -81,7 +81,7 @@ def main():
             if t < tot // 50:
                 continue
             print(f"--- tid {tid}: {t} samples ({100.0 * t / tot:.1f}%)")
-            for name, n in c.most_common(12):
+            for name, n in c.most_common(top if top > 25 else 12):
                 print(f"   {100.0 * n / t:6.2f}%  {n:7d}  {name}")
 
 
