@@ -29,6 +29,7 @@ Captured from the port's own Vulkan output (`PS3RECOMP_VK_DUMP`) on 2026-10-20, 
 | `spu/images.json` | Description of the SPU images lifted for this title (policy module, SPURS kernel, ...) |
 | `analysis/` | Python tools used to measure the binary (carving SPU blobs, PSARC TOC, xrefs, `findstore.py`, `make_spu_port.py`) |
 | `scripts/` | Windows build helpers (`GOW_ROOT`-relative) |
+| `launcher/` | Player launcher (Python/Tk): paths, setup check, play/stop with logs, save backups |
 | `docs/` | Feasibility study (pt-BR), architecture notes, debugging playbook, related work, legal |
 | `local/` | **Git-ignored.** Your game dump, decrypted ELF, firmware, lifted C++, toolchains, logs |
 
@@ -37,6 +38,13 @@ Captured from the port's own Vulkan output (`PS3RECOMP_VK_DUMP`) on 2026-10-20, 
 See [docs/BUILDING.md](docs/BUILDING.md). In short: dump your disc, decrypt `EBOOT.BIN` to an ELF, run the
 ps3recomp loader/lifter on it, apply `patches/`, configure with `scripts/cfg.bat`, build with `scripts/build.bat`,
 run `MyGameRecomp.exe <path>/PS3_GAME/USRDIR/EBOOT.elf`.
+
+## Playing
+
+Once you have a build, `scripts\launch.bat` (or `python launcher\gow_launcher.py`) opens the launcher. Point it at
+your `MyGameRecomp.exe` and your `PS3_GAME/USRDIR/EBOOT.elf`, press **Check setup**, then **Play**. It keeps a log
+per run in `launcher/logs/`, can skip the intro movie, and backs up / restores your saves to `launcher/backups/`.
+Every option maps to a runtime environment variable shown in its tooltip; see [launcher/README.md](launcher/README.md).
 
 ## Related projects
 

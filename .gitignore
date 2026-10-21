@@ -34,3 +34,7 @@ libsre_*
 *.key
 .env
 __pycache__/
+# launcher: per-player settings, run logs and save backups
+/launcher/settings.json
+/launcher/logs/
+/launcher/backups/
