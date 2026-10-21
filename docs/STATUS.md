@@ -298,6 +298,19 @@ race there). An overflow of the 32-entry pending-move list was ruled out for cle
 used twice in 25 min). Next: the allocator dump at the first `invalid size` (`TTY_BT_DUMP`) to find which
 descriptor carries the bad size. Separately, qp_2 hung at the end of the intro movie (main thread waiting at
 `0x3E84EC` in `0x3C6450`); not yet analysed. Runs now reach the level in ~160 s (intro skipped by CROSS).
+Update (M0.46b, 2026-10-21): **the negative size is written by the game's own release path, for an object whose
+descriptor pointer does not match it.** A per-drain bounds check of the allocator's block descriptors (0x468
+records of 0x80 bytes at `0x2154B4C0`: +8 offset, +0xC size) showed a block whose size goes negative just before
+the first `invalid size` (dg_1, block #894, `0xFFFDAAB0`). A multi-page guard on the whole array with a
+negative-field check (`GOW_GUARD_LEN`, `GOW_GUARD_NEG=80,C`) caught the write in nga_4: lifted code
+`func_00370E48` (tid 1), called by the compactor `func_00372B70+0x950`, stores `desc.size - obj[+0x1C]` into the
+descriptor `obj[+0x44]` points at: `0x5560 - 0x50000 = 0xFFFB5560`. The same 0x50000 subtraction against a
+different small block explains dg_1 (`0x2AAB0 - 0x50000`). So one class of 0x50000-byte resources is released
+against a descriptor that belongs to a smaller block: either the descriptor was reassigned under the object
+(stale pointer) or the object is released twice. Next: trace the release with the object's fields to tell the
+two apart, then find why the compactor selected that object. Reporting 249 MB of local memory
+(`GCM_LOCAL_SIZE=0F900000`, like a console) does not prevent it (ls249_8 corrupted). Everything on this path so
+far is main-thread lifted PPU code; the FIFO torn-read track is separate.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

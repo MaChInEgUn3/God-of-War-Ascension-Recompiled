@@ -527,6 +527,7 @@ Decisão tomada (revisão de um segundo avaliador): caminho **(b)**, HLE no push
   - `TTY_BT` na mensagem do jogo: vem do CopyLocalMemory dele (`0x374A80`, recusa tamanho ≥ 512 MB), chamado pelo esvaziamento da fila (`0x373690`, fila em `0x96E710`). Só o tamanho da entrada está errado; destino e origem são válidos. Empilhar e esvaziar rodam na thread principal.
   - Estouro da lista de pendentes (32 entradas) descartado em rodadas limpas (pico da fila 9). Próximo: dump do alocador no primeiro `invalid size`.
   - Rodadas agora chegam na fase em ~160 s (X pula a abertura; `work/nav_pad_fast.txt`).
+  - **M0.46b (2026-10-21):** quem grava o tamanho negativo é o próprio jogo, em `func_00370E48` (chamada pelo compactador `0x372B70`): grava `desc.size - obj[+0x1C]` no descritor de `obj[+0x44]`, e o descritor pertence a um bloco menor (`0x5560 - 0x50000`). Ou o descritor foi reaproveitado com o objeto ainda apontando para ele, ou o objeto é liberado duas vezes. 249 MB não resolve.
 
 ### Próximos passos imediatos
 0b. **Frente atual:** Ice::Render/GCM (`MemTable entry not found`) e o motivo de o jogo não montar `ENGLISH.PSARC`; depois testar o handshake WWS sob o kernel real.
