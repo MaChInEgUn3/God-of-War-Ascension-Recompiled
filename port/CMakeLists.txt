@@ -179,6 +179,7 @@ endif()
 add_executable(${PROJECT_NAME}
     main.cpp
     stubs.cpp
+    gow_vram_guard.c   # vetoes the VRAM-cache release with nothing resident (see patch_lift.py)
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}

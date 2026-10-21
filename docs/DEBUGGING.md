@@ -247,6 +247,9 @@ Lessons that cost days; keep them.
   ends past limit (`[DESC] bad`). GoW:A: `GOW_GUARD=2154B4C0 GOW_GUARD_LEN=23400 GOW_GUARD_NEG=80,C`,
   `PPU_DESC_CHECK=373690,96B51C,96DDBC,0C034B80`. The release that writes the size is `0x370E48` (object in r4:
   `+0x1C` size, `+0x44` descriptor). `GCM_LOCAL_SIZE=<hex>` overrides the reported local size.
+* **VRAM-cache release guard** (`port/gow_vram_guard.c`, inserted by `scripts/patch_lift.py`): skips a release of
+  `0x370E48` whose descriptor has nothing resident (`desc+0x20 == 0`), marks its side entry not resident and drops it
+  from the LRU; logs `[vram-guard]`. On by default, `GOW_RELEASE_GUARD=0` turns it off (a mitigation, see STATUS M0.46d).
 * **Following a pointer field in a trace**: `PPU_TRACE_DUMP=<fn>,<reg>+<off>,<len>,<hops>` starts at
   `gpr[reg]+off` before the hops, e.g. `370E48,4+0x44,30,1` dumps the descriptor the released object points at.
 * **Two runs at once**: `INST=b` in `work/ab_exe.sh` gives the run its own `/dev_hdd1` (`vfs/cache_b`) and save

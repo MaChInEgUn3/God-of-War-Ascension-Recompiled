@@ -11,7 +11,8 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
 2. Dump your disc and decrypt `EBOOT.BIN` to an ELF (for example `rpcs3 --decrypt`). Put the game tree in
    `local/vfs/PS3_GAME/...`; the archives listed in `ARCHIVES` must be present (`LOCALIZED_ARCHIVES` lists the language ones).
 3. Load and lift: `ppu_loader`, then `ppu_lifter.py <elf> -o local/recompiled --functions ... --hle-stubs ...`
-   (about 50 s, about 190 MB of C++). Regenerate the NID table:
+   (about 50 s, about 190 MB of C++). Then `python scripts/patch_lift.py local/recompiled` inserts the port's
+   function hooks (today: the VRAM-cache release guard in `port/gow_vram_guard.c`; idempotent). Regenerate the NID table:
    `gen_hle_nids.py --all --out local/recompiled/ppu_hle_nids.cpp`. Rerun it whenever the patch adds an HLE function
    (NIDs are computed from the names; GoW:A needs at least `cellVdecQueryAttrEx`/`cellVdecOpenEx`).
    Optional: real MPEG-2 decoding of the menu video needs FFmpeg 9.0 (`-DPS3RECOMP_FFMPEG_RUNTIME=ON` with its headers,
