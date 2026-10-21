@@ -4,10 +4,12 @@ Prerequisites: Windows 10/11, Visual Studio (Windows SDK + vcvars), CMake >= 3.2
 portable LLVM/clang-cl (MSVC `cl` is **not** supported by ps3recomp), SDL2 dev package, Vulkan headers. Keep everything
 local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
 
-1. Clone this repo, and upstream `sp00nznet/ps3recomp` at commit `749182e` (v0.16.0) into `local/tools/ps3recomp`;
-   apply `patches/ps3recomp-gow-m0.patch` with `git apply`. The patch is regenerated against that commit (it was
-   against `a2c2010` before M0.40). Re-run `tools/gen_hle_nids.py --all --out <recompiled>/ppu_hle_nids.cpp` after
-   switching the toolkit: newer versions register more NIDs.
+1. Clone this repo, and upstream `sp00nznet/ps3recomp` at tag `v0.17.0` (commit `a6d76c8`) into `local/tools/ps3recomp`;
+   apply `patches/ps3recomp-gow-m0.patch` with `git apply`. The patch is regenerated against that tag (it was against
+   `749182e`/v0.16.0 until 2026-10-21, and `a2c2010` before M0.40). v0.17.0 already contains our earlier upstream PRs.
+   Configure the port with `-DPORT_GENERATE_HLE_NIDS=ON` so the HLE NID table is generated from the toolkit (v0.17
+   renamed handlers an older lift's table names); otherwise re-run
+   `tools/gen_hle_nids.py --all --out <recompiled>/ppu_hle_nids.cpp` after switching the toolkit.
 2. Dump your disc and decrypt `EBOOT.BIN` to an ELF (for example `rpcs3 --decrypt`). Put the game tree in
    `local/vfs/PS3_GAME/...`; the archives listed in `ARCHIVES` must be present (`LOCALIZED_ARCHIVES` lists the language ones).
 3. Load and lift: `ppu_loader`, then `ppu_lifter.py <elf> -o local/recompiled --functions ... --hle-stubs ...`

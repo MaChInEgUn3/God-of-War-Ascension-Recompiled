@@ -324,6 +324,15 @@ picks it again. Being checked with a dump of the descriptor at each release
 HLE wrote a word past the 8-byte `sys_lwcond_t`, clobbering the field after every lwcond (the sound-stream
 callback slot in GoW:A: all the `bctr to NULL from func_00606898` lines). It did not affect the corruption.
 Static notes on the defragmenter: `analysis/vram_defrag_re.md`.
+Update (M0.46d/M0.47, 2026-10-21): the release with nothing resident is confirmed (rcb_6: `desc+0x20 == 0` at the
+first bad release; 0 of ~900 healthy releases have it). Mitigation: `port/gow_vram_guard.c` (inserted by
+`scripts/patch_lift.py`, on by default, `GOW_RELEASE_GUARD=0` off) skips such a release and drops the object from the
+LRU. A/B over complete 18-minute runs: guard on 0 corrupted of 9 (vetoes fired in 2), guard off 1 of 8; a 224 MB
+local-memory stress run did not raise the rate. **Toolkit base moved to ps3recomp v0.17.0**, which contains our eight
+earlier PRs. v0.17.0 as released ran GoW:A several times slower: `mfc_for()` called `getenv("SPU_PCSAMPLE")` on every
+MFC channel op while it was unset (Windows CRT environment lock), putting SPU policy modules at 74% time in channel
+writes (v0.16: 21%). Fixed in our patch and sent upstream (ps3recomp PR #442); with it v0.17 matches v0.16 in the level
+(game frame ~2520-2820 at 1080 s vs ~2580) and three runs were clean. A player launcher is in `launcher/`.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

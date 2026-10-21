@@ -83,11 +83,17 @@ add_subdirectory("${PS3RECOMP_DIR}" "${CMAKE_BINARY_DIR}/ps3recomp_sdk"
 # Maps each firmware import NID onto the handler in the runtime that answers
 # it. A port may keep a hand-curated one beside its lift; otherwise generate
 # the canonical every-module table, which is what the toolkit's own boot
-# harness uses.
-if(EXISTS "${RECOMP_DIR}/ppu_hle_nids.cpp")
+# harness uses. PORT_GENERATE_HLE_NIDS=ON generates it even when the lift has
+# one: a toolkit newer than the lift (build_v017 against the v015 lift) may have
+# renamed handlers the lift's table still names.
+option(PORT_GENERATE_HLE_NIDS "Generate the NID table from PS3RECOMP_DIR, ignoring RECOMP_DIR's" OFF)
+if(NOT PORT_GENERATE_HLE_NIDS AND EXISTS "${RECOMP_DIR}/ppu_hle_nids.cpp")
     set(HLE_NID_TABLE "${RECOMP_DIR}/ppu_hle_nids.cpp")
     message(STATUS "HLE NID table:   ${HLE_NID_TABLE}")
 else()
+    # The lift's own table (if any) came in with the *.cpp glob; it must not
+    # link beside the generated one.
+    list(FILTER RECOMP_SOURCES EXCLUDE REGEX "/ppu_hle_nids\\.cpp$")
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     set(HLE_NID_TABLE "${CMAKE_CURRENT_BINARY_DIR}/ppu_hle_nids.cpp")
     add_custom_command(
