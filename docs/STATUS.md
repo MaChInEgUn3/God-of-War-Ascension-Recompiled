@@ -371,13 +371,14 @@ re-run dispatch itself did not measurably beat the default once level entry is c
 keep-running poll answer is mapped but not solved: once answered "keep running", GoW:A's WWS manager reaches its
 pipeline loop at LS 0x1708 (waiting for the store stage, LS 0x12F0) with job 0 marked running that never completes,
 and that loop has no poll, so no later answer can reach it.
-Narrowed the same night: under keep-running the SPU stack drifts down by 0x180 bytes (the frame size of an EDGE
-fragment, image 71ab60) per job, because the module restores r1 only at its own entry (from LS 0x15C0) and some job
-or fragment return path in our runtime does not unwind that frame. After ~360 jobs the stack reaches the EDGE
-buffers (a back-chain walk in the saved LS shows 363 such frames from 0x3F560 down to 0x1D360), a fragment staged
-there is overwritten or lands at a never-lifted placement, the job stops mid-run and the manager waits for it
-forever. The default dispatch hides the leak because every module run ends after one job and restarts the stack.
-Next: find the return path that leaks the frame; that is what blocks back-to-back jobs.
+Narrowed the same night: under keep-running the WWS manager pipelines jobs, and the EDGE geometry job (module
+d93503647dd8, call at LS 0xD1E0) then calls an EDGE code fragment staged at a placement the default dispatch never
+uses (0x1D1A0, code present). No lift exists there and that dispatch path has no interpreter fallback
+(`SPU_INTERP_UNLIFTED` covers a different site), so the job stops mid-run and the manager waits for it forever.
+In one run the saved LS also showed ~363 frames of 0x180 bytes (an EDGE fragment's frame size) stacked inside
+the job down into the EDGE buffers; the policy-side stack pointer stays constant between jobs, so these build up
+inside one job, likely after the aborted calls. Next: an interpreter fallback at that dispatch site, or lifting
+the second set of fragment placements from keep-running logs, then re-test the keep-running answer.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

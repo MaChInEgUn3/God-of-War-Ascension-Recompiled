@@ -4545,7 +4545,7 @@ index 1a393fd..4966953 100644
  }
  static void sys_lwcond_destroy(ppu_context* ctx)    { ctx->gpr[3] = 0; }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b..b61f832 100644
+index 59f5e4b..fdceb00 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -27,7 +27,7 @@
@@ -5318,7 +5318,7 @@ index 59f5e4b..b61f832 100644
              if (img) {
                  if (ctx->resident_ovl != img) {
                      ctx->resident_ovl = img;
-@@ -2665,6 +3023,35 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2665,6 +3023,42 @@ void spu_indirect_branch(spu_context* ctx)
              fflush(stderr);
          }
      }
@@ -5333,19 +5333,26 @@ index 59f5e4b..b61f832 100644
 +          lr >= 0x4000 && lr < 0x3E000) {
 +          static int _a[256];
 +          const uint8_t* L = ctx->ls;
-+          if (_a[L[0x1DF]]++ < 60)
-+              fprintf(stderr, "[wwsapi] wid=%u call pc=0x%05X from=0x%05X r3=%08X.%08X r4=%08X r5=%08X r6=%08X r7=%08X\n",
-+                      L[0x1DF], p, lr, ctx->gpr[3]._u32[0], ctx->gpr[3]._u32[1], ctx->gpr[4]._u32[0],
++          /* ...and past the first 60, only calls whose r1 differs from the last call
++           * from the same site: a stack that drifts between jobs shows up as a step. */
++          static uint32_t s_r1[256][64], s_from[256][64]; static int s_drift;
++          const unsigned w = L[0x1DF], k = (lr >> 2) & 63, r1 = ctx->gpr[1]._u32[0] & SPU_LS_MASK;
++          const int drift = s_from[w][k] == lr && s_r1[w][k] != r1;
++          s_from[w][k] = lr; s_r1[w][k] = r1;
++          if (_a[w]++ < 60 || (drift && s_drift++ < 2000))
++              fprintf(stderr, "[wwsapi] wid=%u r1=0x%05X call pc=0x%05X from=0x%05X r3=%08X.%08X r4=%08X r5=%08X r6=%08X r7=%08X\n",
++                      L[0x1DF], ctx->gpr[1]._u32[0] & SPU_LS_MASK, p, lr, ctx->gpr[3]._u32[0], ctx->gpr[3]._u32[1], ctx->gpr[4]._u32[0],
 +                      ctx->gpr[5]._u32[0], ctx->gpr[6]._u32[0], ctx->gpr[7]._u32[0]);
 +      }
 +      if (s_wj && ctx->image_id == 10 && ctx->policy_mode && p >= 0x4000 && p < 0x3E000 && lr < 0x4000) {
 +          static int _n[256];
 +          const uint8_t* L = ctx->ls;
 +          if (_n[L[0x1DF]]++ < 40) {
-+              fprintf(stderr, "[wwsjob] wid=%u enter pc=0x%05X lr=0x%05X r3=%08X r4=%08X r5=%08X "
++              fprintf(stderr, "[wwsjob] wid=%u r1=0x%05X enter pc=0x%05X lr=0x%05X r3=%08X r4=%08X r5=%08X "
 +                      "code=%02X%02X%02X%02X%02X%02X%02X%02X loadJob@12D0=%02X%02X%02X%02X runJob@12E0=%02X%02X%02X%02X "
 +                      "state@12A0=%02X%02X%02X%02X\n",
-+                      L[0x1DF], p, lr, ctx->gpr[3]._u32[0], ctx->gpr[4]._u32[0], ctx->gpr[5]._u32[0],
++                      L[0x1DF], ctx->gpr[1]._u32[0] & SPU_LS_MASK, p, lr, ctx->gpr[3]._u32[0],
++                      ctx->gpr[4]._u32[0], ctx->gpr[5]._u32[0],
 +                      L[p], L[p+1], L[p+2], L[p+3], L[p+4], L[p+5], L[p+6], L[p+7],
 +                      L[0x12D0], L[0x12D1], L[0x12D2], L[0x12D3], L[0x12E0], L[0x12E1], L[0x12E2], L[0x12E3],
 +                      L[0x12A0], L[0x12A1], L[0x12A2], L[0x12A3]);
@@ -5354,7 +5361,7 @@ index 59f5e4b..b61f832 100644
      /* No lifted function at this PC: it may be RUNTIME-GENERATED code (the
       * WWS jobmanager writes a save/restore stub above its static
       * image and calls it). Interpret the live LS bytes; on success the next
-@@ -2679,9 +3066,16 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2679,9 +3073,16 @@ void spu_indirect_branch(spu_context* ctx)
        static int _bt0[BT0_MAX_IMG];
        unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
                       ? (unsigned)ctx->image_id : 0;
