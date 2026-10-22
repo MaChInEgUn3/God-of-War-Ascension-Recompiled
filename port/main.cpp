@@ -661,6 +661,10 @@ int main(int argc, char** argv)
      * lock they skew exactly the runs that measure timing. Set PS3_VERBOSE=1 to
      * get them back. */
     if (!getenv("PS3_VERBOSE")) _putenv_s("PS3_VERBOSE", "0");
+    /* PPU_TRACE_ADDRS=0: the lift instruments every guest function entry
+     * (PPU_TRACE_FUNCS=all); with no filter the first 4000 entries print an [FN]
+     * line each. Filter to address 0 (none) unless a trace is asked for. */
+    if (!getenv("PPU_TRACE_ADDRS")) _putenv_s("PPU_TRACE_ADDRS", "0");
     /* SPURS_PM_ARG_BE=1: hand the wwsjob PM its 64-bit workload argument as the
      * hardware does (high half in word 0). With the low half in word 0 the PM
      * wrote status rows into BatchJobList's list 1 and the level stopped on

@@ -18,7 +18,7 @@ Lessons that cost days; keep them.
 * **Editing gotcha**: in tool-driven Python heredocs, an escaped newline inside a C string can turn into a real
   newline. Compile after every such edit.
 * **Run-time selectable tracer**: lift once with `PPU_TRACE_FUNCS=all`, then pick functions per run with
-  `PPU_TRACE_ADDRS=3c93e8,2a0000-2b0000` (hex, ranges allowed) and cap with `PPU_TRACE_MAX`. Each line shows
+  `PPU_TRACE_ADDRS=3c93e8,2a0000-2b0000` (hex, ranges allowed) and cap with `PPU_TRACE_MAX`. The GoW:A port defaults `PPU_TRACE_ADDRS=0` (trace nothing). Each line shows
   `tid`, `r3..r7` and `lr`. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
   so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.

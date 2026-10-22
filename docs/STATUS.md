@@ -395,6 +395,13 @@ off-in-high-range VRAM guard, both fixed above. With them fixed: 7 runs of 1080 
 level rate 1.18-1.25 vs 1.10-1.18 game frames/s with two threads (~+6%), with the order holding when the two run
 instances are swapped. The faster configuration fires the VRAM guard veto in more runs (7/7 vs 3/7), with 0
 `invalid size`: the mitigation is doing its job. `SPURS_KERN_SPUS=0,1` goes back to two threads.
+Per-job dispatch cost, first pass (profile with the new default, 3396 samples from 250 s): on the EDGE kernel
+thread ~21% is dispatch (`spu_indirect_branch` 7, `spu_lookup` 7, `spu_task_launch_check` 4, `spu_drain_call` 3);
+on the PPU main thread `ppu_trace_enter` is 5% (the lift instruments all 21k guest functions). Toolkit now caches
+`spu_lookup` results per thread (misses too, invalidated by new registrations) and rejects in `ppu_trace_enter`
+before any other work; the port defaults `PPU_TRACE_ADDRS=0` (without it, 4000 `[FN]` lines per boot). Measured
+neutral: new 1.18-1.20 vs old 1.14-1.19 on one instance, 1.12-1.18 vs 1.15-1.17 swapped (+1% pooled, inside the
+noise), 12 runs, 0 corrupted. Kept as clean-ups. Instance A runs ~2% faster than B, so A/B pairs must swap.
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
