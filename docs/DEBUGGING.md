@@ -80,7 +80,9 @@ Lessons that cost days; keep them.
   `[ea-get]` line carrying the 16 source bytes as they are in guest memory at that moment (a report slot's
   `{timer, value, zero}`). `SPU_NOLIFT_IMG=<lo>[-<hi>][,...]` (with `SPU_INTERP_UNLIFTED=1`) drops the lifted code of
   those SPU images so they run in the interpreter -- an A/B for one job module (GoW:A's EDGE geometry module is image
-  225, `jobmod_d93503647dd8`; its streamed fragments are 300-339). The interpreter shares `spu_helpers.h`, so it does not
+  225, `jobmod_d93503647dd8`; its streamed fragments are 300-339). `SPU_INTERP_UNLIFTED=1` also catches a
+  branch into LS code that has no lift at all (after the self-modifying-code microstep fails) and interprets it,
+  logging `interpreting unlifted LS <addr> (lr ...)`, instead of halting the SPU. The interpreter shares `spu_helpers.h`, so it does not
   rule out a helper bug (M0.36 was exactly that: host NaN semantics in the float helpers).
 * **What a job reads, and which way it branches** (M0.36):
   * `SPU_DMA_EA_T0=<s>` keeps `SPU_DMA_EA` (and the knobs below) silent for s seconds; `SPU_DMA_EA_PC=<hex>` keeps

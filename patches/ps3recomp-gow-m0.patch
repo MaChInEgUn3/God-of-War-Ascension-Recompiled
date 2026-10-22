@@ -4545,7 +4545,7 @@ index 1a393fd..4966953 100644
  }
  static void sys_lwcond_destroy(ppu_context* ctx)    { ctx->gpr[3] = 0; }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b..fdceb00 100644
+index 59f5e4b..ff3d7bc 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -27,7 +27,7 @@
@@ -5318,7 +5318,7 @@ index 59f5e4b..fdceb00 100644
              if (img) {
                  if (ctx->resident_ovl != img) {
                      ctx->resident_ovl = img;
-@@ -2665,6 +3023,42 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2665,12 +3023,65 @@ void spu_indirect_branch(spu_context* ctx)
              fflush(stderr);
          }
      }
@@ -5361,7 +5361,30 @@ index 59f5e4b..fdceb00 100644
      /* No lifted function at this PC: it may be RUNTIME-GENERATED code (the
       * WWS jobmanager writes a save/restore stub above its static
       * image and calls it). Interpret the live LS bytes; on success the next
-@@ -2679,9 +3073,16 @@ void spu_indirect_branch(spu_context* ctx)
+      * branch re-enters lifted code via the trampoline. */
+     if (spu_smc_microstep(ctx))
+         return;
++    /* SPU_INTERP_UNLIFTED=1 covers this site too: code staged at a placement no
++     * lift saw (GoW:A's EDGE fragments land at a second set of LS addresses when
++     * the WWS manager pipelines jobs) runs in the interpreter, which rejoins the
++     * compiled path at the next lifted address, instead of ending the job. */
++    { const uint32_t p = ctx->pc & SPU_LS_MASK;
++      const uint32_t w0 = ((uint32_t)ctx->ls[p] << 24) | ((uint32_t)ctx->ls[p+1] << 16) |
++                          ((uint32_t)ctx->ls[p+2] << 8) | ctx->ls[p+3];
++      static int s_iu = -1;
++      if (s_iu < 0) s_iu = getenv("SPU_INTERP_UNLIFTED") ? 1 : 0;
++      if (s_iu && w0) {
++          static int _n = 0;
++          if (PS3_LOG_FIRST(_n, 8))
++              fprintf(stderr, "[spu] img=%d interpreting unlifted LS 0x%05X (lr 0x%05X)\n",
++                      ctx->image_id, p, ctx->gpr[0]._u32[0] & SPU_LS_MASK);
++          spu_interp_run(ctx, p);
++          return;
++      } }
+     /* Cap the unresolved-branch log PER IMAGE: a global cap let one noisy
+      * image (the FMOD mixer's overlay calls) exhaust it and silently hide
+      * every other image's misses -- LBP's loading jobs skipped their command
+@@ -2679,9 +3090,16 @@ void spu_indirect_branch(spu_context* ctx)
        static int _bt0[BT0_MAX_IMG];
        unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
                       ? (unsigned)ctx->image_id : 0;

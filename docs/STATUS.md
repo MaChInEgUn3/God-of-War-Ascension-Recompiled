@@ -383,6 +383,13 @@ Some stops resolve by themselves. Open question: is the dependency real (through
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.
 
+Update (M0.51, 2026-10-22): **the interpreter fallback now also covers that dispatch site** (toolkit: with
+`SPU_INTERP_UNLIFTED=1`, a branch to an address with no lift, after the self-modifying-code microstep fails, runs the
+live LS code in the interpreter and logs `interpreting unlifted LS ...`). Under keep-running the 0x1D1A0 fragment
+is now interpreted instead of aborting the job, yet the run still stops at frame ~164 with the EDGE workload
+(wid 15) in the same pipeline loop, so the missing lift was a symptom, not the cause. `[wwsapi]`/`[wwsjob]` also
+log r1 now (after the first 60 lines per workload, only calls whose r1 moved). Keep-running stays off and open.
+
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
 
