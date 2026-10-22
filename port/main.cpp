@@ -647,14 +647,14 @@ int main(int argc, char** argv)
      * Sharing two threads, the free-running audio workload took ~57% of one and the
      * EDGE jobs waited behind it. Level, frame split from PS3_POLLTOP (two runs each):
      * main-thread wait 458-483 -> 389-390 ms/frame, game frames ~80-85 -> ~100 per
-     * minute. NOT the default: 3 of 8 level runs with it clearly corrupted guest
-     * state between 510 and 930 s (one with no other knob, two with experimental
-     * knobs on top; a PPU thread calls through garbage pointers, an EDGE policy run
-     * sticks, the frame counter is overwritten) and 1 more is ambiguous; 0 of 8 runs
-     * with two threads did. The gain is the third thread, not SPU 5: 0,1,2 is as
-     * fast (394-431 ms/frame) and 0,5 is as slow as two threads; 0,1,2 corrupted 2
-     * of 8 runs and 0,5 1 of 3, so it is a three-thread race, not the SPU-5 thread.
-     * Opt in with SPURS_KERN_SPUS=0,1,2 until the cause is found. */
+     * minute. It used to corrupt 3 of 8 level runs between 510 and 930 s; those
+     * were the RSX FIFO park race (SPU_PUT_HEAD_LAST below) and the VRAM guard
+     * being off for high-range descriptor tables, which the extra speed exposed
+     * more often. With both fixed: 7 runs of 1080 s, 0 corrupted, level rate
+     * (analysis/level_rate.py) 1.18-1.25 vs 1.10-1.18 game frames/s with two
+     * threads, the same order with the two instances swapped. The default now.
+     * SPURS_KERN_SPUS=0,1 (or SPURS_KERN_THREADS=2 with no SPUS) goes back. */
+    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,5");
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE

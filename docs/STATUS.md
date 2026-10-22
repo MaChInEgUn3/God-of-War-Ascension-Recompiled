@@ -389,6 +389,12 @@ live LS code in the interpreter and logs `interpreting unlifted LS ...`). Under 
 is now interpreted instead of aborting the job, yet the run still stops at frame ~164 with the EDGE workload
 (wid 15) in the same pipeline loop, so the missing lift was a symptom, not the cause. `[wwsapi]`/`[wwsjob]` also
 log r1 now (after the first 60 lines per workload, only calls whose r1 moved). Keep-running stays off and open.
+**The audio workload now has its own kernel thread by default** (`SPURS_KERN_SPUS=0,1,5`, port `main.cpp`). It was
+opt-in because 3 of 8 runs with it corrupted guest state; those turned out to be the FIFO park race and the
+off-in-high-range VRAM guard, both fixed above. With them fixed: 7 runs of 1080 s, 0 corrupted, 0 freezes,
+level rate 1.18-1.25 vs 1.10-1.18 game frames/s with two threads (~+6%), with the order holding when the two run
+instances are swapped. The faster configuration fires the VRAM guard veto in more runs (7/7 vs 3/7), with 0
+`invalid size`: the mitigation is doing its job. `SPURS_KERN_SPUS=0,1` goes back to two threads.
 
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.

@@ -130,7 +130,7 @@ Lessons that cost days; keep them.
 * **SPURS kernel pacing**: `SPURS_PASS_SLEEP=<ms>` (default 1) is the pause between kernel passes;
   `SPURS_PASS_GREEDY=1` (GoW:A port default) skips it after a pass that found work; `SPURS_IDLE_MAX=<n>` caps the
   idle back-off (log2 passes, default 4).
-  `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default 2) runs n host kernel threads per instance, with a per-wid
+  `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default: `SPURS_KERN_SPUS=0,1,5`, i.e. 3 threads with audio on SPU 5) runs n host kernel threads per instance, with a per-wid
   claim; thread k plays SPU k and skips workloads whose priority on SPU k is 0 when another thread may run them,
   before it consumes their readyCount or signal bit (`priority per SPU` is printed at registration). `SPURS_KERN_SPUS=<a,b,...>` sets the SPU each thread plays (and the thread count); each thread
   visits workloads in its SPU's priority order. `j<n>` in `[pm-prof]` counts job-code entries per wid;
