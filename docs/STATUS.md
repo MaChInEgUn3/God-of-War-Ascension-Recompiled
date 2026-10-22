@@ -431,7 +431,28 @@ engine's own submit point flush first, so all other backend work still sees ever
   compare different scenes, but they had the same order. Absolute numbers vary with the scene: 2.09 with batching
   off in one run is scene, not code.
 - 8 runs: no hang, no `invalid size`, no BRANCH-TO-0. The vram-guard trips are the same "release skipped" kind with
-  batching on or off. The frame dumps are correct.
+  batching on or off. Some frame dumps show texture garbage, with batching on or off (see the open bug below).
+Update (M0.54, 2026-10-22): **the rest of the per-operation waits go into the batch, and the GPU stops being
+the limit.** Depth snapshots copy through a persistent device-local buffer that is recorded into the open batch.
+Texture uploads stage through a 64 MB ring and record a buffer-to-image copy. Colour and depth/stencil clears
+record too.
+- GPU wait per 20 s in the level: 8.4 s with draws batched, 5.6 s with snapshots and uploads batched, 2.9 s with
+  clears batched. What is left is readbacks (~0.6k x 2.8 ms) and the present, which need the result.
+- Snapshots and uploads, A/B against draw batching alone (all 8 runs entered at 240 s): 2.097 vs 1.974 mean game
+  frames/s (+6%). They won 3 of 4 pairs; one pair was reversed.
+- Clears, A/B on the three pairs with matched entries: 1.394 vs 1.372, 1.620 vs 1.596 and 1.619 vs 1.602
+  (+1.5%).
+- Halving the GPU wait again moved frames by ~1.5%, so the frame is now bound elsewhere (the CPU side: SPU jobs and
+  the main thread). No hang, `invalid size` or BRANCH-TO-0 in 16 runs. The texture garbage below appears at the
+  same rate with and without these changes.
+
+**Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
+looks like texels read from memory that does not hold the texture (yet). Examples: `vos_1` f_08400 with batching
+off, `ubn_2` f_09600-f_11400, and before the M0.51/M0.52 toolkit changes `rge_1`/`rge_2` f_06600 and `rg_1` f_07200
+(the worst case, which also hits the HUD). So it is older than this work and varies run to run. A cheap detector over
+the dumps: the share of pixels whose colour differs from the pixel 8 to the right with a large chroma change
+(> 90). That share is about 0.002-0.006 in clean level frames and 0.012-0.05 in garbage ones; menu frames give
+false positives.
 The port turns it on (`main.cpp`); `VK_DRAW_BATCH=0` goes back to a submission per draw. Next in the same timeline:
 depth snapshots (527 x 4.8 ms) and texture uploads (2992 x 0.35 ms) still submit and wait on their own.
 
