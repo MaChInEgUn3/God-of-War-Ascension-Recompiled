@@ -270,6 +270,12 @@ Lessons that cost days; keep them.
   overlay and dump r0-r15 once per stuck run. `SPURS_POLL_SELECT=1` answers selectWorkload polls with a selection
   (own wid while productive); it deadlocks GoW:A on the 2-thread kernel, so it is only for scheduler experiments.
   `[vram-guard-underflow]` counts releases the VRAM guard refused because the block size would go negative.
+  The VRAM descriptor table sits at 0x2154B4C0 or 0x8154B4C0 depending on the run: `TTY_BT_DUMP`'s `@` pointer
+  form skips targets at or above 0x40000000, so dump 0x8154B4C0 in explicit `<ea>:2000` chunks. `[pm-hang]` also
+  prints the run's poll count, last answer, live readyCount/contention and a loop-pc histogram (2000 samples).
+* **Level frame rate**: `python repo/analysis/level_rate.py run.log...` -- game frames per second over 540 s starting
+  60 s after the level load burst. Level entry time varies by run (120-330 s on the fast route), so fixed windows
+  such as 300-1080 s mix loading into the score.
 * **Faster runs**: `work/ab_exe.sh` reads the pad script from `NAV_PAD` (default `work/nav_pad_fast.txt`: CROSS
   from 40 s skips the intro movie, then Continue Game) -- the level is reached at ~160 s instead of ~420 s.
   `work/nav_pad_slow.txt` is the old schedule. `PPU_TRACE_ADDRS`/`PPU_TRACE_MAX` pass through to the run.

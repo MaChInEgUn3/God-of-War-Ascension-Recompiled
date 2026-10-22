@@ -360,6 +360,17 @@ run. Upstream v0.17's own scheduler (one coordinator, one persistent worker per 
 by maximum contention) avoids that; our rebase kept our older synchronous kernel instead. Moving to that model, with
 the audio workload alone on SPU 5, is the next step. The audio workload (wid 8) is real work: 8 jobs per audio block,
 ~0.5 ms each, ~80% of one kernel thread.
+Update (M0.50, 2026-10-22): **the VRAM guard was silently off in about half the runs.** The game puts its VRAM
+descriptor table at 0x2154B4C0 in some runs and at 0x8154B4C0 in others; `gow_vram_guard.c` returned early for
+addresses at or above 0x40000000, so in the high-range runs nothing was checked (that is why `invalid size` appeared
+with no guard line under the faster dispatch). The range check is gone (the whole 32-bit guest space is backed). With
+it, 8 runs of the re-run dispatch had 30 vetoes, 0 `invalid size`, 0 freezes (before: 3 corrupted of 7). The
+re-run dispatch itself did not measurably beat the default once level entry is controlled for
+(`analysis/level_rate.py`: game frames per second over 540 s from 60 s after entering the level; base ~1.06, park fix
+~1.13, park fix + re-run ~1.13, with runs clustering at ~1.0 or ~1.2 by scene), so it stays off. The
+keep-running poll answer is mapped but not solved: once answered "keep running", GoW:A's WWS manager reaches its
+pipeline loop at LS 0x1708 (waiting for the store stage, LS 0x12F0) with job 0 marked running that never completes,
+and that loop has no poll, so no later answer can reach it.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

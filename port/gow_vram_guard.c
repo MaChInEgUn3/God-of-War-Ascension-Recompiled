@@ -41,9 +41,13 @@ int gow_release_veto(uint32_t obj)
 {
     static int enabled = -1;
     if (enabled < 0) { const char* e = getenv("GOW_RELEASE_GUARD"); enabled = !(e && *e == '0'); }
-    if (!enabled || !vm_base || !obj || obj >= 0x40000000u) return 0;
+    /* The whole 32-bit guest space is backed, and the game puts these tables in
+     * either the 0x2xxxxxxx or the 0x8xxxxxxx range from run to run (descriptors
+     * at 0x2154B4C0 or 0x8154B4C0): a range check here silently disabled the
+     * guard in the runs that used the high one. */
+    if (!enabled || !vm_base || !obj) return 0;
     uint32_t desc = rd32(obj + 0x44);
-    if (!desc || desc >= 0x40000000u) return 0;
+    if (!desc) return 0;
     /* Also refuse any release that would drive the block size negative (size below
      * the object's evictable size), whatever path got there: a faster SPU
      * configuration produced 'invalid size' with no veto of the check below. */
