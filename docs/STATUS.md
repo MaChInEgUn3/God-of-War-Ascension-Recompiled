@@ -419,6 +419,22 @@ This also explains why the re-run dispatch gave +65% EDGE job entries per minute
 cannot help while the ring drains at one fenced draw at a time. Next: batch draws into one command buffer
 (per-draw vertex/index/uniform ring slices and descriptor sets, flush before any other backend operation).
 
+Update (M0.53, 2026-10-22): **draw batching, on by default.** `VK_DRAW_BATCH=1` records engine draws into one
+command buffer: each draw takes slices of three ring buffers (vertices 64 MB, indices 16 MB, constants 32 MB) and a
+descriptor set from a pool, with a full memory barrier between draws in place of hazard tracking. Up to
+`VK_DRAW_BATCH_MAX` (default 512) draws go per submission. `vk_begin`, every object destroy, the present and the
+engine's own submit point flush first, so all other backend work still sees everything before it complete.
+- Timeline (20 s in the level): GPU wait 13.1 s → 8.4 s; the sync-submit wait per flip 228 → 97 ms; flip median
+  264 → 190 ms.
+- A/B, same exe, instances swapped halfway. In the two pairs with matched level entries (instance B, the slower
+  one): 1.593 vs 1.141 and 2.089 vs 1.852 game frames/s. The other two pairs entered at different times, so they
+  compare different scenes, but they had the same order. Absolute numbers vary with the scene: 2.09 with batching
+  off in one run is scene, not code.
+- 8 runs: no hang, no `invalid size`, no BRANCH-TO-0. The vram-guard trips are the same "release skipped" kind with
+  batching on or off. The frame dumps are correct.
+The port turns it on (`main.cpp`); `VK_DRAW_BATCH=0` goes back to a submission per draw. Next in the same timeline:
+depth snapshots (527 x 4.8 ms) and texture uploads (2992 x 0.35 ms) still submit and wait on their own.
+
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
 

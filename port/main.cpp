@@ -665,6 +665,13 @@ int main(int argc, char** argv)
      * (PPU_TRACE_FUNCS=all); with no filter the first 4000 entries print an [FN]
      * line each. Filter to address 0 (none) unless a trace is asked for. */
     if (!getenv("PPU_TRACE_ADDRS")) _putenv_s("PPU_TRACE_ADDRS", "0");
+    /* VK_DRAW_BATCH=1: record draws into one submission instead of a submit and
+     * fence wait per draw. In the first level the per-draw wait held the FIFO
+     * walker on the GPU 46% of the time and the SPU geometry jobs on RSX ring
+     * space. A/B with matched scene entries (instance B): 1.593 vs 1.141 and
+     * 2.089 vs 1.852 game frames/s, the same order in the other two pairs, no
+     * hang or bad frame in 8 runs. VK_DRAW_BATCH=0 goes back. */
+    if (!getenv("VK_DRAW_BATCH")) _putenv_s("VK_DRAW_BATCH", "1");
     /* SPURS_PM_ARG_BE=1: hand the wwsjob PM its 64-bit workload argument as the
      * hardware does (high half in word 0). With the low half in word 0 the PM
      * wrote status rows into BatchJobList's list 1 and the level stopped on
