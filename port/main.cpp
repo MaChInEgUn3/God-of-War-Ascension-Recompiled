@@ -666,6 +666,15 @@ int main(int argc, char** argv)
      * wrote status rows into BatchJobList's list 1 and the level stopped on
      * "BATCHJOB: Waiting for batch job list 1 to finish (22/21)". */
     if (!getenv("SPURS_PM_ARG_BE")) _putenv_s("SPURS_PM_ARG_BE", "1");
+    /* SPU_PUT_HEAD_LAST=1: an EDGE job releases an RSX FIFO park (a self-JUMP)
+     * with the same SPU PUT that carries the new segment, park word first. With
+     * a plain front-to-back copy the walker saw the release and read on into
+     * words not written yet (valid up to +0x24, stale at +0x28), decoded junk,
+     * hit a JUMP to unmapped IO and stopped: the RSX ring label never advanced
+     * and the EDGE job waiting for ring space froze the game (3 of 12 runs).
+     * Storing the head last, behind a store fence, publishes the release after
+     * the segment. 0 restores the plain copy. */
+    if (!getenv("SPU_PUT_HEAD_LAST")) _putenv_s("SPU_PUT_HEAD_LAST", "1");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

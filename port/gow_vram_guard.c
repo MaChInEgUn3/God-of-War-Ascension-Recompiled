@@ -43,7 +43,12 @@ int gow_release_veto(uint32_t obj)
     if (enabled < 0) { const char* e = getenv("GOW_RELEASE_GUARD"); enabled = !(e && *e == '0'); }
     if (!enabled || !vm_base || !obj || obj >= 0x40000000u) return 0;
     uint32_t desc = rd32(obj + 0x44);
-    if (!desc || desc >= 0x40000000u || rd32(desc + 0x20) != 0) return 0;
+    if (!desc || desc >= 0x40000000u) return 0;
+    /* Also refuse any release that would drive the block size negative (size below
+     * the object's evictable size), whatever path got there: a faster SPU
+     * configuration produced 'invalid size' with no veto of the check below. */
+    const int underflow = rd32(desc + 0xC) < rd32(obj + 0x1C);
+    if (rd32(desc + 0x20) != 0 && !underflow) return 0;
 
     uint32_t side_tab = rd32(SIDE_TABLE_PTR), desc_base = rd32(DESC_BASE_PTR);
     if (side_tab && desc >= desc_base) {
@@ -51,9 +56,14 @@ int gow_release_veto(uint32_t obj)
         wr16(side + 2, (uint16_t)(rd16(side + 2) & ~0x6000u));   /* not resident */
         wr32(side + 8, 0);                                       /* out of the LRU */
     }
-    static int n = 0;
-    if (n++ < 8)
-        fprintf(stderr, "[vram-guard] release of obj 0x%08X skipped: desc 0x%08X (size 0x%X) has nothing "
-                "resident (obj evictable 0x%X)\n", obj, desc, rd32(desc + 0xC), rd32(obj + 0x1C));
+    static int n = 0, nu = 0;
+    if (!underflow || rd32(desc + 0x20) == 0) {
+        if (n++ < 8)
+            fprintf(stderr, "[vram-guard] release of obj 0x%08X skipped: desc 0x%08X (size 0x%X) has nothing "
+                    "resident (obj evictable 0x%X)\n", obj, desc, rd32(desc + 0xC), rd32(obj + 0x1C));
+    } else if (nu++ < 8)
+        fprintf(stderr, "[vram-guard-underflow] release of obj 0x%08X skipped: desc 0x%08X size 0x%X < obj "
+                "evictable 0x%X (resident 0x%X)\n", obj, desc, rd32(desc + 0xC), rd32(obj + 0x1C),
+                rd32(desc + 0x20));
     return 1;
 }

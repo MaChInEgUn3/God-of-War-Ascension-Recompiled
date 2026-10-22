@@ -345,6 +345,21 @@ Three SPU kernel threads (`SPURS_KERN_SPUS=0,1,2`) still hang: the EDGE policy m
 588 s polling for something never delivered (its DMA tags complete) while the game froze. Two kernel threads stay the
 default. One run of the new build froze early (game frame 315, all workloads idle, main waiting in `func_003C6450`
 for a job list), like an earlier intro hang; the other two passed that point.
+Update (M0.49, 2026-10-21 night): **the random freezes are an RSX FIFO park race, fixed.** An EDGE job releases the
+walker's park (a self-JUMP) with the same SPU PUT that carries the new segment, park word first; the walker followed
+the release while the rest of the PUT was still landing (valid to +0x24, stale data at +0x28), decoded junk, met a
+JUMP to unmapped IO and stopped. The RSX ring-space label (0x70000C80) then never advanced and the EDGE job polling it
+(pc 0xC834, overlay 225) held its SPU forever. It killed 3 of 12 baseline runs (including the frame-315 freeze above
+and the 3-thread hang) and every faster configuration. `SPU_PUT_HEAD_LAST=1` (now a port default) stores the PUT's head
+last behind a store fence: 8 runs with it, 0 torn reads, 0 freezes. Faster dispatch tried: re-running a productive
+module at once (`SPURS_PM_RERUN_US=2000`) gave about +8% frames but 2 of 4 runs hit `invalid size` with no guard veto,
+so it stays off; the VRAM guard now also refuses any release that would drive a block size negative
+(`[vram-guard-underflow]`). Answering selectWorkload polls with the module's own wid (`SPURS_POLL_SELECT=1`) deadlocks
+on our synchronous 2-thread kernel: the module keeps one of the two threads while the producers of its list cannot
+run. Upstream v0.17's own scheduler (one coordinator, one persistent worker per SPU with its real SPU number, admission
+by maximum contention) avoids that; our rebase kept our older synchronous kernel instead. Moving to that model, with
+the audio workload alone on SPU 5, is the next step. The audio workload (wid 8) is real work: 8 jobs per audio block,
+~0.5 ms each, ~80% of one kernel thread.
 Some stops resolve by themselves. Open question: is the dependency real (through the hole), or is it an
 emission/arming order the emulation gets wrong? A second pattern (the EDGE PM parked on a job entry, row `0x00130013`)
 is unexplained.

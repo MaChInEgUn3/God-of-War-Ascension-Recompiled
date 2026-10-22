@@ -261,8 +261,15 @@ Lessons that cost days; keep them.
   exe and map in first. Never edit `ab_exe.sh` while runs use it: `sh` reads the script as it goes, and a
   changed file makes the running copy execute garbage (it truncated two logs once). Two game instances use
   ~2 GB each; a full PPU rebuild beside them needs `ninja -j6` (`NINJA_JOBS`), not the default -j14.
-* **SPU PUT ordering experiment**: `SPU_PUT_HEAD_LAST=1` stores the first 16 bytes of every SPU PUT last, behind a
-  store fence (for a FIFO park released by the PUT that also carries its segment). Off by default; untested.
+* **SPU PUT ordering** (`SPU_PUT_HEAD_LAST`, port default 1 since M0.49): the first 16 bytes of every SPU PUT are
+  stored last, behind a store fence. An EDGE job releases an RSX FIFO park with the PUT that carries the segment;
+  a front-to-back copy let the walker follow the release into unwritten words (`[cellGcmSys] FIFO JUMP to unmapped
+  IO ... drain stops here`), and the EDGE job waiting for ring space (pc 0xC834, r5 = RSX label 0x70000C80) froze
+  the game. `0` restores the plain copy.
+* **Stuck policy-module runs**: `[pm-hang]` lines (every 2 s past the threshold) now name the loaded image, task and
+  overlay and dump r0-r15 once per stuck run. `SPURS_POLL_SELECT=1` answers selectWorkload polls with a selection
+  (own wid while productive); it deadlocks GoW:A on the 2-thread kernel, so it is only for scheduler experiments.
+  `[vram-guard-underflow]` counts releases the VRAM guard refused because the block size would go negative.
 * **Faster runs**: `work/ab_exe.sh` reads the pad script from `NAV_PAD` (default `work/nav_pad_fast.txt`: CROSS
   from 40 s skips the intro movie, then Continue Game) -- the level is reached at ~160 s instead of ~420 s.
   `work/nav_pad_slow.txt` is the old schedule. `PPU_TRACE_ADDRS`/`PPU_TRACE_MAX` pass through to the run.
