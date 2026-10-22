@@ -403,6 +403,22 @@ before any other work; the port defaults `PPU_TRACE_ADDRS=0` (without it, 4000 `
 neutral: new 1.18-1.20 vs old 1.14-1.19 on one instance, 1.12-1.18 vs 1.15-1.17 swapped (+1% pooled, inside the
 noise), 12 runs, 0 corrupted. Kept as clean-ups. Instance A runs ~2% faster than B, so A/B pairs must swap.
 
+Update (M0.52, 2026-10-22): **the frame waits on the GPU, one draw at a time.** The chain, measured in the
+level:
+- The main thread waits ~620 ms per game frame for the WWS job lists and works ~500 (`frame_wait.py`).
+- The three kernel threads are only 217% busy of 300 (`[pm-prof]`); the EDGE workloads (wids 15-17, ~1670 jobs
+  per game frame, ~0.58 ms each) spend 15-27% of their time reading the decrementer (`[pm-prof-ch]`: ch8).
+- That read is a backoff: `jobmod_d93503647dd8` function 0xB700 polls a label in main memory by DMA (the RSX
+  ring-space label) and, while there is no room, spins `rdch $ch8` 2400 times (`SPU_DECPC`). Making the read cheap
+  (TSC instead of QPC plus divides) only made it poll more often; the share went up, the wait stayed.
+- The ring frees as the FIFO walker passes its semaphores, and a `PS3_FTRACE` timeline (the Vulkan backend now
+  logs each synchronous submit as a GPU_WAIT span) shows the walker thread blocked on the GPU 66% of the time:
+  `vk_eng_draw` submits and waits on a fence for **every draw** (54,759 draws in 20 s, 168 us each, 46% of the
+  thread), `vk_eng_depth_snapshot` another 11% (375 x 5.8 ms).
+This also explains why the re-run dispatch gave +65% EDGE job entries per minute and 0% frames: more SPU work
+cannot help while the ring drains at one fenced draw at a time. Next: batch draws into one command buffer
+(per-draw vertex/index/uniform ring slices and descriptor sets, flush before any other backend operation).
+
 ## Ruled out
 SPURS HLE vs the real `libsre`; pool base `0x11000000` vs `0x20000000`.
 

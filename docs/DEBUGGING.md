@@ -17,6 +17,7 @@ Lessons that cost days; keep them.
 * **SPURS**: `SPURS_PM_PIPE=1` (WWS pipeline counters; idle runs only first 8 per wid, active runs up to 3000), `SPURS_KEEP_READY=1` (kernel does not consume readyCount), `SPURS_WID_STATS=1` (runs per workload), `SPU_IRQTRACE=1` (SPU interrupts; nested takes dump the runtime-built shim), `SPURS_ZLOG=1` (every Edge Zlib inflate element, raw words), `SPURS_TRACE=1`, `PS3_SCTRACE=1`, `GOW_LLE_DUMP=<s>` (live CellSpurs), `GOW_LLE_WATCH=1`, `PS3_HLE_ARGS=<nid>`.
 * **Editing gotcha**: in tool-driven Python heredocs, an escaped newline inside a C string can turn into a real
   newline. Compile after every such edit.
+* **Who waits for whom (timeline)**: `PS3_FTRACE=<start s>:<seconds>:<path>` records PPU blocking, SPU channel waits, the RSX walker's drains and (Vulkan) every synchronous submit as a GPU_WAIT span (a=3, b = caller RVA; resolve against the link map), then `tools/ftrace_report.py <path>` in the toolkit. `[pm-prof-ch]` (with `SPURS_PM_PROF`) splits each busy workload's channel-read time by channel; `SPU_DECPC=<n>` prints which host return addresses read the decrementer most (a spinning backoff shows as one site).
 * **Run-time selectable tracer**: lift once with `PPU_TRACE_FUNCS=all`, then pick functions per run with
   `PPU_TRACE_ADDRS=3c93e8,2a0000-2b0000` (hex, ranges allowed) and cap with `PPU_TRACE_MAX`. The GoW:A port defaults `PPU_TRACE_ADDRS=0` (trace nothing). Each line shows
   `tid`, `r3..r7` and `lr`. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
