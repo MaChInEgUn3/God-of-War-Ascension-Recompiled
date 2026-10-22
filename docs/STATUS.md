@@ -445,6 +445,22 @@ record too.
 - Halving the GPU wait again moved frames by ~1.5%, so the frame is now bound elsewhere (the CPU side: SPU jobs and
   the main thread). No hang, `invalid size` or BRANCH-TO-0 in 16 runs. The texture garbage below appears at the
   same rate with and without these changes.
+Update (M0.55, 2026-10-22): **a steadier metric, and the batching results re-scored.**
+- The old window [entry+60, entry+600] sometimes still held part of the loading screen. The loading screen counts
+  game frames at ~17/s and gameplay at ~1-2.5/s, so those runs read high. That explains spreads like 2.09 vs 1.14
+  between runs of the same build.
+- `analysis/level_rate.py` now also prints `play` (from the end of the loading screen) and `tail` ([600 s,
+  1080 s], gameplay in every run). Tail per pair, with instances swapped:
+  - draw batching vs off: 1.03/1.15/1.23/1.19 vs 0.74/0.79/0.89/0.89 (+39%, 4 of 4).
+  - snapshots+uploads vs draws only: 0.90/1.29/1.27/1.32 vs 0.89/1.18/1.17/1.19 (+8%, 4 of 4).
+  - clears batched vs not: 0.87/0.94/0.84/1.27 vs 0.85/0.93/0.85/1.26 (+0.7%, noise).
+  - the measuring profilers (`SPURS_PM_PROF`, `GOW_MAIN_PROF`, `PS3_POLLTOP`) off vs on: 1.42/1.36 vs 1.40/1.34
+    (+1.6%). Measurements taken with them on are not skewed by more than that.
+- Decrementer clock: the TSC path gains ~45 us a minute on QPC (0.75 ppm), so it does not distort game timing.
+  `SPU_HOST_NS=qpc` switches back for A/B. The two QPC runs did not reach the part of the level where the texture
+  garbage usually appears, so they say nothing about it either way.
+- Where the level is now: ~1-1.4 game frames/s late in the level (the boss fight), ~1.6 right after loading. The GPU
+  wait is no longer the limit; the CPU side is (SPU job cost and how many host threads run SPU work).
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
 looks like texels read from memory that does not hold the texture (yet). Examples: `vos_1` f_08400 with batching
@@ -452,7 +468,16 @@ off, `ubn_2` f_09600-f_11400, and before the M0.51/M0.52 toolkit changes `rge_1`
 (the worst case, which also hits the HUD). So it is older than this work and varies run to run. A cheap detector over
 the dumps: the share of pixels whose colour differs from the pixel 8 to the right with a large chroma change
 (> 90). That share is about 0.002-0.006 in clean level frames and 0.012-0.05 in garbage ones; menu frames give
-false positives.
+false positives. The noise follows the mesh UVs and comes in blocks: the texture went through the normal
+upload path with the wrong guest bytes.
+- Ruled out:
+  - NV3089 blits sent to the swizzled NV309E destination by the size guess. The title only ever binds context
+    surface `0x313371C3` (SURFACE2D, linear), and routing by that handle never disagreed with the guess in 2 runs.
+  - Textures that sample an old render target by offset with a compressed format or a larger size than the
+    surface: 0 hits in 2 runs (`ENG_ALIAS_DBG`), both of which had garbage.
+- Rate: in runs that reach f_09000, garbage started by then in 1 of 19 runs on the M0.51 builds and in 6 of 22 from
+  the M0.52 build on. That includes a batching-off run as slow as the old ones. The decrementer change (TSC
+  instead of QPC) is the suspected amplifier, under test (`SPU_HOST_NS=qpc`).
 The port turns it on (`main.cpp`); `VK_DRAW_BATCH=0` goes back to a submission per draw. Next in the same timeline:
 depth snapshots (527 x 4.8 ms) and texture uploads (2992 x 0.35 ms) still submit and wait on their own.
 
