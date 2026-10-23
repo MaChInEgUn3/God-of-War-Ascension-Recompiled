@@ -705,6 +705,22 @@ int main(int argc, char** argv)
      * inflates every shorter wait the title makes and throttles the whole
      * thing. POSIX timers are already fine-grained. */
     timeBeginPeriod(1);
+    /* Windows 11 ignores a process's timer resolution request while it has no
+     * visible window (and may run it under EcoQoS). Offscreen, every Sleep(1) of
+     * the SPURS kernel threads took ~15 ms (measured with PS3_FTRACE: 12-16 ms
+     * per pause, 22-75% of each thread's time), so a thread that ran out of work
+     * missed the next EDGE list. Opt out of both. GOW_TIMER_FIX=0 skips it. */
+    { const char* e = getenv("GOW_TIMER_FIX");
+      if (!e || *e != '0') {
+          PROCESS_POWER_THROTTLING_STATE st = {};
+          st.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+          st.ControlMask = PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION |
+                           PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+          st.StateMask = 0;          /* honour the resolution; no execution-speed throttling */
+          if (!SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &st, sizeof st))
+              fprintf(stderr, "[timer] SetProcessInformation(ProcessPowerThrottling) failed: %lu\n",
+                      (unsigned long)GetLastError());
+      } }
     setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: do not lose prints on a kill */
 #endif
 

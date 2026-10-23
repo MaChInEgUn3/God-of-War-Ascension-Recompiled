@@ -524,6 +524,26 @@ stacked on the previous one.
 - Next: the walker's per-draw full barrier (`vk_cmd_after_everything`, ~60 us of GPU per draw) is the next GPU-side
   cost, now that the GPU sometimes runs three batches behind. On the SPU side, EDGE still runs one list at a time.
 
+Update (M0.59, 2026-10-23): **timer resolution, upstream fixes, and an intermittent level hang.**
+- Windows 11 ignores `timeBeginPeriod(1)` for a process with no visible window. Offscreen, each 1 ms pause of the
+  SPURS kernel threads took ~15 ms (PS3_FTRACE: 12-16 ms per pause, 22-75% of a thread's time).
+  - The port now opts out of that throttling (`SetProcessInformation(ProcessPowerThrottling)`); `GOW_TIMER_FIX=0`
+    skips it.
+  - Pauses dropped to ~2 ms and the level is reached at 120-180 s instead of ~240 s.
+  - Steady gameplay barely moved: tail 1.569 vs 1.544 in the one clean pair.
+- Taken from open upstream PRs: #492 (`event_status` updated atomically), #491 (`SPU_IRQWAIT_DIAG`) and #522 (PPU
+  reservation re-checked under the lock-line lock). The triage of all 116 open upstream PRs is a local working
+  note, not in this repo.
+- **Open: an intermittent hang in the level.**
+  - An EDGE job spins in its ring-space backoff (`pc=0xC834`, `r3=0x960`) after the RSX walker stops flipping,
+    then `[pm-hang]` repeats.
+  - Both instances of a pair hang together, because the same pad script brings them to the same scene at the same
+    time. Seen in about 4 of 12 runs this morning, with and without the timer fix.
+  - It did not show in 16 runs with `GOW_CLOCK_WATCH=20` (which names the walker's state at a stall) and
+    `SPU_IRQWAIT_DIAG=1`. Those are cheap, so this is most likely chance (hangs come in pairs).
+  - Next: keep the watchdog on in every run until one is caught.
+- Process Lasso's ProBalance on the test machine can lower the game's priority mid-run. Benchmark with it closed.
+
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
 looks like texels read from memory that does not hold the texture (yet). Examples: `vos_1` f_08400 with batching
 off, `ubn_2` f_09600-f_11400, and before the M0.51/M0.52 toolkit changes `rge_1`/`rge_2` f_06600 and `rg_1` f_07200

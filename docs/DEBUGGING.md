@@ -296,6 +296,10 @@ Lessons that cost days; keep them.
 * **SPURS scheduling knobs**: `SPURS_PM_RERUN_US` (port default 2000; the second argument of `work/ab_exe.sh`
   overrides it), `SPURS_KERN_SPUS` (port default `0,1,2,5`), `SPURS_EDGE_DIAG=<s>` with `SPURS_EDGE_WIDS`
   (whether those workloads ever run side by side), `SPURS_MAXCONT="<wid>=<n>,..."` (lanes per workload, experiment).
+* **Timer resolution**: the port opts out of Windows 11 power throttling so its 1 ms timer resolution holds without a
+  visible window (`GOW_TIMER_FIX=0` skips that). PS3_FTRACE shows the SPURS kernel threads' between-pass pauses as
+  SPU_WAIT spans with `a=0x51EE` and resident-slot waits with `a=0x5107`. `GOW_CLOCK_WATCH=<s>` names the walker's
+  state when flips stop.
 * **Decrementer clock**: `SPU_HOST_NS=qpc` reads the SPU decrementer's host clock from QPC instead of the
   calibrated TSC (A/B switch; measured drift 0.75 ppm).
 * **Faster runs**: `work/ab_exe.sh` reads the pad script from `NAV_PAD` (default `work/nav_pad_fast.txt`: CROSS

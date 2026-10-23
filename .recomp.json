@@ -4,13 +4,27 @@
   "wikidata": "Q2298167",
   "system": "PS3",
   "type": "recomp",
-  "original": { "region": "USA", "serial": "BCUS98232" },
+  "original": {
+    "region": "USA",
+    "serial": "BCUS98232"
+  },
   "project": "God of War: Ascension Recompiled",
   "status": "in-progress",
-  "targets": ["Windows"],
+  "targets": [
+    "Windows"
+  ],
   "toolchain": "ps3recomp",
   "approach": "Static recompilation of the PPU code and the SPU job modules on ps3recomp, Vulkan RSX backend; generic fixes go back upstream",
-  "maintainers": [{ "name": "MaChInEgUn3", "link": "https://github.com/MaChInEgUn3" }],
-  "help": ["RSX FIFO / SPU DMA ordering", "SPURS and EDGE job timing", "Performance"],
-  "notes": "Boots, plays the intro, reaches the main menu and the first level (about 1.5 fps). Some long runs still corrupt memory; not playable yet."
+  "maintainers": [
+    {
+      "name": "MaChInEgUn3",
+      "link": "https://github.com/MaChInEgUn3"
+    }
+  ],
+  "help": [
+    "RSX FIFO / SPU DMA ordering",
+    "SPURS and EDGE job timing",
+    "Performance"
+  ],
+  "notes": "Boots, plays the intro, reaches the main menu and the first level (about 1.5 game frames/s in gameplay). An intermittent hang in the level is being chased; not playable yet."
 }
