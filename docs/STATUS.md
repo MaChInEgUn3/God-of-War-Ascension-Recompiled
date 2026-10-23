@@ -491,8 +491,38 @@ Update (M0.57, 2026-10-22): **native SPU single-precision floats** (`SPU_FP_NATI
 - `SPU_FP_CHECK=1` compares every op with the exact path: 1.34e9 ops through boot and gameplay, 0 mismatches.
 - Swapped 2+2 A/B, tail: 1.175/1.269/1.098/1.031 vs 1.169/1.242/1.042/0.998 (+2.7%, 3 of 4 pairs). EDGE per-job cost
   went down 5-20% (`[pm-prof]`).
-- Frames moved much less than the job cost. The job lists the main thread waits on are bound by the job chain's
-  latency more than by its total compute.
+- Frames moved much less than the job cost. Per frame, the EDGE work (wids 15-17, `[pm-prof]`) divided over the two
+  non-audio kernel threads is 283-375 ms. The main thread's wait on the job lists is 300-398 ms. Those track
+  each other in six runs, so the main thread waits on EDGE throughput over two host threads.
+- A fourth kernel thread with audio still on its own (`SPURS_KERN_SPUS=0,1,2,5`, swapped 2+2) is neutral: play
+  1.096/1.192/1.122/1.103 vs 1.110/1.144/1.190 (plus an outlier at 0.688), with no hangs. Total kernel-thread busy
+  only went from ~200% to ~210%.
+- Why: the per-thread SPU timeline (`PS3_FTRACE`, 20 s at 700 s) shows **the three EDGE workloads (EDGE0-2, wids
+  15-17) never run at the same time (0.0% of the time)**. One kernel thread runs 12 s of EDGE per 20 s. The other
+  non-audio thread is idle 59% of the time, 48% of it while EDGE runs elsewhere. The game splits geometry into three
+  workloads (each registered with maxContention 1) so they run side by side on three SPUs; here they run one after
+  another.
+- `SPURS_EDGE_DIAG` confirms it: at every EDGE dispatch (~155k a minute) no other EDGE wid is busy, and none
+  has readyCount up. The EDGE runs come in bursts on one thread (1.9 us between runs). Thread hand-offs happen
+  only ~1300 times in 20 s, and the EDGE lists are busy 15.9 s of every 20.
+- `SPURS_MAXCONT=15=2,16=2,17=2` (two lanes per EDGE list) is slower: tail 0.785 vs 1.402, because a host thread
+  is created per lane per dispatch.
+
+Update (M0.58, 2026-10-23): **three defaults that pay together.** Each A/B is swapped 2+2, scored on tail, and
+stacked on the previous one.
+- `SPURS_PM_RERUN_US=2000` (a module run that executed jobs is re-entered at once, for up to 2 ms): 1.494/1.390/
+  1.402/1.419 vs 1.392/1.271/1.294/1.298 (+8.5%, 4 of 4). EDGE jobs per run 0.88 -> 0.97.
+  - The WWS policy module hands the SPU back after each job, so a list had advanced one job per kernel pass.
+  - At M0.52 this setting gave 0% in frames, while the walker was 66% GPU-blocked and EDGE waited on ring space.
+- `SPURS_KERN_SPUS=0,1,2,5` (a fourth kernel thread, SPU 2: EDGE0-2 have priority 8 on SPUs 0-3): 1.542/1.467/
+  1.508/1.479 vs 1.429/1.371/1.402/1.400 (+7%, 4 of 4). Without RERUN it had been neutral.
+- `VK_ASYNC=1`: 1.590/1.523/1.525/1.512 vs 1.502/1.435/1.456/1.415 (+5.9%, 4 of 4). Alone it had been neutral; it
+  pays now that the SPU chain is shorter than the walker's.
+- Together: tail ~1.31 -> ~1.54 game frames/s (+17%). 16 runs with no hang, no `invalid size`, no BRANCH-TO-0.
+  The texture garbage below shows at the same rate in both arms.
+- The port sets all three (`main.cpp`). Each can still be set back by its variable.
+- Next: the walker's per-draw full barrier (`vk_cmd_after_everything`, ~60 us of GPU per draw) is the next GPU-side
+  cost, now that the GPU sometimes runs three batches behind. On the SPU side, EDGE still runs one list at a time.
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
 looks like texels read from memory that does not hold the texture (yet). Examples: `vos_1` f_08400 with batching

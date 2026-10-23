@@ -638,6 +638,12 @@ int main(int argc, char** argv)
      * frame is a chain of dependent jobs across workloads; a timer tick per hop
      * halved the frame rate (measured 2.95 -> 6.25 game frames/s). */
     if (!getenv("SPURS_PASS_GREEDY")) _putenv_s("SPURS_PASS_GREEDY", "1");
+    /* SPURS_PM_RERUN_US=2000: after a module run that executed jobs, run the same
+     * workload again at once (claim kept) for up to 2 ms. The WWS policy module
+     * hands the SPU back after every job, so an EDGE list advanced one job per
+     * kernel pass. Swapped 2+2 A/B in the level, tail (600-1080 s): 1.494/1.390/
+     * 1.402/1.419 vs 1.392/1.271/1.294/1.298 game frames/s, no hang. Set 0 to go back. */
+    if (!getenv("SPURS_PM_RERUN_US")) _putenv_s("SPURS_PM_RERUN_US", "2000");
     /* SPURS_KERN_THREADS=2: two host kernel threads run the "Big" instance's policy
      * modules side by side (measured 8.8 -> ~12 game frames/s). The instance has 6
      * SPUs, but 3, 4 and 6 threads measured slower (9.2-10.1): the frame's job chain
@@ -652,9 +658,12 @@ int main(int argc, char** argv)
      * being off for high-range descriptor tables, which the extra speed exposed
      * more often. With both fixed: 7 runs of 1080 s, 0 corrupted, level rate
      * (analysis/level_rate.py) 1.18-1.25 vs 1.10-1.18 game frames/s with two
-     * threads, the same order with the two instances swapped. The default now.
-     * SPURS_KERN_SPUS=0,1 (or SPURS_KERN_THREADS=2 with no SPUS) goes back. */
-    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,5");
+     * threads, the same order with the two instances swapped.
+     * SPURS_KERN_SPUS=0,1,2,5 (the default now): SPU 2 too, where EDGE0-2 (priority
+     * 8 on SPUs 0-3) may run. Without SPURS_PM_RERUN_US it measured neutral; with it,
+     * tail 1.542/1.467/1.508/1.479 vs 1.429/1.371/1.402/1.400 (swapped 2+2), no hang
+     * or bad size in 8 runs. SPURS_KERN_SPUS=0,1,5 or 0,1 goes back. */
+    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,2,5");
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE
@@ -672,6 +681,11 @@ int main(int argc, char** argv)
      * 2.089 vs 1.852 game frames/s, the same order in the other two pairs, no
      * hang or bad frame in 8 runs. VK_DRAW_BATCH=0 goes back. */
     if (!getenv("VK_DRAW_BATCH")) _putenv_s("VK_DRAW_BATCH", "1");
+    /* VK_ASYNC=1: batch flushes submit without waiting (up to 3 in flight). Alone it
+     * was neutral -- the SPU side was as long as the walker -- but with the EDGE
+     * lists run back to back on four kernel threads (below) it pays: tail 1.590/
+     * 1.523/1.525/1.512 vs 1.502/1.435/1.456/1.415 (swapped 2+2), no hang. */
+    if (!getenv("VK_ASYNC")) _putenv_s("VK_ASYNC", "1");
     /* SPURS_PM_ARG_BE=1: hand the wwsjob PM its 64-bit workload argument as the
      * hardware does (high half in word 0). With the low half in word 0 the PM
      * wrote status rows into BatchJobList's list 1 and the level stopped on

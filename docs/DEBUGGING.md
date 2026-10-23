@@ -291,7 +291,11 @@ Lessons that cost days; keep them.
 * **SPU float**: the port builds with `SPU_FP_NATIVE` (CMake `GOW_SPU_FP_NATIVE`, default on): single-precision
   SPU ops run as native instructions under round-toward-zero. `SPU_FP_CHECK=1` compares every one with the exact
   path and prints `[spu-fp]` mismatches and a running count. Rebuild with `-DGOW_SPU_FP_NATIVE=OFF` to rule it out.
-* **Async Vulkan submission**: `VK_ASYNC=1` (off by default) keeps up to 3 batches in flight; measured neutral.
+* **Async Vulkan submission**: `VK_ASYNC=1` (port default) keeps up to 3 batches in flight (`VK_ASYNC=0` waits at
+  every flush, the thing to try for a rendering bug that might be ordering).
+* **SPURS scheduling knobs**: `SPURS_PM_RERUN_US` (port default 2000; the second argument of `work/ab_exe.sh`
+  overrides it), `SPURS_KERN_SPUS` (port default `0,1,2,5`), `SPURS_EDGE_DIAG=<s>` with `SPURS_EDGE_WIDS`
+  (whether those workloads ever run side by side), `SPURS_MAXCONT="<wid>=<n>,..."` (lanes per workload, experiment).
 * **Decrementer clock**: `SPU_HOST_NS=qpc` reads the SPU decrementer's host clock from QPC instead of the
   calibrated TSC (A/B switch; measured drift 0.75 ppm).
 * **Faster runs**: `work/ab_exe.sh` reads the pad script from `NAV_PAD` (default `work/nav_pad_fast.txt`: CROSS
