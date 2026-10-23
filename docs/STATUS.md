@@ -542,6 +542,9 @@ Update (M0.59, 2026-10-23): **timer resolution, upstream fixes, and an intermitt
   - It did not show in 16 runs with `GOW_CLOCK_WATCH=20` (which names the walker's state at a stall) and
     `SPU_IRQWAIT_DIAG=1`. Those are cheap, so this is most likely chance (hangs come in pairs).
   - Next: keep the watchdog on in every run until one is caught.
+- Also from upstream: #533 (the SPU drain's per-hop hooks run their common case inline) and #534 (guest stores
+  test the SPU reserved-line bitmap inline). A/B against the build without them, swapped 2+2: tail 1.508/1.510/
+  1.656/1.540 vs 1.417/1.477/1.579/1.515 (+3.8%, 4 of 4), with no hang or bad size in 8 runs.
 - Process Lasso's ProBalance on the test machine can lower the game's priority mid-run. Benchmark with it closed.
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
