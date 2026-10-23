@@ -549,6 +549,14 @@ Update (M0.59, 2026-10-23): **timer resolution, upstream fixes, and an intermitt
   pass), #432 (linear A8R8G8B8 decode), #438 (texture key location cache), #439 (no full hash for engine-rewritten
   textures), and #500 (SPU estimates, interpolate and float/int conversions in AVX2, rounding-mode independent).
   Swapped A/B, stopped after two pairs that agreed: tail 1.379/1.331 vs 1.308/1.248 (+5.4%, +6.7%), no hang.
+- Also from upstream: #512 (SSE4.1/AVX2 forms of the SPU per-lane integer and quadword helpers; our SSE quadword
+  forms kept). Three clean pairs: tail 1.400/1.273/1.350 vs 1.356/1.252/1.294 (+3.2%, +1.7%, +4.3%). The fourth
+  pair hung in both arms at the same scene.
+- That hang was caught by the watchdog (`GOW_CLOCK_WATCH=20`). The walker is not waiting on a semaphore
+  (`sema_wait_get=0xFFFFFFFF`), a self-JUMP park or a GPU fence (`vk_fence_waiting=0`). get sits on a
+  `SET_BEGIN_END(0)` right after ten `DRAW_INDEX_ARRAY` words, with put far ahead, and flips still come (4813 ->
+  5119 -> 5246) with 20 s gaps. So the walker is crawling through the draw engine's END, not deadlocked. Next:
+  `ENG_SLOW_MS=<ms>` logs any BEGIN_END group slower than that, with its sizes and per-phase times.
 - Process Lasso's ProBalance on the test machine can lower the game's priority mid-run. Benchmark with it closed.
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
