@@ -545,6 +545,10 @@ Update (M0.59, 2026-10-23): **timer resolution, upstream fixes, and an intermitt
 - Also from upstream: #533 (the SPU drain's per-hop hooks run their common case inline) and #534 (guest stores
   test the SPU reserved-line bitmap inline). A/B against the build without them, swapped 2+2: tail 1.508/1.510/
   1.656/1.540 vs 1.417/1.477/1.579/1.515 (+3.8%, 4 of 4), with no hang or bad size in 8 runs.
+- Also from upstream: the draw-engine CPU series #458 (vertex fetch attribute by attribute), #465 (index runs in one
+  pass), #432 (linear A8R8G8B8 decode), #438 (texture key location cache), #439 (no full hash for engine-rewritten
+  textures), and #500 (SPU estimates, interpolate and float/int conversions in AVX2, rounding-mode independent).
+  Swapped A/B, stopped after two pairs that agreed: tail 1.379/1.331 vs 1.308/1.248 (+5.4%, +6.7%), no hang.
 - Process Lasso's ProBalance on the test machine can lower the game's priority mid-run. Benchmark with it closed.
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which

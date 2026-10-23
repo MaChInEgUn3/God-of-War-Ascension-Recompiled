@@ -1,3 +1,26 @@
+diff --git a/.github/workflows/linux.yml b/.github/workflows/linux.yml
+index 67bb40b..89a838c 100644
+--- a/.github/workflows/linux.yml
++++ b/.github/workflows/linux.yml
+@@ -117,6 +117,18 @@ jobs:
+             echo "no AVX2 on this runner: skipped"
+           fi
+ 
++      # The AVX2 estimate, interpolate and conversion helpers must match the scalar ones bit for bit.
++      - name: Run the SPU estimate/conversion test (AVX2)
++        run: |
++          if grep -q avx2 /proc/cpuinfo; then
++            ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} \
++              -std=gnu17 -O2 -mavx2 -mfma -I include -I runtime/spu \
++              -o /tmp/test_spu_float_est runtime/spu/tests/test_spu_float_est.c -lm
++            /tmp/test_spu_float_est
++          else
++            echo "no AVX2 on this runner: skipped"
++          fi
++
+       # cellFontInitializeWithRevision initialises the library the way cellFontInit does.
+       - name: Run the cellFont init test
+         run: |
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index bdd2f85..22da87b 100644
 --- a/CMakeLists.txt
@@ -2891,10 +2914,18 @@ index 6be29e4..a7f89c3 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b..a236a15 100644
+index f99986b..44d2df1 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
-@@ -735,6 +735,8 @@ static u8* eng_coherence_buffer(u32 bytes)
+@@ -125,6 +125,7 @@ typedef struct {
+     u32 last_hash_frame;
+     u64 last_use_serial;
+     u32 depth;                  /* slices of a 3D texture, else 1 */
++    int rewritten;              /* guest bytes rewritten by the engine itself */
+ } eng_texture;
+ 
+ typedef struct {
+@@ -735,6 +736,8 @@ static u8* eng_coherence_buffer(u32 bytes)
      return s_coherence_rows;
  }
  
@@ -2903,7 +2934,7 @@ index f99986b..a236a15 100644
  /* One row of 32-bit pixels between the backend's R,G,B,A and the guest's
   * A8R8G8B8 bytes (or straight through with TEX_RGBA). Copied a byte at a
   * time, with the TEX_RGBA test inside the loop, these two conversions were
-@@ -763,6 +765,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
+@@ -763,6 +766,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
          if (eng_coherence_log())
              fprintf(stderr, "[rsx engine] guest_read %u:0x%08X %ux%u: no surface\n",
                      location, offset, w, h);
@@ -2911,7 +2942,7 @@ index f99986b..a236a15 100644
          return;
      }
      const eng_surface* s = &g.surfaces[slot];
-@@ -783,6 +786,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
+@@ -783,6 +787,7 @@ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32
          fprintf(stderr, "[rsx engine] guest_read %u:0x%08X %ux%u <- surface 0x%08X (%u bpp) at %u,%u:"
                          " %u non-zero pixels\n", location, offset, w, h, s->offset, bpp, x, y,
                  eng_nonzero_pixels(rows, n * h, bpp));
@@ -2919,7 +2950,7 @@ index f99986b..a236a15 100644
      const int rgba = rsx_texture_argb_is_rgba();
      for (u32 r = 0; r < h; r++) {
          u8* dst = (u8*)eng_guest_ptr(NULL, location, offset + r * pitch, bytes);
-@@ -811,6 +815,7 @@ void rsx_draw_engine_guest_wrote(u32 location, u32 offset, u32 pitch, u32 w, u32
+@@ -811,6 +816,7 @@ void rsx_draw_engine_guest_wrote(u32 location, u32 offset, u32 pitch, u32 w, u32
          if (eng_coherence_log())
              fprintf(stderr, "[rsx engine] guest_wrote %u:0x%08X %ux%u: no A8R8G8B8 surface\n",
                      location, offset, w, h);
@@ -2927,7 +2958,71 @@ index f99986b..a236a15 100644
          return;
      }
      x /= 4u;
-@@ -1259,6 +1264,9 @@ static u32 s_depth_cap;
+@@ -1128,13 +1134,32 @@ static u32 eng_texture_slot(u32 location, u32 offset, u32 fmt, u32 w, u32 h,
+                                : eng_texture_span(fmt, w, h, levels, pitch, cube);
+     if (!span) return 0;
+ 
+-    for (u32 i = 0; i < g.n_textures; i++) {
+-        eng_texture* e = &g.textures[i];
+-        if (e->location != location || e->offset != offset ||
+-            e->format != fmt || e->width != w || e->height != h ||
+-            e->pitch != pitch || e->remap != remap ||
+-            e->cubemap != (u32)(cube != 0) || e->depth != depth)
+-            continue;
++    /* A scene binds the same few hundred textures every frame, and a linear
++     * scan of the whole cache per bind averaged several hundred entries.
++     * Remember where each key was last found; a remembered slot is used only
++     * if its entry still matches, otherwise the scan runs as before. Keys are
++     * unique in the cache, so the result is the same either way. */
++    static u16 s_slot_memo[4096];
++    const u32 memo = (offset >> 4 ^ offset >> 16 ^ fmt * 0x9E37u ^ w * 31u ^ h ^
++                      location << 11) & 4095u;
++#define ENG_TEXTURE_KEY_MATCHES(e) ((e)->location == location && (e)->offset == offset && \
++        (e)->format == fmt && (e)->width == w && (e)->height == h && \
++        (e)->pitch == pitch && (e)->remap == remap && \
++        (e)->cubemap == (u32)(cube != 0) && (e)->depth == depth)
++    eng_texture* hit = NULL;
++    if (s_slot_memo[memo] < g.n_textures && ENG_TEXTURE_KEY_MATCHES(&g.textures[s_slot_memo[memo]])) {
++        hit = &g.textures[s_slot_memo[memo]];
++    } else {
++        for (u32 i = 0; i < g.n_textures; i++)
++            if (ENG_TEXTURE_KEY_MATCHES(&g.textures[i])) {
++                hit = &g.textures[i];
++                s_slot_memo[memo] = (u16)i;
++                break;
++            }
++    }
++#undef ENG_TEXTURE_KEY_MATCHES
++    if (hit) {
++        eng_texture* e = hit;
+         if (e->handle && e->last_hash_frame != g.frames) {
+             /* Every cached texture used to be hashed in full every frame;
+              * in a big scene that is hundreds of MB a second for the few
+@@ -1145,7 +1170,14 @@ static u32 eng_texture_slot(u32 location, u32 offset, u32 fmt, u32 w, u32 h,
+             u64 hash = e->content_hash;
+             const u64 sparse = eng_texture_sparse_hash(location, offset, span,
+                                                        &readable);
+-            if (readable && (sparse != e->sparse_hash ||
++            /* The engine just stored a surface or depth target over these
++             * bytes: they are new, so upload without hashing them all. The
++             * stored hash becomes unknown and the next ordinary check
++             * re-uploads once rather than miss a change. */
++            if (e->rewritten && readable) {
++                hash = ~e->content_hash;
++                e->rewritten = 0;
++            } else if (readable && (sparse != e->sparse_hash ||
+                              eng_texture_full_rehash(span, e->last_full_frame))) {
+                 hash = eng_texture_content_hash(location, offset, span, &readable);
+                 e->last_full_frame = g.frames;
+@@ -1216,6 +1248,7 @@ static void eng_textures_touch(u32 location, u32 offset, u32 bytes)
+         if (e->location == location && e->offset >= offset && e->offset - offset < bytes) {
+             e->last_hash_frame = g.frames - 1u;
+             e->last_full_frame = g.frames - ENG_TEXHASH_FULL_EVERY;   /* hash it all */
++            e->rewritten = 1;
+         }
+     }
+ }
+@@ -1259,6 +1292,9 @@ static u32 s_depth_cap;
   * Z16 as one big-endian 16-bit value, Z24S8 as a big-endian word with the
   * depth in the top 24 bits. The stencil byte is written as 0: the host depth
   * target keeps no stencil to copy. Returns 0 when it cannot. */
@@ -2937,7 +3032,7 @@ index f99986b..a236a15 100644
  static int eng_zdepth_to_guest(u32 slot)
  {
      eng_zdepth* z = &g.zdepths[slot];
-@@ -1278,10 +1286,22 @@ static int eng_zdepth_to_guest(u32 slot)
+@@ -1278,10 +1314,22 @@ static int eng_zdepth_to_guest(u32 slot)
      if (g.be->depth_readback(g.be->user, z->handle, 0, 0, w, h, s_depth_rows,
                               w * (u32)sizeof(float)) != 0)
          return 0;
@@ -2960,7 +3055,7 @@ index f99986b..a236a15 100644
          for (u32 c = 0; c < w; c++) {
              float d = src[c];
              if (!(d > 0.0f)) d = 0.0f;
-@@ -1293,7 +1313,8 @@ static int eng_zdepth_to_guest(u32 slot)
+@@ -1293,7 +1341,8 @@ static int eng_zdepth_to_guest(u32 slot)
                  /* Float32 rounding at this magnitude can turn depth 1 into
                   * 0x1000000. Quantize in double before storing the 24-bit value. */
                  const u32 v = (u32)((double)d * 16777215.0 + 0.5);
@@ -2970,7 +3065,7 @@ index f99986b..a236a15 100644
              }
              dst += bpp;
          }
-@@ -1688,6 +1709,7 @@ static u32 eng_pipeline_get(const rsx_vertex_layout_plan* layout,
+@@ -1688,6 +1737,7 @@ static u32 eng_pipeline_get(const rsx_vertex_layout_plan* layout,
          key = eng_fnv1a(vp_uc, vp_instrs * 16u, key);
          key = rsx_fp_structural_hash(fp_uc, fp_size, key);
          if (!key) return 0;
@@ -2978,7 +3073,101 @@ index f99986b..a236a15 100644
          const u32 fp_ctrl_key = fp_ctrl & 0x4Eu; /* colour width and fragment depth export */
          key = eng_fnv1a(&fp_ctrl_key, sizeof fp_ctrl_key, key);
          if (srgb_output) key = eng_fnv1a(&srgb_output, sizeof srgb_output, key);
-@@ -2449,16 +2471,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -1829,6 +1879,64 @@ static int dc_push_ref(u32 vertex_id, u32 base_index)
+     return 1;
+ }
+ 
++/* Room for `more` references past dc.n_refs, grown as dc_push_ref grows. */
++static int dc_reserve_refs(u32 more)
++{
++    const u64 want = (u64)dc.n_refs + more;
++    if (want <= dc.cap_refs) return 1;
++    if (want > 0xFFFFFFFFull) return 0;
++    u64 next = dc.cap_refs ? dc.cap_refs : 4096u;
++    while (next < want) next *= 2u;
++    if (next > 0xFFFFFFFFull) next = want;
++    rsx_vertex_ref* r = (rsx_vertex_ref*)realloc(dc.refs, (size_t)next * sizeof(*r));
++    if (!r) return 0;
++    dc.refs = r;
++    dc.cap_refs = (u32)next;
++    return 1;
++}
++
++/* A run of big-endian indices appended as references in one pass: the
++ * capacity is reserved up front and the loop works on locals, which the
++ * per-index dc_push_ref (reloading dc after every store) could not. A
++ * restart sentinel still cuts the strip where it stands. */
++static int dc_push_index_run(const u8* run, u32 count, int is_u32, u32 base_index,
++                             int restart_en, u32 restart_val)
++{
++    if (!dc_reserve_refs(count)) return 0;
++    rsx_vertex_ref* out = dc.refs;
++    u32 n = dc.n_refs;
++    if (is_u32) {
++        for (u32 i = 0; i < count; i++) {
++            const u8* p = run + (size_t)i * 4u;
++            const u32 index = ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8) | p[3];
++            if (restart_en && index == restart_val) {
++                dc.n_refs = n;
++                if (!rsx_restart_cut_push(&dc.cuts, &dc.n_cuts, &dc.cap_cuts, n)) return 0;
++                continue;
++            }
++            out[n].vertex_id = index; out[n].base_index = base_index; n++;
++        }
++    } else if (!restart_en) {
++        for (u32 i = 0; i < count; i++) {
++            out[n + i].vertex_id = (u32)((run[2u * i] << 8) | run[2u * i + 1u]);
++            out[n + i].base_index = base_index;
++        }
++        n += count;
++    } else {
++        for (u32 i = 0; i < count; i++) {
++            const u32 index = (u32)((run[2u * i] << 8) | run[2u * i + 1u]);
++            if (index == restart_val) {
++                dc.n_refs = n;
++                if (!rsx_restart_cut_push(&dc.cuts, &dc.n_cuts, &dc.cap_cuts, n)) return 0;
++                continue;
++            }
++            out[n].vertex_id = index; out[n].base_index = base_index; n++;
++        }
++    }
++    dc.n_refs = n;
++    return 1;
++}
++
+ static int dc_reserve_verts(u64 bytes)
+ {
+     if (bytes <= dc.verts_cap) return 1;
+@@ -1895,6 +2003,11 @@ static void dc_fetch(const rsx_vertex_layout_plan* layout, int allow_remap)
+             if (count && start <= 0xFFFFFFFFull && bytes <= 0xFFFFFFFFull &&
+                 start + bytes <= 0x100000000ull)
+                 run = eng_guest_ptr(NULL, ia_loc, (u32)start, (u32)bytes);
++            if (run) {
++                if (!dc_push_index_run(run, count, ia.is_u32, base_index, restart_en, restart_val))
++                    dc.fetch_ok = 0;
++                continue;
++            }
+             for (u32 i = 0; i < count && dc.fetch_ok; i++) {
+                 const u8* p = run ? run + (size_t)i * esz
+                     : eng_guest_ptr(NULL, ia_loc, ia.offset + (first + i) * esz, esz);
+@@ -1934,12 +2047,10 @@ static void dc_fetch(const rsx_vertex_layout_plan* layout, int allow_remap)
+         dc.fetch_ok = 0;
+         return;
+     }
+-    for (u32 i = 0; i < dc.n_refs; i++) {
+-        u8* dst = layout->stride ? dc.verts + (u64)i * layout->stride : NULL;
+-        if (!rsx_vertex_fetch_one(&dc.fetch_plan, &dc.refs[i], dst)) {
+-            dc.fetch_ok = 0;
+-            return;
+-        }
++    if (!rsx_vertex_fetch_many(&dc.fetch_plan, dc.refs, dc.n_refs,
++                               layout->stride ? dc.verts : NULL)) {
++        dc.fetch_ok = 0;
++        return;
+     }
+     dc.n_verts = dc.n_refs;
+ }
+@@ -2449,16 +2560,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
      }
      if (s_pd.draws_log) {
          fprintf(s_pd.draws_log, "pass %03u draw %u: pipe %u cmask %08X blend %u %X/%X"
@@ -3073,7 +3262,7 @@ index f99986b..a236a15 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2506,6 +2603,41 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -2506,6 +2692,41 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
  /* Called on every present: arm on the first frame heavy enough when no delay
   * was asked for, and while capturing, close the pass in progress and write
   * the presented surface. */
@@ -3115,7 +3304,7 @@ index f99986b..a236a15 100644
  static void pd_present(u32 presented)
  {
      if (s_pd.state == 0) pd_capturing();
-@@ -2530,11 +2662,21 @@ static void pd_present(u32 presented)
+@@ -2530,11 +2751,21 @@ static void pd_present(u32 presented)
  static void sink_end(void* user, const rsx_dispatch* r)
  {
      (void)user; (void)r;
@@ -3139,7 +3328,7 @@ index f99986b..a236a15 100644
  
      const u32 prim = g.rsx.current_primitive;
      /* Everything that becomes triangles -- lists, strips, fans, quads, quad
-@@ -2549,33 +2691,33 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2549,33 +2780,33 @@ static void sink_end(void* user, const rsx_dispatch* r)
      int scratch = 0;
      const int rebuild = eng_topology_rebuild(prim, 0, &scratch) != 0;
      if (!rebuild) {
@@ -3179,7 +3368,7 @@ index f99986b..a236a15 100644
      const u32 target = targets[0];
  
      rsx_dsp_surface sf;
-@@ -2596,7 +2738,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2596,7 +2827,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
                                            eng_surface_format(sf.color_format),
                                            n_targets, &pipeline_is_fixed, &tex_used,
                                            &fp_hash);
@@ -3188,7 +3377,7 @@ index f99986b..a236a15 100644
      if (fp_hash && eng_debug_fp(fp_hash, pipeline)) return;
  
      /* Textures before any pipeline or target binding: a cache refresh can
-@@ -2616,7 +2758,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2616,7 +2847,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
                                                      vsamplers);
  
      if (indexed) {
@@ -3197,7 +3386,7 @@ index f99986b..a236a15 100644
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
              dc.refs_remapped ? dc.ref_remap.occurrence_to_unique : NULL,
-@@ -2724,6 +2866,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2724,6 +2955,67 @@ static void sink_end(void* user, const rsx_dispatch* r)
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
      g.be->draw(g.be->user, topology, dc.verts, uploaded, layout.stride,
                 indexed ? g.indices : NULL, indexed ? n_draw : 0);
@@ -3265,7 +3454,7 @@ index f99986b..a236a15 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2787,6 +2990,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2787,6 +3079,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -3279,7 +3468,7 @@ index f99986b..a236a15 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2818,9 +3028,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2818,9 +3117,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -3313,7 +3502,7 @@ index f99986b..a236a15 100644
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
-@@ -2945,6 +3178,26 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+@@ -2945,6 +3267,26 @@ void rsx_draw_engine_method(u32 method, u32 arg)
       * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
       * preserve them with the wider mask. */
      u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
@@ -3417,6 +3606,234 @@ index 5ce72ef..fa06ca2 100644
      if (dbg_here) {
          static u32 reported;
          if (PS3_LOG_FIRST(reported, 8))
+diff --git a/libs/video/rsx_texture_layout.c b/libs/video/rsx_texture_layout.c
+index 131cc0d..71c0b6c 100644
+--- a/libs/video/rsx_texture_layout.c
++++ b/libs/video/rsx_texture_layout.c
+@@ -300,6 +300,29 @@ void rsx_texture_decode(void* dst, u32 dst_pitch,
+         return;
+     }
+ 
++#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++    /* Linear A8R8G8B8 / D8R8G8B8 is a byte rotation per texel (guest A,R,G,B
++     * to host R,G,B,A), which the compiler vectorizes; through decode_texel
++     * it was most of the cost of re-uploading a full-screen render target
++     * read back as a texture. Same bytes as decode_texel. */
++    if (!tl->swizzled && (tl->base_format == 0x85u || tl->base_format == 0x9Eu) &&
++        sbpp == 4u && dbpp == 4u) {
++        const u32 alpha = tl->base_format == 0x9Eu ? 0xFF000000u : 0u;
++        for (u32 y = 0; y < h; y++) {
++            const u8* srow = src + (size_t)y * tl->row_bytes;
++            u8* drow = d + (size_t)y * dst_pitch;
++            for (u32 x = 0; x < w; x++) {
++                u32 v;
++                memcpy(&v, srow + (size_t)x * 4u, 4);
++                if (!argb_as_rgba) v = (v >> 8) | (v << 24);
++                v |= alpha;
++                memcpy(drow + (size_t)x * 4u, &v, 4);
++            }
++        }
++        return;
++    }
++#endif
++
+     /* Morton order interleaves the low bits of x and y, so a swizzled image
+      * has to be walked texel by texel; so does anything the host cannot take
+      * as stored. */
+diff --git a/libs/video/rsx_vertex_compact.c b/libs/video/rsx_vertex_compact.c
+index 7fa5f31..b0048bb 100644
+--- a/libs/video/rsx_vertex_compact.c
++++ b/libs/video/rsx_vertex_compact.c
+@@ -262,53 +262,137 @@ void rsx_vertex_fetch_plan_prepare(
+     }
+ }
+ 
++/* One attribute of one vertex, exactly as rsx_vertex_fetch_one does it. */
++static int rsx_vertex_fetch_attr_value(
++    const rsx_vertex_fetch_plan* plan, u32 attr,
++    const rsx_vertex_ref* ref, float* value)
++{
++    const rsx_vertex_fetch_attr* fetch = &plan->attr[attr];
++    if (!fetch->desc.type || !fetch->desc.size) {
++        memcpy(value, fetch->default_value, 16);
++        return 1;
++    }
++
++    const u32 element = rsx_vertex_element_index(
++        ref->vertex_id, ref->base_index, fetch->desc.frequency,
++        (plan->divider_mask >> attr) & 1u);
++    const u8* source = NULL;
++    if (fetch->stable_base &&
++        element >= fetch->stable_first && element <= fetch->stable_last) {
++        source = fetch->stable_base +
++            (u64)(element - fetch->stable_first) * fetch->stride;
++    } else if (plan->inline_data) {
++        /* An inline draw has no vertex array to fall back to: the array
++         * offsets still hold whatever the last ordinary draw bound, and
++         * reading them would feed this draw another mesh's vertices.
++         * An attribute the stream does not supply gets its default,
++         * which is what the hardware feeds. */
++        source = NULL;
++    } else if (plan->guest_ptr) {
++        const u32 offset =
++            plan->base_offset + fetch->desc.offset +
++            element * fetch->stride;
++        source = plan->guest_ptr(
++            plan->guest_user, fetch->desc.location, offset,
++            fetch->elem_size);
++    }
++
++    if (source && rsx_vertex_decode_element(
++            fetch->desc.type, fetch->desc.size, source, value))
++        return 1;
++    if (attr == 0)
++        return 0;
++    memcpy(value, fetch->default_value, 16);
++    return 1;
++}
++
+ int rsx_vertex_fetch_one(
+     const rsx_vertex_fetch_plan* plan, const rsx_vertex_ref* ref, u8* out)
+ {
+     if (!plan || !ref || (!out && plan->layout.stride))
+         return 0;
++    for (u32 slot = 0; slot < plan->layout.count; slot++)
++        if (!rsx_vertex_fetch_attr_value(plan, plan->layout.attrs[slot], ref,
++                                   (float*)(out + slot * 16u)))
++            return 0;
++    return 1;
++}
++
++/* The stable-range loop for one attribute and one vertex type: `decode`
++ * reads `src` into `v` (pre-set to 0,0,0,1) for components c < n. Elements
++ * outside the stable range take the one-vertex path. */
++#define RSX_FETCH_LOOP(decode)                                                  \
++    for (u32 i = 0; i < count; i++) {                                           \
++        float* v = (float*)(out + (size_t)i * stride + slot * 16u);             \
++        const u32 element = plain                                               \
++            ? ((refs[i].vertex_id + refs[i].base_index) & 0x000FFFFFu)          \
++            : rsx_vertex_element_index(refs[i].vertex_id, refs[i].base_index,   \
++                                       fetch->desc.frequency, modulo);          \
++        if (element - first > span) {                                          \
++            if (!rsx_vertex_fetch_attr_value(plan, attr, &refs[i], v)) return 0;      \
++            continue;                                                           \
++        }                                                                       \
++        const u8* src = base + (u64)(element - first) * fstride;                \
++        v[0] = v[1] = v[2] = 0.0f; v[3] = 1.0f;                                 \
++        for (u32 c = 0; c < n; c++) { decode; }                                 \
++    }
++
++int rsx_vertex_fetch_many(
++    const rsx_vertex_fetch_plan* plan, const rsx_vertex_ref* refs, u32 count,
++    u8* out)
++{
++    if (!plan || (!refs && count) || (!out && plan->layout.stride && count))
++        return 0;
++    const u32 stride = plan->layout.stride;
+     for (u32 slot = 0; slot < plan->layout.count; slot++) {
+         const u32 attr = plan->layout.attrs[slot];
+         const rsx_vertex_fetch_attr* fetch = &plan->attr[attr];
+-        float* value = (float*)(out + slot * 16u);
+-        if (!fetch->desc.type || !fetch->desc.size) {
+-            memcpy(value, fetch->default_value, 16);
++        const u8* base = fetch->stable_base;
++        const u32 type = fetch->desc.type;
++        if (!type || !fetch->desc.size || !base ||
++            type < RSX_VTX_TYPE_SNORM16 || type > RSX_VTX_TYPE_UINT8) {
++            for (u32 i = 0; i < count; i++)
++                if (!rsx_vertex_fetch_attr_value(plan, attr, &refs[i],
++                        (float*)(out + (size_t)i * stride + slot * 16u)))
++                    return 0;
+             continue;
+         }
+-
+-        const u32 element = rsx_vertex_element_index(
+-            ref->vertex_id, ref->base_index, fetch->desc.frequency,
+-            (plan->divider_mask >> attr) & 1u);
+-        const u8* source = NULL;
+-        if (fetch->stable_base &&
+-            element >= fetch->stable_first && element <= fetch->stable_last) {
+-            source = fetch->stable_base +
+-                (u64)(element - fetch->stable_first) * fetch->stride;
+-        } else if (plan->inline_data) {
+-            /* An inline draw has no vertex array to fall back to: the array
+-             * offsets still hold whatever the last ordinary draw bound, and
+-             * reading them would feed this draw another mesh's vertices.
+-             * An attribute the stream does not supply gets its default,
+-             * which is what the hardware feeds. */
+-            source = NULL;
+-        } else if (plan->guest_ptr) {
+-            const u32 offset =
+-                plan->base_offset + fetch->desc.offset +
+-                element * fetch->stride;
+-            source = plan->guest_ptr(
+-                plan->guest_user, fetch->desc.location, offset,
+-                fetch->elem_size);
++        const u32 first = fetch->stable_first;
++        const u32 span = fetch->stable_last - first;
++        const u32 fstride = fetch->stride;
++        const int plain = fetch->desc.frequency <= 1;
++        const u32 modulo = (plan->divider_mask >> attr) & 1u;
++        const u32 n = fetch->desc.size < 4 ? fetch->desc.size : 4;
++        switch (type) {
++        case RSX_VTX_TYPE_FLOAT:
++            RSX_FETCH_LOOP(v[c] = rsx_compact_be_f32(src + c * 4))
++            break;
++        case RSX_VTX_TYPE_HALF:
++            RSX_FETCH_LOOP(v[c] = rsx_compact_be_f16(src + c * 2))
++            break;
++        case RSX_VTX_TYPE_UNORM8:
++            RSX_FETCH_LOOP(v[c] = src[c] / 255.0f)
++            break;
++        case RSX_VTX_TYPE_UINT8:
++            RSX_FETCH_LOOP(v[c] = (float)src[c])
++            break;
++        case RSX_VTX_TYPE_SNORM16:
++            RSX_FETCH_LOOP(v[c] = (s16)((src[c * 2] << 8) | src[c * 2 + 1]) / 32767.0f)
++            break;
++        case RSX_VTX_TYPE_SINT16:
++            RSX_FETCH_LOOP(v[c] = (float)(s16)((src[c * 2] << 8) | src[c * 2 + 1]))
++            break;
++        default:   /* RSX_VTX_TYPE_CMP32: one packed word, whatever the size */
++            for (u32 i = 0; i < count; i++)
++                if (!rsx_vertex_fetch_attr_value(plan, attr, &refs[i],
++                        (float*)(out + (size_t)i * stride + slot * 16u)))
++                    return 0;
++            break;
+         }
+-
+-        if (source && rsx_vertex_decode_element(
+-                fetch->desc.type, fetch->desc.size, source, value))
+-            continue;
+-        if (attr == 0)
+-            return 0;
+-        memcpy(value, fetch->default_value, 16);
+     }
+     return 1;
+ }
++#undef RSX_FETCH_LOOP
+ 
+ static u64 rsx_vertex_remap_hash(u64 value)
+ {
+diff --git a/libs/video/rsx_vertex_compact.h b/libs/video/rsx_vertex_compact.h
+index ad21361..6a12f6f 100644
+--- a/libs/video/rsx_vertex_compact.h
++++ b/libs/video/rsx_vertex_compact.h
+@@ -116,6 +116,14 @@ void rsx_vertex_fetch_plan_prepare(
+ int rsx_vertex_fetch_one(
+     const rsx_vertex_fetch_plan* plan, const rsx_vertex_ref* ref, u8* out);
+ 
++/* rsx_vertex_fetch_one for refs[0..count) into consecutive compact vertices
++ * at out (layout.stride apart), with the same values and the same failure:
++ * 0 when some vertex's enabled ATTR0 cannot be fetched. Walks attribute by
++ * attribute so each vertex type decodes in a loop of its own. */
++int rsx_vertex_fetch_many(
++    const rsx_vertex_fetch_plan* plan, const rsx_vertex_ref* refs, u32 count,
++    u8* out);
++
+ /* Collapse repeated (vertex_id, base_index) references in first-use order.
+  * refs is rewritten in place with the unique prefix.  The occurrence map
+  * remains valid until the next call using the same remap object. */
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
 index b22e08f..e7207d2 100644
 --- a/libs/video/rsx_vulkan_backend.c
@@ -4400,6 +4817,309 @@ index 650c021..f4d32a1 100644
      /* Test 7: MRT. The second colour export is r2 with 32-bit exports and h4
       * with 16-bit ones, so the same instruction is a second render target in
       * one mode and an ordinary temp write in the other. A deferred pass
+diff --git a/libs/video/tests/test_rsx_draw_engine.c b/libs/video/tests/test_rsx_draw_engine.c
+index aee6109..ace4a58 100644
+--- a/libs/video/tests/test_rsx_draw_engine.c
++++ b/libs/video/tests/test_rsx_draw_engine.c
+@@ -667,6 +667,47 @@ static void test_texture_cache(void)
+     engine_down();
+ }
+ 
++/* The cache remembers where each key was last found. Two keys that share a
++ * remembered slot (these two offsets do, with every other field equal) must
++ * still each find their own entry, however their binds interleave. */
++#define TEX_OFFSET_SHARING_MEMO 0x00120100u
++static void test_texture_lookup_memo(void)
++{
++    printf("-- texture lookup memo\n");
++    engine_up();
++    memset(vm_base + TEX_OFFSET, 0x11, 4 * 4 * 4);
++    memset(vm_base + TEX_OFFSET_SHARING_MEMO, 0x33, 4 * 4 * 4);
++    bind_texture_unit(RSX_LOCATION_MAIN, TEX_OFFSET);
++    draw_triangle();
++    const u32 a = stub.bound_tex[0];
++    bind_texture_unit(RSX_LOCATION_MAIN, TEX_OFFSET_SHARING_MEMO);
++    draw_triangle();
++    const u32 b = stub.bound_tex[0];
++    CHECK(stub.n_texture_create == 2 && a && b && a != b,
++          "two keys sharing a memo slot are two entries (%d creates)",
++          stub.n_texture_create);
++
++    int wrong = 0;
++    for (int i = 0; i < 6; i++) {
++        if (i == 3) rsx_draw_engine_present();
++        bind_texture_unit(RSX_LOCATION_MAIN, (i & 1) ? TEX_OFFSET_SHARING_MEMO : TEX_OFFSET);
++        draw_triangle();
++        if (stub.bound_tex[0] != ((i & 1) ? b : a)) wrong++;
++    }
++    CHECK(stub.n_texture_create == 2 && wrong == 0,
++          "interleaved binds each find their own entry (%d creates, %d wrong)",
++          stub.n_texture_create, wrong);
++
++    /* A change to one is still seen through the memo. */
++    rsx_draw_engine_present();
++    memset(vm_base + TEX_OFFSET_SHARING_MEMO, 0x44, 4 * 4 * 4);
++    bind_texture_unit(RSX_LOCATION_MAIN, TEX_OFFSET_SHARING_MEMO);
++    draw_triangle();
++    CHECK(stub.n_texture_create == 3 && stub.alive[b] == 0,
++          "changed bytes behind a memoized entry are re-decoded");
++    engine_down();
++}
++
+ /* A 128x128 A8R8G8B8 linear texture on unit 0: 64 KB, past the size that is
+  * hashed in full every frame. */
+ #define BIG_TEX_OFFSET 0x00100000u
+@@ -1241,6 +1282,73 @@ static void test_transfer_reads_fp16(void)
+     engine_down();
+ }
+ 
++/* ---- indexed draws: big-endian index runs, restart sentinels ------------ */
++
++#define IDX_OFFSET 0x00030000u
++static void put_be(u8* p, u32 v, u32 bytes)
++{
++    for (u32 i = 0; i < bytes; i++) p[i] = (u8)(v >> (8u * (bytes - 1u - i)));
++}
++/* The x of the draw's k-th vertex, through its index list when it has one
++ * (a list of distinct vertices is drawn without). */
++static float drawn_x(u32 k)
++{
++    float x;
++    memcpy(&x, stub.captured_vertices[stub.draw_indices ? stub.captured_indices[k] : k], 4);
++    return x;
++}
++static int triangles_are(const u32* want, u32 n)
++{
++    if ((stub.draw_indices ? stub.draw_indices : stub.draw_vertices) != n) return 0;
++    for (u32 k = 0; k < n; k++) if (drawn_x(k) != (float)want[k]) return 0;
++    return 1;
++}
++static void indexed_case(const u32* idx, u32 n, int u32_indices, int restart, u32 sentinel,
++                         u32 prim, const u32* want, u32 nwant, const char* what)
++{
++    engine_up();
++    u8 saved[8 * 16]; memcpy(saved, vm_base + VTX_OFFSET, sizeof saved);
++    for (u32 i = 0; i < 8; i++) {
++        const float f[4] = { (float)i, 0.0f, 0.0f, 1.0f };
++        for (u32 c = 0; c < 4; c++) { u32 w; memcpy(&w, &f[c], 4); put_be(vm_base + VTX_OFFSET + i * 16 + c * 4, w, 4); }
++    }
++    const u32 esz = u32_indices ? 4u : 2u;
++    for (u32 i = 0; i < n; i++) put_be(vm_base + IDX_OFFSET + 8 + i * esz, idx[i], esz);
++    m(0x181C, IDX_OFFSET);                                 /* index array offset */
++    m(0x1820, 1u | ((u32_indices ? 0u : 1u) << 4));       /* main memory, type */
++    m(0x1DAC, restart ? 1u : 0u);
++    m(0x1DB0, sentinel);
++    m(M_BEGIN_END, prim);
++    m(0x1824, (8u / esz) | ((n - 1u) << 24));             /* first index past 8 bytes */
++    m(M_BEGIN_END, 0u);
++    CHECK(stub.n_draw == 1 && triangles_are(want, nwant), "%s (%u indices, %u vertices drawn)", what, stub.draw_indices, stub.draw_vertices);
++    memcpy(vm_base + VTX_OFFSET, saved, sizeof saved);
++    memset(vm_base + IDX_OFFSET, 0, 64);
++    m(0x1DAC, 0u);
++    engine_down();
++}
++static void test_indexed_runs(void)
++{
++    printf("-- indexed runs\n");
++    static const u32 strip[] = { 0, 1, 2, 3, 0xFFFF, 4, 5, 6, 7 };
++    static const u32 strip_tris[] = { 0, 1, 2, 2, 1, 3, 4, 5, 6, 6, 5, 7 };
++    indexed_case(strip, 9, 0, 1, 0xFFFF, RSX_PRIMITIVE_TRIANGLE_STRIP, strip_tris, 12,
++                 "16-bit strip cut by its restart sentinel");
++    static const u32 strip32[] = { 0, 1, 2, 3, 0xFFFFFFFFu, 4, 5, 6, 7 };
++    indexed_case(strip32, 9, 1, 1, 0xFFFFFFFFu, RSX_PRIMITIVE_TRIANGLE_STRIP, strip_tris, 12,
++                 "32-bit strip cut by its restart sentinel");
++    static const u32 tris[] = { 3, 1, 2, 7, 0, 5 };
++    indexed_case(tris, 6, 0, 0, 0xFFFF, RSX_PRIMITIVE_TRIANGLES, tris, 6,
++                 "16-bit triangle list in index order");
++    static const u32 tris32[] = { 0x0003, 0x0001, 0x0002, 0x0007, 0x0000, 0x0005 };
++    indexed_case(tris32, 6, 1, 0, 0xFFFFFFFFu, RSX_PRIMITIVE_TRIANGLES, tris, 6,
++                 "32-bit triangle list in index order");
++    /* A 16-bit buffer ignores a sentinel that does not fit in 16 bits. */
++    static const u32 big_sentinel_tris[] = { 3, 1, 2 };
++    indexed_case(big_sentinel_tris, 3, 0, 1, 0x10002u, RSX_PRIMITIVE_TRIANGLES, big_sentinel_tris, 3,
++                 "16-bit restart off when the sentinel is wider than 16 bits");
++}
++
+ static unsigned custom_reads;
+ static const u8* custom_guest_read(void* user, u32 location, u32 offset, u32 bytes)
+ {
+@@ -1456,6 +1564,50 @@ static void test_color_read_as_float(void)
+     engine_down();
+ }
+ 
++/* A cached texture over a colour target the engine stores to guest memory
++ * again: the new bytes reach the texture at its next use, and once the
++ * stores stop the cache settles instead of re-decoding every frame. */
++static void test_engine_rewrite_reuploads(void)
++{
++    printf("-- texture over a re-stored colour target\n");
++    engine_up();
++    m(M_COLOR_A_PITCH, 256u * 4u);
++    m(M_CLEAR_BUFFERS, 0xF0u);                   /* a colour write at 0x40000 */
++    m(M_COLOR_A_OFFSET, 0x90000u);
++    bind_texture_unit(RSX_LOCATION_LOCAL, 0x40000u);
++    m(M_TEX_UNIT + 0x04, 1u | (2u << 4) | ((0x9Cu | 0x20u) << 8) | (1u << 16));
++    draw_triangle();
++    const int first = stub.n_texture_create;
++    const u32 first_tex = stub.bound_tex[0];
++
++    /* The target is written again with other pixels and stored once more. */
++    rsx_draw_engine_present();
++    const u8 saved[4] = { g_stub_pixel[0], g_stub_pixel[1], g_stub_pixel[2], g_stub_pixel[3] };
++    g_stub_pixel[0] = 0x55;
++    m(M_COLOR_A_OFFSET, 0x40000u);
++    m(M_CLEAR_BUFFERS, 0xF0u);
++    m(M_COLOR_A_OFFSET, 0x90000u);
++    draw_triangle();
++    const u8* p = vm_base + GUEST_LOCAL_EA + 0x40000u;
++    CHECK(p[1] == 0x55, "the target was stored to guest memory again (%02X)", p[1]);
++    CHECK(stub.n_texture_create == first + 1 && stub.alive[first_tex] == 0 &&
++          stub.bound_tex[0] == stub.last_created_texture,
++          "the texture over it is re-decoded from the new bytes (%d creates)",
++          stub.n_texture_create - first);
++
++    /* No more stores: at most one more decode, then none. */
++    const int settled = stub.n_texture_create;
++    for (int f = 0; f < 3; f++) { rsx_draw_engine_present(); draw_triangle(); }
++    const int after = stub.n_texture_create;
++    rsx_draw_engine_present();
++    for (int f = 0; f < 12; f++) { rsx_draw_engine_present(); draw_triangle(); }
++    CHECK(after - settled <= 1 && stub.n_texture_create == after,
++          "unchanged bytes settle (%d then %d more decodes)",
++          after - settled, stub.n_texture_create - after);
++    memcpy(g_stub_pixel, saved, sizeof saved);
++    engine_down();
++}
++
+ /* The register-based fullscreen compositor has no array or inline stream.
+  * Capture each position completion with the attributes current at that time. */
+ static void immediate_vertex(float x, float y, float u, float v)
+@@ -1609,9 +1761,11 @@ int main(void)
+     test_surface_aliasing();
+     test_mrt_set();
+     test_texture_cache();
++    test_texture_lookup_memo();
+     test_texture_sparse_rehash();
+     test_pipeline_key();
+     test_restart_expansion();
++    test_indexed_runs();
+     test_indexed_draws();
+     test_scissor();
+     test_readback();
+@@ -1625,6 +1779,7 @@ int main(void)
+     test_antialiased_surface();
+     test_depth_read_as_color();
+     test_color_read_as_float();
++    test_engine_rewrite_reuploads();
+     test_immediate_compositor();
+     test_immediate_packed_zero_and_inline();
+ 
+diff --git a/libs/video/tests/test_texture_layout.c b/libs/video/tests/test_texture_layout.c
+index b2f93a7..4e0af41 100644
+--- a/libs/video/tests/test_texture_layout.c
++++ b/libs/video/tests/test_texture_layout.c
+@@ -479,6 +479,32 @@ static void test_decode_argb_linear(void)
+     CHECK_EQ(dst[2], 0x33); CHECK_EQ(dst[3], 0x44);
+ }
+ 
++/* Linear 32-bit colour has its own fast path on little-endian hosts; it must
++ * produce the same bytes as the per-texel decode. A one-row swizzled image is
++ * stored in raster order and still takes the per-texel path, so it is the
++ * reference. */
++static void test_decode_linear_argb_matches_texel_path(void)
++{
++    const u32 fmts[2] = { FMT_A8R8G8B8, FMT_D8R8G8B8 };
++    u8 src[64 * 4];
++    for (u32 i = 0; i < sizeof src; i++) src[i] = (u8)(i * 37u + 11u);
++
++    for (int f = 0; f < 2; f++)
++        for (int as_rgba = 0; as_rgba < 2; as_rgba++) {
++            rsx_tex_layout lin, swz;
++            rsx_texture_layout(fmts[f] | FMT_LN, 64, 1, &lin);
++            rsx_texture_layout(fmts[f], 64, 1, &swz);
++            CHECK(!lin.swizzled);
++            CHECK(swz.swizzled);
++            u8 a[64 * 4 + 8], b[64 * 4 + 8];
++            memset(a, 0xA5, sizeof a);
++            memset(b, 0xA5, sizeof b);
++            rsx_texture_decode(a, sizeof a, src, 64, 1, &lin, as_rgba);
++            rsx_texture_decode(b, sizeof b, src, 64, 1, &swz, as_rgba);
++            CHECK(memcmp(a, b, sizeof a) == 0);
++        }
++}
++
+ /* A swizzled image must come out in raster order. Build the source so that
+  * texel (x,y) holds a known value AT ITS MORTON OFFSET, then check the decode
+  * lays it back out row by row. */
+@@ -780,6 +806,7 @@ int main(void)
+     test_swizzle_offset();
+     test_log2_ceil();
+     test_decode_argb_linear();
++    test_decode_linear_argb_matches_texel_path();
+     test_decode_swizzled();
+     test_decode_g8b8_swizzled();
+     test_decode_compressed_is_verbatim();
+diff --git a/libs/video/tests/test_vertex_fetch_plan.c b/libs/video/tests/test_vertex_fetch_plan.c
+index 79f3cc6..3af5feb 100644
+--- a/libs/video/tests/test_vertex_fetch_plan.c
++++ b/libs/video/tests/test_vertex_fetch_plan.c
+@@ -6,7 +6,9 @@
+  * vertex type, strides and offsets, frequency dividers in both modes, guest
+  * memory that is partly unmapped, INLINE_ARRAY streams -- with random index
+  * references, some past the 20-bit element wrap: every attribute's stable
+- * range (base, first, last) must be what the old walk gave.
++ * range (base, first, last) must be what the old walk gave, and
++ * rsx_vertex_fetch_many must produce exactly the bytes and the result of
++ * rsx_vertex_fetch_one over the same references.
+  *
+  * Build (from the repo root):
+  *   clang -std=gnu17 -O2 -Wall -Wextra -Wno-unused-parameter -I include -I libs/video \
+@@ -133,7 +135,9 @@ int main(void)
+     enum { PLANS = 6000, MAXV = 200 };
+     static rsx_vertex_ref refs[MAXV];
+     static u8 inl[8192];
+-    int stable = 0, divided = 0;
++    int stable = 0, divided = 0, fetched = 0;
++    for (u32 i = 0; i < GUEST; i++) { guest[0][i] = (u8)rnd(); guest[1][i] = (u8)rnd(); }
++    for (u32 i = 0; i < sizeof inl; i++) inl[i] = (u8)rnd();
+ 
+     for (int n = 0; n < PLANS; n++) {
+         for (int l = 0; l < 2; l++)
+@@ -152,6 +156,21 @@ int main(void)
+         ref = plan;
+         rsx_vertex_fetch_plan_prepare(&plan, refs, count);
+         ref_prepare(&ref, refs, count);
++        /* The batched fetch against one vertex at a time. */
++        {
++            static u8 one[MAXV * 256], many[MAXV * 256];
++            const u32 stride = plan.layout.stride;
++            int ok_one = 1;
++            memset(one, 0xCD, sizeof one);
++            memset(many, 0xCD, sizeof many);
++            for (u32 i = 0; i < count && ok_one; i++)
++                ok_one = rsx_vertex_fetch_one(&plan, &refs[i], one + (size_t)i * stride);
++            const int ok_many = rsx_vertex_fetch_many(&plan, refs, count, many);
++            CHECK(ok_one == ok_many, "plan %d: fetch_many %d, fetch_one %d", n, ok_many, ok_one);
++            CHECK(!ok_one || !memcmp(one, many, (size_t)count * stride),
++                  "plan %d: fetch_many vertices differ from fetch_one", n);
++            if (ok_one) fetched++;
++        }
+         for (u32 at = 0; at < RSX_DSP_NUM_VERTEX_ATTR; at++) {
+             CHECK(plan.attr[at].stable_base == ref.attr[at].stable_base &&
+                   plan.attr[at].stable_first == ref.attr[at].stable_first &&
+@@ -167,9 +186,9 @@ int main(void)
+         }
+     }
+ 
+-    printf("test_vertex_fetch_plan: %d plans, %d stable ranges (%d divided), %d failure(s)\n",
+-           PLANS, stable, divided, fails);
+-    if (stable < PLANS || divided < 100) {
++    printf("test_vertex_fetch_plan: %d plans, %d stable ranges (%d divided), %d fetched, %d failure(s)\n",
++           PLANS, stable, divided, fetched, fails);
++    if (stable < PLANS || divided < 100 || fetched < PLANS / 2) {
+         printf("FAIL: too few cases exercised a path\n");
+         return 1;
+     }
 diff --git a/runtime/ppu/ppu_fs.cpp b/runtime/ppu/ppu_fs.cpp
 index 4d54b72..413947a 100644
 --- a/runtime/ppu/ppu_fs.cpp
@@ -8245,7 +8965,7 @@ index fc3cea1..2eb6b06 100644
 +#undef SPU_DRAIN_POP_IRQ
 +}
 diff --git a/runtime/spu/spu_helpers.h b/runtime/spu/spu_helpers.h
-index 3f7d733..ad7f677 100644
+index 3f7d733..0d16fca 100644
 --- a/runtime/spu/spu_helpers.h
 +++ b/runtime/spu/spu_helpers.h
 @@ -453,6 +453,40 @@ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
@@ -8382,6 +9102,31 @@ index 3f7d733..ad7f677 100644
  #else
  static inline u128 spu_fa(u128 a, u128 b) { return spu__fa_s(a, b); }
  static inline u128 spu_fs(u128 a, u128 b) { return spu__fs_s(a, b); }
+@@ -999,11 +1098,11 @@ static inline uint32_t spu__cfl_lane(uint32_t x, int scale, int is_unsigned) {
+     const uint32_t v = sh >= 0 ? m << sh : (sh <= -24 ? 0 : m >> -sh);
+     return neg ? 0u - v : v;
+ }
+-static inline u128 spu_cflts(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) r._u32[i] = spu__cfl_lane(a._u32[i], 173 - (i8 & 0xFF), 0); return r; }
+-static inline u128 spu_cfltu(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) r._u32[i] = spu__cfl_lane(a._u32[i], 173 - (i8 & 0xFF), 1); return r; }
+-static inline u128 spu_csflt(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) { const int32_t v = a._s32[i];
++static inline u128 spu_cflts_ref(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) r._u32[i] = spu__cfl_lane(a._u32[i], 173 - (i8 & 0xFF), 0); return r; }
++static inline u128 spu_cfltu_ref(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) r._u32[i] = spu__cfl_lane(a._u32[i], 173 - (i8 & 0xFF), 1); return r; }
++static inline u128 spu_csflt_ref(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) { const int32_t v = a._s32[i];
+     r._u32[i] = v ? spu__sf_pack(v < 0 ? 0x80000000u : 0, v < 0 ? 0u - (uint32_t)v : (uint32_t)v, -(155 - (i8 & 0xFF))) : 0; } return r; }
+-static inline u128 spu_cuflt(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) { const uint32_t v = a._u32[i];
++static inline u128 spu_cuflt_ref(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i++) { const uint32_t v = a._u32[i];
+     r._u32[i] = v ? spu__sf_pack(0, v, -(155 - (i8 & 0xFF))) : 0; } return r; }
+ 
+ /* fi -- Floating Interpolate (SPU ISA v1.2, p. 219; frest/frsqest output
+@@ -1023,7 +1122,7 @@ static inline u128 spu_cuflt(u128 a, int i8) { u128 r; for (int i = 0; i < 4; i+
+  * exponent-0 estimate is a zero operand, and a result whose exponent would
+  * drop below 1 underflows -- both give +0, the only zero the SPU produces.
+  * Exponent 255 is ordinary extended range, so 1/0 stays at the top of it. */
+-static inline u128 spu_fi(u128 a, u128 b) {
++static inline u128 spu_fi_ref(u128 a, u128 b) {
+     u128 r;
+     for (int i = 0; i < 4; i++) {
+         const uint32_t est = b._u32[i];
 @@ -1058,16 +1157,26 @@ static inline uint64_t spu__d_out(double d) {
      uint64_t u; memcpy(&u, &d, 8);
      return spu__d_isnan(u) ? 0x7FF8000000000000ull : u;
@@ -8475,7 +9220,156 @@ index 3f7d733..ad7f677 100644
  #else
  static inline u128 spu_rotqbybi(u128 a, u128 b) { return spu_rotqbybi_ref(a, b); }
  #endif
-@@ -1441,6 +1558,8 @@ static inline u128 spu_rotqmby_ref(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])
+@@ -1277,7 +1394,7 @@ static const uint32_t spu_frsqest_fraction_lut[64] = {
+     0x4180D7, 0x4180D7, 0x3E24CC, 0x3E24CC, 0x3AF4C3, 0x3AF4C3, 0x37E8BA, 0x37E8BA
+ };
+ 
+-static inline u128 spu_frsqest(u128 a) {
++static inline u128 spu_frsqest_ref(u128 a) {
+     u128 r;
+     for (int i = 0; i < 4; i++) {
+         uint32_t bits = a._u32[i];
+@@ -1292,7 +1409,7 @@ static inline u128 spu_frsqest(u128 a) {
+ }
+ /* frest: reciprocal estimate (refined by the following spu_fi Newton step).
+  * Full-precision 1/x is exact after fi and >= HW-estimate accuracy. */
+-static inline u128 spu_frest(u128 a) {
++static inline u128 spu_frest_ref(u128 a) {
+     u128 r;
+     for (int i = 0; i < 4; i++) {
+         uint32_t bits = a._u32[i];
+@@ -1308,6 +1425,130 @@ static inline u128 spu_frest(u128 a) {
+     return r;
+ }
+ 
++#if defined(__AVX2__) && !defined(__ARM_NEON) && !defined(SPU_SCALAR_HELPERS)
++/* The estimate, interpolate and conversion instructions four lanes at a time. Every lane rule
++ * above is integer work on the bit fields, so these are exact by construction: no lane falls
++ * back. cuflt/csflt read the integer's top bit and next 23 bits from its (exact) double. test_spu_float_est.c
++ * checks each one against the scalar reference. */
++#include <immintrin.h>
++#define SPU__XE_INLINE static inline __attribute__((always_inline))
++SPU__XE_INLINE __m128i spu__xe_ld(u128 a) { return _mm_loadu_si128((const __m128i*)a._u32); }
++SPU__XE_INLINE u128 spu__xe_st(__m128i v) { u128 r; _mm_storeu_si128((__m128i*)r._u32, v); return r; }
++/* the low 32 bits of each 64-bit lane */
++SPU__XE_INLINE __m128i spu__xe_narrow(__m256i v) {
++    return _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(v, _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6)));
++}
++/* (2^13 | base) * 2^19 - step * y is 2^32 + d with d = base * 2^19 - step * y (base < 2^13,
++ * step * y < 2^29): the magnitude is >= 2^32 exactly when base * 2^19 >= step * y, and its low
++ * 32 bits are d mod 2^32 either way, so 32-bit lanes suffice. */
++SPU__XE_INLINE u128 spu_fi(u128 a, u128 b) {
++    const __m128i est = spu__xe_ld(b), y = _mm_and_si128(spu__xe_ld(a), _mm_set1_epi32(0x7FFFF));
++    const __m128i exp = _mm_and_si128(_mm_srli_epi32(est, 23), _mm_set1_epi32(0xFF));
++    const __m128i b19 = _mm_slli_epi32(_mm_and_si128(_mm_srli_epi32(est, 10), _mm_set1_epi32(0x1FFF)), 19);
++    const __m128i sy = _mm_mullo_epi32(_mm_and_si128(est, _mm_set1_epi32(0x3FF)), y);
++    const __m128i big = _mm_cmpeq_epi32(_mm_max_epu32(b19, sy), b19);           /* magnitude >= 1.0 */
++    const __m128i d = _mm_sub_epi32(b19, sy);
++    const __m128i frac = _mm_and_si128(_mm_blendv_epi8(_mm_srli_epi32(d, 8), _mm_srli_epi32(d, 9), big),
++                                       _mm_set1_epi32(0x7FFFFF));
++    const __m128i e2 = _mm_sub_epi32(exp, _mm_andnot_si128(big, _mm_set1_epi32(1)));   /* normalised: exp - 1 */
++    const __m128i r = _mm_or_si128(_mm_or_si128(_mm_and_si128(est, _mm_set1_epi32((int)0x80000000u)),
++                                                _mm_slli_epi32(e2, 23)), frac);
++    /* an exponent-0 estimate, or a result normalised down to exponent 0, is +0 */
++    const __m128i zero = _mm_or_si128(_mm_cmpeq_epi32(exp, _mm_setzero_si128()), _mm_cmpeq_epi32(e2, _mm_setzero_si128()));
++    return spu__xe_st(_mm_andnot_si128(zero, r));
++}
++/* tbl[idx] for idx < 8 * n, n eight-entry rows: one cross-lane permute per row, then a select
++ * on the row number (a gather is slow on several x86 cores for four lanes). */
++SPU__XE_INLINE __m128i spu__xe_lut(const uint32_t* tbl, int n, __m128i idx) {
++    const __m256i i8 = _mm256_castsi128_si256(idx);
++    const __m128i row = _mm_srli_epi32(idx, 3);
++    __m128i r = _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(_mm256_loadu_si256((const __m256i*)tbl), i8));
++    for (int k = 1; k < n; k++) {
++        const __m128i v = _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(_mm256_loadu_si256((const __m256i*)(tbl + 8 * k)), i8));
++        r = _mm_blendv_epi8(r, v, _mm_cmpeq_epi32(row, _mm_set1_epi32(k)));
++    }
++    return r;
++}
++SPU__XE_INLINE u128 spu_frest(u128 a) {
++    const __m128i x = spu__xe_ld(a);
++    const __m128i exp = _mm_and_si128(_mm_srli_epi32(x, 23), _mm_set1_epi32(0xFF));
++    const __m128i idx = _mm_and_si128(_mm_srli_epi32(x, 18), _mm_set1_epi32(0x1F));
++    const __m128i frac = _mm_and_si128(spu__xe_lut(spu_frest_fraction_lut, 4, idx), _mm_set1_epi32(0x7FFFFF));
++    __m128i rexp = _mm_sub_epi32(_mm_set1_epi32(253), exp);
++    rexp = _mm_andnot_si128(_mm_cmpgt_epi32(exp, _mm_set1_epi32(252)), rexp);          /* exp >= 253: 0 */
++    rexp = _mm_blendv_epi8(rexp, _mm_set1_epi32(255), _mm_cmpeq_epi32(exp, _mm_setzero_si128()));
++    return spu__xe_st(_mm_or_si128(_mm_or_si128(_mm_and_si128(x, _mm_set1_epi32((int)0x80000000u)),
++                                                _mm_slli_epi32(rexp, 23)), frac));
++}
++SPU__XE_INLINE u128 spu_frsqest(u128 a) {
++    const __m128i x = spu__xe_ld(a);
++    const __m128i exp = _mm_and_si128(_mm_srli_epi32(x, 23), _mm_set1_epi32(0xFF));
++    const __m128i idx = _mm_and_si128(_mm_srli_epi32(x, 18), _mm_set1_epi32(0x3F));
++    const __m128i frac = _mm_and_si128(spu__xe_lut(spu_frsqest_fraction_lut, 8, idx), _mm_set1_epi32(0x7FFFFF));
++    __m128i rexp = _mm_sub_epi32(_mm_set1_epi32(190), _mm_srli_epi32(_mm_add_epi32(exp, _mm_set1_epi32(1)), 1));
++    rexp = _mm_blendv_epi8(rexp, _mm_set1_epi32(255), _mm_cmpeq_epi32(exp, _mm_setzero_si128()));
++    return spu__xe_st(_mm_or_si128(_mm_slli_epi32(rexp, 23), frac));
++}
++/* cflts/cfltu: the 24-bit significand shifted by be - 150 + (173 - i8), saturated. */
++SPU__XE_INLINE __m128i spu__xe_cfl(u128 a, int i8, int is_unsigned) {
++    const __m128i x = spu__xe_ld(a);
++    const __m128i be = _mm_and_si128(_mm_srli_epi32(x, 23), _mm_set1_epi32(0xFF));
++    const __m128i m = _mm_or_si128(_mm_and_si128(x, _mm_set1_epi32(0x7FFFFF)), _mm_set1_epi32(0x800000));
++    const __m128i sh = _mm_add_epi32(be, _mm_set1_epi32(23 - (i8 & 0xFF)));     /* be - 150 + 173 - i8 */
++    const __m128i lsh = _mm_max_epi32(sh, _mm_setzero_si128());
++    const __m128i rsh = _mm_max_epi32(_mm_sub_epi32(_mm_setzero_si128(), sh), _mm_setzero_si128());
++    __m128i v = _mm_blendv_epi8(_mm_srlv_epi32(m, rsh), _mm_sllv_epi32(m, lsh),
++                                _mm_cmpgt_epi32(sh, _mm_set1_epi32(-1)));       /* counts >= 32 give 0 */
++    const __m128i neg = _mm_srai_epi32(x, 31), isz = _mm_cmpeq_epi32(be, _mm_setzero_si128());
++    if (is_unsigned) {
++        v = _mm_or_si128(v, _mm_cmpgt_epi32(sh, _mm_set1_epi32(8)));              /* >= 2^32: all ones */
++        return _mm_andnot_si128(_mm_or_si128(neg, isz), v);                       /* negative or zero: 0 */
++    }
++    v = _mm_sub_epi32(_mm_xor_si128(v, neg), neg);                                /* negate the negative lanes */
++    const __m128i sat = _mm_xor_si128(_mm_set1_epi32(0x7FFFFFFF), neg);           /* 0x7FFFFFFF / 0x80000000 */
++    v = _mm_blendv_epi8(v, sat, _mm_cmpgt_epi32(sh, _mm_set1_epi32(7)));
++    return _mm_andnot_si128(isz, v);
++}
++SPU__XE_INLINE u128 spu_cflts(u128 a, int i8) { return spu__xe_st(spu__xe_cfl(a, i8, 0)); }
++SPU__XE_INLINE u128 spu_cfltu(u128 a, int i8) { return spu__xe_st(spu__xe_cfl(a, i8, 1)); }
++/* csflt/cuflt: |v| as an exact double gives top = its exponent and the next 23 bits truncated;
++ * the result exponent is top + i8 - 28 (= top + 127 - (155 - i8)), saturated / flushed. */
++SPU__XE_INLINE __m128i spu__xe_cxflt(__m256d d, __m128i sign, __m128i nz, int i8) {
++    const __m256i u = _mm256_castpd_si256(d);
++    const __m128i top = _mm_sub_epi32(spu__xe_narrow(_mm256_and_si256(_mm256_srli_epi64(u, 52), _mm256_set1_epi64x(0x7FF))),
++                                      _mm_set1_epi32(1023));
++    const __m128i frac = _mm_and_si128(spu__xe_narrow(_mm256_srli_epi64(u, 29)), _mm_set1_epi32(0x7FFFFF));
++    const __m128i biased = _mm_add_epi32(top, _mm_set1_epi32((i8 & 0xFF) - 28));
++    __m128i r = _mm_or_si128(sign, _mm_or_si128(_mm_slli_epi32(biased, 23), frac));
++    r = _mm_blendv_epi8(r, _mm_or_si128(sign, _mm_set1_epi32(0x7FFFFFFF)), _mm_cmpgt_epi32(biased, _mm_set1_epi32(255)));
++    const __m128i flush = _mm_cmpgt_epi32(_mm_set1_epi32(1), biased);
++    return _mm_and_si128(_mm_andnot_si128(flush, r), nz);
++}
++SPU__XE_INLINE u128 spu_csflt(u128 a, int i8) {
++    const __m128i v = spu__xe_ld(a);
++    const __m256d d = _mm256_andnot_pd(_mm256_set1_pd(-0.0), _mm256_cvtepi32_pd(v));          /* |v|, exact */
++    const __m128i sign = _mm_and_si128(v, _mm_set1_epi32((int)0x80000000u));
++    const __m128i nz = _mm_xor_si128(_mm_cmpeq_epi32(v, _mm_setzero_si128()), _mm_set1_epi32(-1));
++    return spu__xe_st(spu__xe_cxflt(d, sign, nz, i8));
++}
++SPU__XE_INLINE u128 spu_cuflt(u128 a, int i8) {
++    const __m128i v = spu__xe_ld(a);
++    /* unsigned -> double: flip the top bit, convert as signed, add 2^31 back (all exact) */
++    const __m256d d = _mm256_add_pd(_mm256_cvtepi32_pd(_mm_xor_si128(v, _mm_set1_epi32((int)0x80000000u))),
++                                    _mm256_set1_pd(2147483648.0));
++    const __m128i nz = _mm_xor_si128(_mm_cmpeq_epi32(v, _mm_setzero_si128()), _mm_set1_epi32(-1));
++    return spu__xe_st(spu__xe_cxflt(d, _mm_setzero_si128(), nz, i8));
++}
++#else
++static inline u128 spu_fi(u128 a, u128 b)      { return spu_fi_ref(a, b); }
++static inline u128 spu_frest(u128 a)           { return spu_frest_ref(a); }
++static inline u128 spu_frsqest(u128 a)         { return spu_frsqest_ref(a); }
++static inline u128 spu_cflts(u128 a, int i8)   { return spu_cflts_ref(a, i8); }
++static inline u128 spu_cfltu(u128 a, int i8)   { return spu_cfltu_ref(a, i8); }
++static inline u128 spu_csflt(u128 a, int i8)   { return spu_csflt_ref(a, i8); }
++static inline u128 spu_cuflt(u128 a, int i8)   { return spu_cuflt_ref(a, i8); }
++#endif
++
+ /* ---- Phase 3: sign extension ----
+  * LE host: low sub-lane = _u8[2i] / _s16[2i] / _s32[2i] (the byte/half/word
+  * at the *lower* storage address). Same caveat as the mpy family. */
+@@ -1441,6 +1682,8 @@ static inline u128 spu_rotqmby_ref(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])
  static inline u128 spu_rotqmby(u128 a, u128 b) {
      return spu__perm(a, vsubq_u8(spu__iota(), vdupq_n_u8((uint8_t)((0 - (int)b._u32[0]) & 0x1F))));
  }
@@ -8484,7 +9378,7 @@ index 3f7d733..ad7f677 100644
  #else
  static inline u128 spu_rotqmby(u128 a, u128 b) { return spu_rotqmby_ref(a, b); }
  #endif
-@@ -1449,6 +1568,8 @@ static inline u128 spu_rotqmbybi_ref(u128 a, u128 b) { int sh=(0-((int)b._u32[0]
+@@ -1449,6 +1692,8 @@ static inline u128 spu_rotqmbybi_ref(u128 a, u128 b) { int sh=(0-((int)b._u32[0]
  static inline u128 spu_rotqmbybi(u128 a, u128 b) {
      return spu__perm(a, vsubq_u8(spu__iota(), vdupq_n_u8((uint8_t)((0 - ((int)b._u32[0] >> 3)) & 0x1F))));
  }
@@ -8493,7 +9387,7 @@ index 3f7d733..ad7f677 100644
  #else
  static inline u128 spu_rotqmbybi(u128 a, u128 b) { return spu_rotqmbybi_ref(a, b); }
  #endif
-@@ -1461,6 +1582,8 @@ static inline u128 spu_rotqmbyi_ref(u128 a, int i7)  { int sh=(0-i7)&0x1F; u128
+@@ -1461,6 +1706,8 @@ static inline u128 spu_rotqmbyi_ref(u128 a, int i7)  { int sh=(0-i7)&0x1F; u128
  static inline u128 spu_rotqmbyi(u128 a, int i7) {
      return spu__perm(a, vsubq_u8(spu__iota(), vdupq_n_u8((uint8_t)((0 - i7) & 0x1F))));
  }
@@ -9637,6 +10531,121 @@ index 0000000..79ec5ad
 +    printf("%s: Sn lost %u times in %u raises under concurrent Lr updates\n",
 +           lost ? "FAIL" : "PASS", lost, (unsigned)ROUNDS);
 +    return lost ? 1 : 0;
++}
+diff --git a/runtime/spu/tests/test_spu_float_est.c b/runtime/spu/tests/test_spu_float_est.c
+new file mode 100644
+index 0000000..0cda949
+--- /dev/null
++++ b/runtime/spu/tests/test_spu_float_est.c
+@@ -0,0 +1,109 @@
++/* The vector spu_fi/frest/frsqest/cflts/cfltu/csflt/cuflt (AVX2 on x86) must be bit-identical
++ * to the scalar references (spu_*_ref) for every input: random words, ordinary floats, the
++ * normal/extended-range boundaries, zeros and denormals, integers of every magnitude, and every
++ * scale immediate. Prints a rough speed comparison too. Build on x86 with AVX2:
++ *   cc -O2 -mavx2 -mfma -I../../../include -I.. test_spu_float_est.c -o t && ./t */
++#include "../spu_helpers.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <time.h>
++
++static uint64_t s_rng = 0x9E3779B97F4A7C15ull;
++static uint32_t rnd32(void)
++{
++    s_rng ^= s_rng << 13; s_rng ^= s_rng >> 7; s_rng ^= s_rng << 17;
++    return (uint32_t)(s_rng >> 16);
++}
++
++static uint32_t rnd_float(void)
++{
++    uint32_t sign = (rnd32() & 1u) << 31, man = rnd32() & 0x7FFFFFu, e;
++    switch (rnd32() % 10) {
++    case 0: e = 0; break;                              /* zero / denormal */
++    case 1: e = 1 + rnd32() % 4; break;                /* bottom of normal range */
++    case 2: e = 248 + rnd32() % 8; break;              /* top, into extended range */
++    case 3: return rnd32();                            /* anything */
++    case 4: return sign;                               /* +-0 */
++    default: e = 110 + rnd32() % 36; break;            /* ordinary */
++    }
++    return sign | (e << 23) | man;
++}
++
++static uint32_t rnd_int(void)
++{
++    switch (rnd32() % 6) {
++    case 0: return 0;
++    case 1: return 0x80000000u >> (rnd32() % 32);      /* powers of two */
++    case 2: return 0xFFFFFFFFu >> (rnd32() % 32);      /* all-ones runs */
++    case 3: return (uint32_t)-(int32_t)(rnd32() >> (rnd32() % 32));
++    default: return rnd32() >> (rnd32() % 32);         /* every magnitude */
++    }
++}
++
++static int same(u128 a, u128 b) { return !memcmp(a._u32, b._u32, 16); }
++
++static long s_bad;
++static void report(const char* op, int imm, u128 a, u128 b, u128 got, u128 want)
++{
++    if (s_bad++ < 20)
++        printf("MISMATCH %s imm=%d a=%08X %08X %08X %08X b=%08X %08X %08X %08X\n"
++               "  got  %08X %08X %08X %08X\n  want %08X %08X %08X %08X\n", op, imm,
++               a._u32[0], a._u32[1], a._u32[2], a._u32[3], b._u32[0], b._u32[1], b._u32[2], b._u32[3],
++               got._u32[0], got._u32[1], got._u32[2], got._u32[3],
++               want._u32[0], want._u32[1], want._u32[2], want._u32[3]);
++}
++
++#define CHECK1(op, a)        do { u128 got_ = spu_##op(a), want_ = spu_##op##_ref(a); \
++                                  if (!same(got_, want_)) report(#op, 0, a, a, got_, want_); } while (0)
++#define CHECK2(op, a, b)     do { u128 got_ = spu_##op(a, b), want_ = spu_##op##_ref(a, b); \
++                                  if (!same(got_, want_)) report(#op, 0, a, b, got_, want_); } while (0)
++#define CHECKI(op, a, i)     do { u128 got_ = spu_##op(a, i), want_ = spu_##op##_ref(a, i); \
++                                  if (!same(got_, want_)) report(#op, i, a, a, got_, want_); } while (0)
++
++int main(void)
++{
++#if !(defined(__AVX2__) && !defined(__ARM_NEON) && !defined(SPU_SCALAR_HELPERS))
++    puts("test_spu_float_est: no AVX2, nothing to compare");
++    return 0;
++#else
++    const long N = 2000000;
++    for (long it = 0; it < N; it++) {
++        u128 f, g, n;
++        for (int k = 0; k < 4; k++) { f._u32[k] = rnd_float(); g._u32[k] = rnd_float(); n._u32[k] = rnd_int(); }
++        CHECK1(frest, f);
++        CHECK1(frsqest, f);
++        CHECK2(fi, g, f);
++        CHECK2(fi, g, spu_frest_ref(f));               /* the frest -> fi pair as code uses it */
++        CHECK2(fi, g, spu_frsqest_ref(f));
++        const int imm = (int)(rnd32() & 0xFF);
++        CHECKI(cflts, f, imm);
++        CHECKI(cfltu, f, imm);
++        CHECKI(csflt, n, imm);
++        CHECKI(cuflt, n, imm);
++    }
++    /* every immediate on a fixed spread of operands */
++    for (int imm = 0; imm < 256; imm++)
++        for (int it = 0; it < 2000; it++) {
++            u128 f, n;
++            for (int k = 0; k < 4; k++) { f._u32[k] = rnd_float(); n._u32[k] = rnd_int(); }
++            CHECKI(cflts, f, imm); CHECKI(cfltu, f, imm); CHECKI(csflt, n, imm); CHECKI(cuflt, n, imm);
++        }
++    printf("test_spu_float_est: %ld mismatches\n", s_bad);
++
++    /* speed: the frest/fi reciprocal pair, vector vs scalar */
++    u128 x, y; for (int k = 0; k < 4; k++) { x._u32[k] = 0x3F800000u + rnd32() % 0x800000u; y = x; }
++    volatile uint32_t sink = 0;
++    const long R = 20000000;
++    clock_t t0 = clock();
++    for (long i = 0; i < R; i++) { x = spu_fi(y, spu_frest(x)); x._u32[0] ^= (uint32_t)i & 1u; }
++    sink += x._u32[0];
++    clock_t t1 = clock();
++    for (long i = 0; i < R; i++) { x = spu_fi_ref(y, spu_frest_ref(x)); x._u32[0] ^= (uint32_t)i & 1u; }
++    sink += x._u32[0];
++    clock_t t2 = clock();
++    printf("frest+fi: vector %.1f ns, scalar %.1f ns\n",
++           1e9 * (double)(t1 - t0) / CLOCKS_PER_SEC / R, 1e9 * (double)(t2 - t1) / CLOCKS_PER_SEC / R);
++    (void)sink;
++    return s_bad ? 1 : 0;
++#endif
 +}
 diff --git a/runtime/spu/tests/test_spu_float_neon.c b/runtime/spu/tests/test_spu_float_neon.c
 index ac634cd..80ceb15 100644
