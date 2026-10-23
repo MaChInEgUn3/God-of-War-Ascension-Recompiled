@@ -3349,7 +3349,7 @@ index 5ce72ef..fa06ca2 100644
          static u32 reported;
          if (PS3_LOG_FIRST(reported, 8))
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index b22e08f..221e287 100644
+index b22e08f..e7207d2 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -3436,7 +3436,7 @@ index b22e08f..221e287 100644
      if (!pvkGetInstanceProcAddr) { VK_LOG("libvulkan has no vkGetInstanceProcAddr\n"); return -1; }
  #define LOAD_G(name) \
      if (!(p##name = (PFN_##name)pvkGetInstanceProcAddr(VK_NULL_HANDLE, #name))) \
-@@ -446,8 +472,21 @@ static int vk_create_image(vk_image* im, VkFormat fmt, u32 w, u32 h,
+@@ -446,8 +472,24 @@ static int vk_create_image(vk_image* im, VkFormat fmt, u32 w, u32 h,
  
  static void vk_present_wait_gpu(void);
  
@@ -3445,7 +3445,10 @@ index b22e08f..221e287 100644
 + * results flushes them first, so everything else keeps the invariant that
 + * all earlier work has completed. */
 +static u32 s_eb_pending;
++static int s_eb_async;           /* VK_ASYNC on: earlier batches may still be running */
 +static void vk_eng_flush(void);
++static void vk_eng_idle(void);      /* flush, then wait for every batch in flight (VK_ASYNC) */
++static void vk_eb_all_done(void);
 +static int vk_eb_active(void);       /* batching decided on and on */
 +static u32 vk_eb_max(void);
 +static void vk_eb_recorded(void);   /* one more command in the open batch */
@@ -3454,11 +3457,11 @@ index b22e08f..221e287 100644
 +
  static void vk_destroy_image(vk_image* im)
  {
-+    if (s_eb_pending) vk_eng_flush();
++    vk_eng_idle();
      /* Never under a present's copy that may still read it. */
      if (im->img) vk_present_wait_gpu();
      if (im->view) pvkDestroyImageView(s_vk.device, im->view, NULL);
-@@ -488,8 +527,29 @@ static int vk_create_host_buffer(vk_buffer* b, VkDeviceSize size, VkBufferUsageF
+@@ -488,8 +530,29 @@ static int vk_create_host_buffer(vk_buffer* b, VkDeviceSize size, VkBufferUsageF
      return 0;
  }
  
@@ -3484,11 +3487,11 @@ index b22e08f..221e287 100644
 +
  static void vk_destroy_buffer(vk_buffer* b)
  {
-+    if (s_eb_pending) vk_eng_flush();
++    vk_eng_idle();
      if (b->ptr) pvkUnmapMemory(s_vk.device, b->mem);
      if (b->buf) pvkDestroyBuffer(s_vk.device, b->buf, NULL);
      if (b->mem) pvkFreeMemory(s_vk.device, b->mem, NULL);
-@@ -550,6 +610,7 @@ static void vk_cmd_after_everything(VkCommandBuffer cb)
+@@ -550,6 +613,7 @@ static void vk_cmd_after_everything(VkCommandBuffer cb)
  
  static int vk_begin(void)
  {
@@ -3496,7 +3499,12 @@ index b22e08f..221e287 100644
      VK_CHECK(pvkResetCommandBuffer(s_vk.cmd, 0), "vkResetCommandBuffer");
      VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
-@@ -561,14 +622,34 @@ static int vk_begin(void)
+@@ -557,18 +621,39 @@ static int vk_begin(void)
+     /* A present's copy may still be reading the surface this frame is about
+      * to draw over: order everything here after it. Set only by a present,
+      * which never runs alongside the walker's recording. */
+-    if (s_vk.present_order) { vk_cmd_after_everything(s_vk.cmd); s_vk.present_order = 0; }
++    if (s_vk.present_order || s_eb_async) { vk_cmd_after_everything(s_vk.cmd); s_vk.present_order = 0; }
      return 0;
  }
  
@@ -3530,10 +3538,11 @@ index b22e08f..221e287 100644
 +        if (ft_t1 - ft_t0 >= ps3_ft_min_ns()) ps3_ft_span(PS3_FT_GPU_WAIT, 0, 3, ft_ra, ft_t0, ft_t1);
 +    }
 +    VK_CHECK(wr, "vkWaitForFences");
++    vk_eb_all_done();              /* the fence covers everything queued before */
      return 0;
  }
  
-@@ -763,6 +844,9 @@ static void vk_cb_bind_texture(void* ud, u32 unit, const rsx_texture_state* t)
+@@ -763,6 +848,9 @@ static void vk_cb_bind_texture(void* ud, u32 unit, const rsx_texture_state* t)
      if (unit >= RSX_MAX_TEXTURES || !t || !s_vk.device) return;
      if (!(t->control0 & 0x80000000u) || !t->offset) { vk_tex_off(unit); return; }
  
@@ -3543,7 +3552,7 @@ index b22e08f..221e287 100644
      u32 w = (t->image_rect >> 16) & 0xFFFFu;
      u32 h =  t->image_rect        & 0xFFFFu;
      if (!w || !h || w > 4096u || h > 4096u) { vk_tex_off(unit); return; }
-@@ -1915,8 +1999,15 @@ static void vk_present_window(void)
+@@ -1915,8 +2003,15 @@ static void vk_present_window(void)
  
  static void vk_dump_ppm(const unsigned char* rgba)
  {
@@ -3561,7 +3570,7 @@ index b22e08f..221e287 100644
      fprintf(f, "P6\n%u %u\n255\n", s_vk.width, s_vk.height);
      for (size_t i = 0; i < (size_t)s_vk.width * s_vk.height; i++)
          fwrite(rgba + i * 4, 1, 3, f);
-@@ -2086,14 +2177,17 @@ static VkFormat vk_eng_format(rsx_be_format f, u32* bpp)
+@@ -2086,14 +2181,17 @@ static VkFormat vk_eng_format(rsx_be_format f, u32* bpp)
  }
  
  /* Colour formats the E2 passes render into: RGBA8 for ordinary and display
@@ -3582,7 +3591,7 @@ index b22e08f..221e287 100644
      default:                            return -1;
      }
  }
-@@ -2124,6 +2218,15 @@ static int vk_eng_upload_region(VkImage img, u32 layer, u32 mip, u32 x, u32 y,
+@@ -2124,6 +2222,15 @@ static int vk_eng_upload_region(VkImage img, u32 layer, u32 mip, u32 x, u32 y,
                                  const void* src, u32 row_bytes)
  {
      if (tight > row_bytes) tight = row_bytes;
@@ -3598,17 +3607,17 @@ index b22e08f..221e287 100644
      vk_buffer st = {0};
      if (vk_create_host_buffer(&st, (VkDeviceSize)tight * rows, VK_BUFFER_USAGE_TRANSFER_SRC_BIT) ||
          !st.coherent) { vk_destroy_buffer(&st); return -1; }
-@@ -2241,7 +2344,8 @@ static void vk_eng_shutdown(void* user)
+@@ -2241,7 +2348,8 @@ static void vk_eng_shutdown(void* user)
  
  static void vk_eng_submit_and_wait(void* user, u32 reason)
  {
 -    (void)user; (void)reason;      /* every submission has already completed */
-+    (void)user; (void)reason;      /* every other submission has already completed */
-+    if (s_eb_pending) vk_eng_flush();
++    (void)user; (void)reason;
++    vk_eng_idle();                 /* the engine reads results next */
  }
  
  static u32 vk_eng_color_target_create(void* user, rsx_be_format fmt, u32 w, u32 h,
-@@ -2321,13 +2425,16 @@ static void vk_eng_clear_color(void* user, u32 surface, const float rgba[4])
+@@ -2321,13 +2429,16 @@ static void vk_eng_clear_color(void* user, u32 surface, const float rgba[4])
                        ((u32)(rgba[1] * 255.0f + 0.5f) <<  8) |
                         (u32)(rgba[2] * 255.0f + 0.5f);
      vk_eng_obj* o = vk_eng_get(surface, VK_ENG_COLOR);
@@ -3627,7 +3636,7 @@ index b22e08f..221e287 100644
  }
  
  static void vk_eng_clear_depth_stencil(void* user, u32 depth, u32 flags,
-@@ -2338,20 +2445,36 @@ static void vk_eng_clear_depth_stencil(void* user, u32 depth, u32 flags,
+@@ -2338,20 +2449,36 @@ static void vk_eng_clear_depth_stencil(void* user, u32 depth, u32 flags,
      VkImageAspectFlags aspect = 0;
      if (flags & RSX_BE_CLEAR_DEPTH) aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
      if (flags & RSX_BE_CLEAR_STENCIL) aspect |= s_vk.depth_aspect & VK_IMAGE_ASPECT_STENCIL_BIT;
@@ -3666,7 +3675,7 @@ index b22e08f..221e287 100644
      vk_eng_obj* o = vk_eng_get(surface, VK_ENG_COLOR);
      pthread_mutex_lock(&s_vk.present_mu);
      VkCommandBuffer cb = vk_present_record_begin();
-@@ -2424,6 +2547,72 @@ static void vk_eng_readback(void* user, u32 surface, u32 x, u32 y, u32 w, u32 h,
+@@ -2424,6 +2551,72 @@ static void vk_eng_readback(void* user, u32 surface, u32 x, u32 y, u32 w, u32 h,
      vk_destroy_buffer(&st);
  }
  
@@ -3739,7 +3748,7 @@ index b22e08f..221e287 100644
  /* ---- E3: textures ---------------------------------------------------------
   * The engine decodes every level to host rows (rsx_texture_decode) and hands
   * them over one upload each; the crossbar is a property of the view, so it
-@@ -2637,12 +2826,25 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
+@@ -2637,12 +2830,25 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
          if (vk_submit_and_wait()) return 0;
      }
  
@@ -3770,7 +3779,7 @@ index b22e08f..221e287 100644
      if (!rc) {
          vk_barrier_image(z->im.img, s_vk.depth_aspect, VK_IMAGE_LAYOUT_GENERAL);
          vk_barrier_image(t->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
-@@ -2659,9 +2861,12 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
+@@ -2659,9 +2865,12 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
          VkBufferImageCopy in = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
                                   .imageExtent = { w, h, 1 } };
          pvkCmdCopyBufferToImage(s_vk.cmd, st.buf, t->im.img, VK_IMAGE_LAYOUT_GENERAL, 1, &in);
@@ -3785,7 +3794,7 @@ index b22e08f..221e287 100644
      return rc ? 0 : snap;
  }
  /* The depth aspect of a D32_SFLOAT target copies out as 32-bit floats, which
-@@ -2706,6 +2911,46 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
+@@ -2706,6 +2915,46 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
      vk_destroy_buffer(&st);
      return rc ? -1 : 0;
  }
@@ -3832,23 +3841,23 @@ index b22e08f..221e287 100644
  /* ---- E2: pipelines and draws ---------------------------------------------
   * A pipeline handle carries the two translated modules and the render state
   * the engine keyed it on. Topology is not part of that key (Metal sets it on
-@@ -2774,6 +3019,7 @@ static u32 s_esamp_count;
+@@ -2774,6 +3023,7 @@ static u32 s_esamp_count;
  
  static void vk_eng_drop_framebuffers(void)
  {
-+    if (s_eb_pending) vk_eng_flush();
++    vk_eng_idle();
      for (u32 i = 0; i < s_e2.fb_count; i++)
          if (s_e2.fb[i].fb) pvkDestroyFramebuffer(s_vk.device, s_e2.fb[i].fb, NULL);
      s_e2.fb_count = 0;
-@@ -2983,6 +3229,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
+@@ -2983,6 +3233,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
  static void vk_eng_pipeline_release(void* user, u32 pipeline)
  {
      (void)user;
-+    if (s_eb_pending) vk_eng_flush();
++    vk_eng_idle();
      if (!pipeline || pipeline > VK_ENG_MAX_PIPE || !s_epipe[pipeline - 1].used) return;
      vk_eng_pipe* P = &s_epipe[pipeline - 1];
      for (u32 t = 0; t < VK_ENG_TOPOLOGIES; t++)
-@@ -3068,10 +3315,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+@@ -3068,10 +3319,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
      if ((rs->color_mask >>  8) & 0xFFu) wm |= VK_COLOR_COMPONENT_G_BIT;
      if ((rs->color_mask >>  0) & 0xFFu) wm |= VK_COLOR_COMPONENT_B_BIT;
      if ((rs->color_mask >> 24) & 0xFFu) wm |= VK_COLOR_COMPONENT_A_BIT;
@@ -3877,7 +3886,7 @@ index b22e08f..221e287 100644
              .srcColorBlendFactor = vk_gcm_blend_factor(rs->sf_rgb),
              .dstColorBlendFactor = vk_gcm_blend_factor(rs->df_rgb),
              .colorBlendOp = vk_gcm_blend_op(rs->eq_rgb),
-@@ -3296,19 +3560,146 @@ static VkImageView vk_eng_dummy_cube_view(void)
+@@ -3296,19 +3564,248 @@ static VkImageView vk_eng_dummy_cube_view(void)
      return s_eobj[s_e2.dummy_cube].im.view;
  }
  
@@ -3897,22 +3906,85 @@ index b22e08f..221e287 100644
 + * keeps seeing everything before it complete. Between batched draws a full
 + * memory barrier keeps render-to-texture ordering without tracking.
 + * VK_DRAW_BATCH_MAX (default 512) caps the draws per submission.
++ *
++ * VK_ASYNC=1: a flush submits without waiting. Each of VK_EB_SLOTS batches in
++ * flight has its own command buffer, fence, descriptor pool and a slice of
++ * every ring; a slot is waited on only when it comes round again. The GPU then
++ * runs a batch while the walker records the next, and a readback (which still
++ * waits) finds most of the work done. Destroys and the engine's submit point
++ * wait for every batch in flight (vk_eng_idle), so objects are never freed
++ * under the GPU. Default VK_DRAW_BATCH_MAX with it: 128.
 + * -------------------------------------------------------------------------*/
-+#define VK_EB_VB_BYTES   (64u << 20)
-+#define VK_EB_IB_BYTES   (16u << 20)
-+#define VK_EB_UB_BYTES   (32u << 20)
-+#define VK_EB_SB_BYTES   (64u << 20)   /* texture upload staging */
++#define VK_EB_SLOTS      3u
++#define VK_EB_VB_BYTES   (96u << 20)   /* each ring is split evenly between the slots */
++#define VK_EB_IB_BYTES   (24u << 20)
++#define VK_EB_UB_BYTES   (48u << 20)
++#define VK_EB_SB_BYTES   (96u << 20)   /* texture upload staging */
 +#define VK_EB_MAX_SETS   1024u
 +
 +static struct {
 +    int              on;            /* -1 undecided, 0 off, 1 on */
++    int              async;         /* VK_ASYNC: flushes do not wait */
 +    u32              max_draws;
 +    vk_buffer        vb, ib, ub, sb;
 +    VkDeviceSize     vb_head, ib_head, ub_head, sb_head, ub_align;
-+    VkDescriptorPool pool;
++    VkDeviceSize     vb_cap, ib_cap, ub_cap, sb_cap;   /* end of the current slot's slice */
++    VkDescriptorPool pool;          /* the current slot's */
 +    u32              sets;
-+    unsigned long long draws, flushes;
++    u32              cur;           /* current slot */
++    struct { VkCommandBuffer cmd; VkFence fence; VkDescriptorPool pool; u32 sets; int busy; } slot[VK_EB_SLOTS];
++    unsigned long long draws, flushes, slot_waits;
 +} s_eb = { .on = -1 };
++
++/* Make slot i current: wait for its last batch if it is still in flight, then
++ * hand its command buffer, fence, pool and ring slices to the recorder. */
++static void vk_eb_use_slot(u32 i)
++{
++    if (s_eb.slot[i].busy) {
++        const uint64_t ft_t0 = PS3_FT_ON() ? ps3_ft_now() : 0;
++        g_vk_fence_waiting = 1;
++        pvkWaitForFences(s_vk.device, 1, &s_eb.slot[i].fence, VK_TRUE, UINT64_MAX);
++        g_vk_fence_waiting = 0;
++        if (ft_t0) {
++            const uint64_t ft_t1 = ps3_ft_now();
++            if (ft_t1 - ft_t0 >= ps3_ft_min_ns()) ps3_ft_span(PS3_FT_GPU_WAIT, 0, 4, 0, ft_t0, ft_t1);
++        }
++        s_eb.slot[i].busy = 0;
++        s_eb.slot_waits++;
++    }
++    if (s_eb.slot[i].sets) { pvkResetDescriptorPool(s_vk.device, s_eb.slot[i].pool, 0); s_eb.slot[i].sets = 0; }
++    s_eb.cur = i;
++    s_vk.cmd = s_eb.slot[i].cmd;
++    s_vk.fence = s_eb.slot[i].fence;
++    s_eb.pool = s_eb.slot[i].pool;
++    s_eb.sets = 0;
++    const u32 n = s_eb.async ? VK_EB_SLOTS : 1u;
++    s_eb.vb_head = (VkDeviceSize)i * (VK_EB_VB_BYTES / n); s_eb.vb_cap = s_eb.vb_head + VK_EB_VB_BYTES / n;
++    s_eb.ib_head = (VkDeviceSize)i * (VK_EB_IB_BYTES / n); s_eb.ib_cap = s_eb.ib_head + VK_EB_IB_BYTES / n;
++    s_eb.ub_head = (VkDeviceSize)i * (VK_EB_UB_BYTES / n); s_eb.ub_cap = s_eb.ub_head + VK_EB_UB_BYTES / n;
++    s_eb.sb_head = (VkDeviceSize)i * (VK_EB_SB_BYTES / n); s_eb.sb_cap = s_eb.sb_head + VK_EB_SB_BYTES / n;
++}
++
++/* A synchronous submission has completed, and with it everything queued before. */
++static void vk_eb_all_done(void)
++{
++    for (u32 i = 0; i < VK_EB_SLOTS; i++) s_eb.slot[i].busy = 0;
++}
++
++/* Submit the open batch and wait for every batch in flight: before freeing an
++ * object the GPU may still use, and wherever the engine needs results. */
++static void vk_eng_idle(void)
++{
++    if (s_eb_pending) vk_eng_flush();
++    if (!s_eb.async) return;
++    for (u32 i = 0; i < VK_EB_SLOTS; i++)
++        if (s_eb.slot[i].busy) {
++            g_vk_fence_waiting = 1;
++            pvkWaitForFences(s_vk.device, 1, &s_eb.slot[i].fence, VK_TRUE, UINT64_MAX);
++            g_vk_fence_waiting = 0;
++            s_eb.slot[i].busy = 0;
++        }
++}
 +
 +static int vk_eb_on(void)
 +{
@@ -3920,8 +3992,10 @@ index b22e08f..221e287 100644
 +    const char* e = getenv("VK_DRAW_BATCH");
 +    s_eb.on = 0;
 +    if (!e || *e != '1' || !s_g.on) return 0;
++    const char* as = getenv("VK_ASYNC");
++    s_eb.async = as && *as == '1';
 +    const char* m = getenv("VK_DRAW_BATCH_MAX");
-+    s_eb.max_draws = m && atoi(m) > 0 ? (u32)atoi(m) : 512u;
++    s_eb.max_draws = m && atoi(m) > 0 ? (u32)atoi(m) : s_eb.async ? 128u : 512u;
 +    if (s_eb.max_draws > VK_EB_MAX_SETS) s_eb.max_draws = VK_EB_MAX_SETS;
 +    VkPhysicalDeviceProperties p;
 +    pvkGetPhysicalDeviceProperties(s_vk.phys, &p);
@@ -3936,12 +4010,37 @@ index b22e08f..221e287 100644
 +    if (vk_create_host_buffer(&s_eb.vb, VK_EB_VB_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) || !s_eb.vb.coherent ||
 +        vk_create_host_buffer(&s_eb.ib, VK_EB_IB_BYTES, VK_BUFFER_USAGE_INDEX_BUFFER_BIT) || !s_eb.ib.coherent ||
 +        vk_create_host_buffer(&s_eb.ub, VK_EB_UB_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT) || !s_eb.ub.coherent ||
-+        vk_create_host_buffer(&s_eb.sb, VK_EB_SB_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT) || !s_eb.sb.coherent ||
-+        pvkCreateDescriptorPool(s_vk.device, &pci, NULL, &s_eb.pool) != VK_SUCCESS) {
++        vk_create_host_buffer(&s_eb.sb, VK_EB_SB_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT) || !s_eb.sb.coherent) {
 +        VK_LOG("draw batching: no host-coherent ring memory, staying off\n");
 +        return 0;
 +    }
-+    VK_LOG("draw batching: on (up to %u draws per submission)\n", s_eb.max_draws);
++    /* Slot 0 is the recorder's own command buffer and fence; the others are
++     * only made for VK_ASYNC. */
++    const u32 nslots = s_eb.async ? VK_EB_SLOTS : 1u;
++    s_eb.slot[0].cmd = s_vk.cmd;
++    s_eb.slot[0].fence = s_vk.fence;
++    for (u32 i = 0; i < nslots; i++) {
++        if (pvkCreateDescriptorPool(s_vk.device, &pci, NULL, &s_eb.slot[i].pool) != VK_SUCCESS) {
++            VK_LOG("draw batching: no descriptor pool, staying off\n");
++            return 0;
++        }
++        if (i == 0) continue;
++        VkCommandBufferAllocateInfo cai = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
++                                            .commandPool = s_vk.pool,
++                                            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
++                                            .commandBufferCount = 1 };
++        VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
++        if (pvkAllocateCommandBuffers(s_vk.device, &cai, &s_eb.slot[i].cmd) != VK_SUCCESS ||
++            pvkCreateFence(s_vk.device, &fci, NULL, &s_eb.slot[i].fence) != VK_SUCCESS) {
++            VK_LOG("draw batching: no command buffer for an in-flight slot, async off\n");
++            s_eb.async = 0;
++            break;
++        }
++    }
++    vk_eb_use_slot(0);
++    s_eb_async = s_eb.async;
++    VK_LOG("draw batching: on (up to %u draws per submission%s)\n", s_eb.max_draws,
++           s_eb.async ? ", 3 submissions in flight" : "");
 +    s_eb.on = 1;
 +    return 1;
 +}
@@ -3962,12 +4061,12 @@ index b22e08f..221e287 100644
 +{
 +    if (!vk_eb_active()) return -2;
 +    const VkDeviceSize bytes = (VkDeviceSize)tight * rows;
-+    if (!bytes || bytes > VK_EB_SB_BYTES) return -2;
-+    VkDeviceSize off = vk_eb_take(&s_eb.sb_head, VK_EB_SB_BYTES, bytes, 16u);
++    if (!bytes) return -2;
++    VkDeviceSize off = vk_eb_take(&s_eb.sb_head, s_eb.sb_cap, bytes, 16u);
 +    if (off == (VkDeviceSize)-1) {
 +        vk_eng_flush();
-+        off = vk_eb_take(&s_eb.sb_head, VK_EB_SB_BYTES, bytes, 16u);
-+        if (off == (VkDeviceSize)-1) return -2;
++        off = vk_eb_take(&s_eb.sb_head, s_eb.sb_cap, bytes, 16u);
++        if (off == (VkDeviceSize)-1) return -2;       /* larger than a slot's slice */
 +    }
 +    for (u32 y = 0; y < rows; y++)
 +        memcpy((u8*)s_eb.sb.ptr + off + (size_t)y * tight, (const u8*)src + (size_t)y * row_bytes, tight);
@@ -3984,11 +4083,23 @@ index b22e08f..221e287 100644
 +{
 +    if (!s_eb_pending) return;
 +    s_eb_pending = 0;               /* first: the submit below must not re-enter */
-+    vk_submit_and_wait();
-+    s_eb.vb_head = s_eb.ib_head = s_eb.ub_head = s_eb.sb_head = 0;
-+    if (s_eb.sets) { pvkResetDescriptorPool(s_vk.device, s_eb.pool, 0); s_eb.sets = 0; }
++    s_eb.slot[s_eb.cur].sets = s_eb.sets;
++    if (s_eb.async) {
++        if (pvkEndCommandBuffer(s_vk.cmd) == VK_SUCCESS &&
++            pvkResetFences(s_vk.device, 1, &s_vk.fence) == VK_SUCCESS) {
++            VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
++                                .commandBufferCount = 1, .pCommandBuffers = &s_vk.cmd };
++            if (vk_queue_submit(&si, s_vk.fence) == VK_SUCCESS) s_eb.slot[s_eb.cur].busy = 1;
++            else VK_LOG("draw batching: vkQueueSubmit failed\n");
++        }
++        vk_eb_use_slot((s_eb.cur + 1u) % VK_EB_SLOTS);
++    } else {
++        vk_submit_and_wait();
++        vk_eb_use_slot(0);
++    }
 +    if ((++s_eb.flushes & 0x3FFFu) == 0)
-+        VK_LOG("draw batching: %llu draws in %llu submissions\n", s_eb.draws, s_eb.flushes);
++        VK_LOG("draw batching: %llu draws in %llu submissions, %llu waits for a slot\n",
++               s_eb.draws, s_eb.flushes, s_eb.slot_waits);
 +}
 +
 +static VkDeviceSize vk_eb_take(VkDeviceSize* head, VkDeviceSize cap, VkDeviceSize bytes, VkDeviceSize align)
@@ -4027,7 +4138,7 @@ index b22e08f..221e287 100644
      };
      VkDescriptorImageInfo ii[RSX_MAX_TEXTURES], si[RSX_MAX_TEXTURES];
      for (u32 u = 0; u < RSX_MAX_TEXTURES; u++) {
-@@ -3381,16 +3772,64 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+@@ -3381,16 +3878,64 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
      if (!pipe || !rp || !fb) return;
  
      const VkDeviceSize vbytes = (VkDeviceSize)vertex_count * stride;
@@ -4041,17 +4152,17 @@ index b22e08f..221e287 100644
 +    VkDeviceSize voff = 0, ioff = 0;
 +    VkDescriptorSet set = VK_NULL_HANDLE;
 +    const u32 vsb = s_e2.vs_bytes ? s_e2.vs_bytes : 16u, psb = s_e2.ps_bytes ? s_e2.ps_bytes : 16u;
-+    int batched = vk_eb_on() && vbytes <= VK_EB_VB_BYTES && ibytes <= VK_EB_IB_BYTES;
++    int batched = vk_eb_on() && vbytes <= VK_EB_VB_BYTES / VK_EB_SLOTS && ibytes <= VK_EB_IB_BYTES / VK_EB_SLOTS;
 +    if (batched && P->cube_mask && !vk_eng_dummy_cube_view()) return;   /* may flush: before any slice */
 +    if (batched) {
 +        /* Slices of the rings and a set from the pool; a full one flushes the
 +         * batch (which empties them all) and the draw takes its slices again. */
 +        for (int tries = 0; tries < 2; tries++) {
 +            VkDeviceSize vh = s_eb.vb_head, ih = s_eb.ib_head, uh = s_eb.ub_head;
-+            voff = vk_eb_take(&vh, VK_EB_VB_BYTES, vbytes, 16u);
-+            ioff = ibytes ? vk_eb_take(&ih, VK_EB_IB_BYTES, ibytes, 16u) : 0;
-+            const VkDeviceSize uvs = vk_eb_take(&uh, VK_EB_UB_BYTES, vsb, s_eb.ub_align);
-+            const VkDeviceSize ups = uvs == (VkDeviceSize)-1 ? uvs : vk_eb_take(&uh, VK_EB_UB_BYTES, psb, s_eb.ub_align);
++            voff = vk_eb_take(&vh, s_eb.vb_cap, vbytes, 16u);
++            ioff = ibytes ? vk_eb_take(&ih, s_eb.ib_cap, ibytes, 16u) : 0;
++            const VkDeviceSize uvs = vk_eb_take(&uh, s_eb.ub_cap, vsb, s_eb.ub_align);
++            const VkDeviceSize ups = uvs == (VkDeviceSize)-1 ? uvs : vk_eb_take(&uh, s_eb.ub_cap, psb, s_eb.ub_align);
 +            if (voff != (VkDeviceSize)-1 && ioff != (VkDeviceSize)-1 && ups != (VkDeviceSize)-1 &&
 +                s_eb.sets < VK_EB_MAX_SETS) {
 +                VkDescriptorSetLayout lay = P->cube_mask ? s_e2.split_layout : s_g.set_layout;
@@ -4101,7 +4212,7 @@ index b22e08f..221e287 100644
      /* Everything submitted before is complete (each submission is waited
       * on); this orders memory for the surfaces this draw touches. */
      for (u32 i = 0; i < n; i++)
-@@ -3421,16 +3860,17 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+@@ -3421,16 +3966,17 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
      pvkCmdBindDescriptorSets(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               P->cube_mask ? s_e2.split_pipe_layout : s_g.pipe_layout,
                               0, 1, &set, 0, NULL);
@@ -4124,7 +4235,7 @@ index b22e08f..221e287 100644
  }
  
  static const rsx_draw_backend s_vk_engine_backend = {
-@@ -3466,6 +3906,7 @@ static const rsx_draw_backend s_vk_engine_backend = {
+@@ -3466,6 +4012,7 @@ static const rsx_draw_backend s_vk_engine_backend = {
      .present              = vk_eng_present,
      .readback             = vk_eng_readback,
      .depth_readback       = vk_eng_depth_readback,
@@ -4132,7 +4243,22 @@ index b22e08f..221e287 100644
      .color_target_write   = vk_eng_color_target_write,
  };
  
-@@ -3693,7 +4134,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3685,6 +4232,14 @@ void rsx_vulkan_backend_shutdown(void)
+         vk_destroy_image(&s_vk.color);
+         vk_destroy_buffer(&s_vk.vertices);
+         vk_destroy_buffer(&s_vk.readback);
++        if (s_eb.on == 1) {            /* the batch slots (slot 0 is s_vk's own) */
++            s_vk.cmd = s_eb.slot[0].cmd;
++            s_vk.fence = s_eb.slot[0].fence;
++            for (u32 i = 0; i < VK_EB_SLOTS; i++) {
++                if (s_eb.slot[i].pool) pvkDestroyDescriptorPool(s_vk.device, s_eb.slot[i].pool, NULL);
++                if (i && s_eb.slot[i].fence) pvkDestroyFence(s_vk.device, s_eb.slot[i].fence, NULL);
++            }
++        }
+         if (s_vk.fence) pvkDestroyFence(s_vk.device, s_vk.fence, NULL);
+         if (s_vk.pool)  pvkDestroyCommandPool(s_vk.device, s_vk.pool, NULL);
+         if (s_vk.present_fence) pvkDestroyFence(s_vk.device, s_vk.present_fence, NULL);
+@@ -3693,7 +4248,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -4141,7 +4267,7 @@ index b22e08f..221e287 100644
      free(s_vk.cpu_verts);
      pthread_mutex_destroy(&s_vk.queue_mu);
      pthread_mutex_destroy(&s_vk.present_mu);
-@@ -3757,5 +4198,3 @@ int rsx_vulkan_backend_depth_bounds(void)
+@@ -3757,5 +4312,3 @@ int rsx_vulkan_backend_depth_bounds(void)
  {
      return s_vk.eng_active && s_vk.depth_bounds_ok;
  }
@@ -5017,7 +5143,7 @@ index 1a393fd..4966953 100644
  }
  static void sys_lwcond_destroy(ppu_context* ctx)    { ctx->gpr[3] = 0; }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b..496ec15 100644
+index 59f5e4b..7069915 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -24,10 +24,12 @@
@@ -5180,7 +5306,64 @@ index 59f5e4b..496ec15 100644
  static SPU_TLS jmp_buf s_spu_halt_env;
  static SPU_TLS int     s_spu_halt_armed = 0;
  
-@@ -285,6 +333,10 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
+@@ -200,9 +248,46 @@ void spu_stop(spu_context* ctx)
+ 
+ /* Run a lifted SPU entry with a halt landing pad. Returns 1 if the job halted
+  * (via spu_halt), 0 if it returned normally. */
++/* SPU_FP_NATIVE (spu_helpers.h): lifted single-precision ops are native
++ * instructions that need round-toward-zero, the SPU's rounding, so every run is
++ * made under it and the caller's mode is put back on the way out. A halt's
++ * longjmp restores the MXCSR saved by the setjmp below, which is already RZ.
++ * SPU_FP_CHECK=1: compare every such op with the exact path. */
++int g_spu_fp_check = -1;
++void spu_fp_check(int op, u128 a, u128 b, u128 c, u128 r)
++{
++    u128 e;
++    switch (op) {
++    case 0:  e = spu_fa_ref(a, b); break;
++    case 1:  e = spu_fs_ref(a, b); break;
++    case 2:  e = spu_fm_ref(a, b); break;
++    case 3:  e = spu_fma_ref(a, b, c); break;
++    case 4:  e = spu_fms_ref(a, b, c); break;
++    default: e = spu_fnms_ref(a, b, c); break;
++    }
++    static volatile LONG64 s_n, s_bad;
++    const LONG64 n = InterlockedIncrement64(&s_n);
++    if (memcmp(&e, &r, sizeof e)) {
++        const LONG64 k = InterlockedIncrement64(&s_bad);
++        if (k <= 40)
++            fprintf(stderr, "[spu-fp] op %d mismatch (mxcsr 0x%04X): a %08X %08X %08X %08X b %08X %08X %08X %08X"
++                    " c %08X %08X %08X %08X got %08X %08X %08X %08X want %08X %08X %08X %08X\n",
++                    op, _mm_getcsr(), a._u32[0], a._u32[1], a._u32[2], a._u32[3], b._u32[0], b._u32[1], b._u32[2],
++                    b._u32[3], c._u32[0], c._u32[1], c._u32[2], c._u32[3], r._u32[0], r._u32[1], r._u32[2],
++                    r._u32[3], e._u32[0], e._u32[1], e._u32[2], e._u32[3]);
++    }
++    if ((n & 0x3FFFFFF) == 0)
++        fprintf(stderr, "[spu-fp] %lld ops checked, %lld mismatches\n", (long long)n, (long long)s_bad);
++}
++
+ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
+ {
+     int halted = 0;
++    if (g_spu_fp_check < 0) { const char* e = getenv("SPU_FP_CHECK"); g_spu_fp_check = e && *e == '1'; }
++#ifdef SPU_FP_NATIVE
++    const unsigned fp_csr = _mm_getcsr();
++    _mm_setcsr(fp_csr | 0x6000u);                   /* RC = 11: toward zero */
++#endif
+     /* Job-args probe: image-1 (the WWS job binary) entries arrive at the crt
+      * with r3/r4 zeroed in SOME runs while the jm2 runner sets them -- count
+      * and stamp every image-1 run here to find the argless caller. */
+@@ -274,6 +359,9 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
+     yz_lockstep_unregister(ctx);   /* leave the ring; hand the token onward */
+     s_spu_halt_armed = outer_armed;
+     if (outer_armed) memcpy(s_spu_halt_env, outer_env, sizeof(jmp_buf));
++#ifdef SPU_FP_NATIVE
++    _mm_setcsr(fp_csr);
++#endif
+     return halted;
+ }
+ 
+@@ -285,6 +373,10 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
   * the context's single execution owner protects its engine after lookup.
   * Release is permitted only after that owner has stopped using the context.
   * ===========================================================================*/
@@ -5191,7 +5374,7 @@ index 59f5e4b..496ec15 100644
  typedef struct spu_mfc_slot {
      spu_context* ctx;
      mfc_engine mfc;
-@@ -293,6 +345,10 @@ typedef struct spu_mfc_slot {
+@@ -293,6 +385,10 @@ typedef struct spu_mfc_slot {
  
  static spu_mfc_slot* s_mfc_slots;
  static SRWLOCK s_mfc_claim_lock = SRWLOCK_INIT;
@@ -5202,7 +5385,7 @@ index 59f5e4b..496ec15 100644
  
  /* SPU_PCSAMPLE=<secs>: every <secs>, print image and pc of every context
   * holding an MFC slot -- i.e. every live SPU that has done DMA. Answers
-@@ -319,13 +375,29 @@ static DWORD WINAPI spu_pcsample_thread(LPVOID p)
+@@ -319,13 +415,29 @@ static DWORD WINAPI spu_pcsample_thread(LPVOID p)
  
  static mfc_engine* mfc_for(spu_context* ctx)
  {
@@ -5233,7 +5416,7 @@ index 59f5e4b..496ec15 100644
              return &slot->mfc;
          }
      }
-@@ -336,6 +408,7 @@ static mfc_engine* mfc_for(spu_context* ctx)
+@@ -336,6 +448,7 @@ static mfc_engine* mfc_for(spu_context* ctx)
      AcquireSRWLockExclusive(&s_mfc_claim_lock);
      for (spu_mfc_slot* slot = s_mfc_slots; slot; slot = slot->next) {
          if (slot->ctx == ctx) {
@@ -5241,7 +5424,7 @@ index 59f5e4b..496ec15 100644
              ReleaseSRWLockExclusive(&s_mfc_claim_lock);
              return &slot->mfc;
          }
-@@ -350,6 +423,7 @@ static mfc_engine* mfc_for(spu_context* ctx)
+@@ -350,6 +463,7 @@ static mfc_engine* mfc_for(spu_context* ctx)
      mfc_engine_init(&slot->mfc);
      slot->next = s_mfc_slots;
      s_mfc_slots = slot;
@@ -5249,7 +5432,7 @@ index 59f5e4b..496ec15 100644
      ReleaseSRWLockExclusive(&s_mfc_claim_lock);
      return &slot->mfc;
  }
-@@ -362,6 +436,7 @@ void spu_mfc_release(spu_context* ctx)
+@@ -362,6 +476,7 @@ void spu_mfc_release(spu_context* ctx)
          if ((*link)->ctx != ctx) continue;
          spu_mfc_slot* slot = *link;
          *link = slot->next;
@@ -5257,7 +5440,7 @@ index 59f5e4b..496ec15 100644
          free(slot);
          break;
      }
-@@ -378,6 +453,7 @@ void spu_mfc_forget_range(uintptr_t lo, uintptr_t hi)
+@@ -378,6 +493,7 @@ void spu_mfc_forget_range(uintptr_t lo, uintptr_t hi)
          uintptr_t owner = (uintptr_t)slot->ctx;
          if (owner >= lo && owner < hi) {
              *link = slot->next;
@@ -5265,7 +5448,7 @@ index 59f5e4b..496ec15 100644
              free(slot);
          } else {
              link = &slot->next;
-@@ -506,12 +582,19 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -506,12 +622,19 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
       * Built into ONE buffer and written with a single fprintf: several SPU host
       * threads and the PPU all write stderr, so a dump split across many fprintf
       * calls comes out shredded and unreadable exactly when it matters. */
@@ -5287,7 +5470,7 @@ index 59f5e4b..496ec15 100644
            static int _n = 0, s_cap = -1;
            /* SPU_ATOM_EA_MAX=<n>: lines to print (default 48, 0 = unlimited). */
            if (s_cap < 0) { const char* m = getenv("SPU_ATOM_EA_MAX"); s_cap = m ? atoi(m) : 48; }
-@@ -606,12 +689,27 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -606,12 +729,27 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
           * without a per-function probe. */
          { static SPU_THREAD_LOCAL uint32_t t_ea; static SPU_THREAD_LOCAL unsigned long t_n;
            if (ea != t_ea) { t_ea = ea; t_n = 0; }
@@ -5318,7 +5501,7 @@ index 59f5e4b..496ec15 100644
            } }
          spu_lockline_unlock();
          /* SPU_LLARWATCH=<hex EA>: every GETLLAR of that line, with the LSA it
-@@ -758,19 +856,22 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -758,19 +896,22 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
          /* SPU_ATOM_EA: the [atom-ea] line above prints every ATTEMPT, before
           * the compare. Say which of them committed, or a retried failure reads
           * as a lost update. */
@@ -5349,7 +5532,7 @@ index 59f5e4b..496ec15 100644
          return 1;
  
      case MFC_PUTLLUC_CMD:
-@@ -788,7 +889,8 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
+@@ -788,7 +929,8 @@ static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
          ctx->resv_valid = 0; ctx->atomic_stat = 2;   /* PUTLLUC complete */
          spu_lockline_unlock();
          spu_taskset_line_committed(ea & ~127u);
@@ -5359,7 +5542,7 @@ index 59f5e4b..496ec15 100644
          return 1;
  
      default:
-@@ -813,7 +915,48 @@ static int channel_is_mfc(uint32_t ch)
+@@ -813,7 +955,48 @@ static int channel_is_mfc(uint32_t ch)
  /* ===========================================================================
   * Channel write
   * ===========================================================================*/
@@ -5408,7 +5591,7 @@ index 59f5e4b..496ec15 100644
  {
      /* SPU_CHHIST=1: which channels a job actually touches, and how often. A
       * worker that never issues an MFC command is either not being handed its
-@@ -1045,7 +1188,7 @@ static void spu_ch_wait(spu_context* ctx, uint32_t channel, const char* op)
+@@ -1045,7 +1228,7 @@ static void spu_ch_wait(spu_context* ctx, uint32_t channel, const char* op)
  /* ===========================================================================
   * Channel read (returns value in the preferred word slot)
   * ===========================================================================*/
@@ -5417,7 +5600,7 @@ index 59f5e4b..496ec15 100644
  {
      { static int s_c = -1; if (s_c < 0) { const char* e = getenv("SPU_CHHIST"); s_c = e ? (atoi(e) > 0 ? atoi(e) : 2000) : 0; }
        if (s_c) { static unsigned long long r[128]; static unsigned long long n;
-@@ -1104,6 +1247,27 @@ u128 spu_rdch(spu_context* ctx, uint32_t channel)
+@@ -1104,6 +1287,27 @@ u128 spu_rdch(spu_context* ctx, uint32_t channel)
       * Wraparound on subtract is deliberate -- it is what hardware does, and the
       * `cgti > 0` test above is written to tolerate it. */
      case SPU_RdDec: {
@@ -5445,7 +5628,7 @@ index 59f5e4b..496ec15 100644
          /* Never armed by a WrDec: stamp the base on first read rather than
           * measuring from epoch 0, which would subtract the host's entire
           * uptime and hand back a wild value to code that has every right to
-@@ -1115,9 +1279,16 @@ u128 spu_rdch(spu_context* ctx, uint32_t channel)
+@@ -1115,9 +1319,16 @@ u128 spu_rdch(spu_context* ctx, uint32_t channel)
           * never writes its decrementer (the SPURS kernel's) keeps the stamp
           * from boot, so every timed loop on that SPU saw the counter jump
           * forward by ~16 s of ticks at 231 s, 462 s, 693 s... */
@@ -5462,7 +5645,7 @@ index 59f5e4b..496ec15 100644
          v = ctx->decrementer - ticks;
          break;
      }
-@@ -1468,7 +1639,36 @@ static void spu_report_cross_image(uint32_t addr, int want, int got)
+@@ -1468,7 +1679,36 @@ static void spu_report_cross_image(uint32_t addr, int want, int got)
              "issue #59.\n", addr, want, got);
  }
  
@@ -5499,7 +5682,7 @@ index 59f5e4b..496ec15 100644
  {
      /* Match the context's active image; image_id 0 (context or entry) matches
       * any, for back-compat with single-image contexts. */
-@@ -1514,7 +1714,21 @@ int spu_have_function(uint32_t addr)
+@@ -1514,7 +1754,21 @@ int spu_have_function(uint32_t addr)
   * spu_fn_registry.c before the registry was consolidated into this TU. */
  spu_lifted_fn spu_lifted_lookup(const spu_context* ctx, uint32_t lsa)
  {
@@ -5522,7 +5705,7 @@ index 59f5e4b..496ec15 100644
  }
  
  /* ---- Swappable code overlays (see spu_context.resident_ovl) --------------
-@@ -1522,12 +1736,22 @@ spu_lifted_fn spu_lifted_lookup(const spu_context* ctx, uint32_t lsa)
+@@ -1522,12 +1776,22 @@ spu_lifted_fn spu_lifted_lookup(const spu_context* ctx, uint32_t lsa)
   * the image id its lifted functions were registered under. The MFC GET path
   * marks that overlay resident in the streaming context; dispatch retries a
   * primary-image miss against the resident overlay's registry. */
@@ -5547,7 +5730,7 @@ index 59f5e4b..496ec15 100644
  
  void spu_overlay_register_source(uint32_t content_ea, int image_id)
  {
-@@ -1535,6 +1759,11 @@ void spu_overlay_register_source(uint32_t content_ea, int image_id)
+@@ -1535,6 +1799,11 @@ void spu_overlay_register_source(uint32_t content_ea, int image_id)
          s_ovl_src[s_ovl_src_count].src_ea = content_ea;
          s_ovl_src[s_ovl_src_count].image_id = image_id;
          s_ovl_src[s_ovl_src_count].has_sig = 0;
@@ -5559,7 +5742,7 @@ index 59f5e4b..496ec15 100644
          s_ovl_src_count++;
      }
  }
-@@ -1548,6 +1777,16 @@ void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_i
+@@ -1548,6 +1817,16 @@ void spu_overlay_register_region(uint32_t content_ea, uint32_t span, int image_i
      s_ovl_src[s_ovl_src_count - 1].span = span;
  }
  
@@ -5576,7 +5759,7 @@ index 59f5e4b..496ec15 100644
  /* Register one-way runtime entries that replace the guest call stack.
   * Matching the resolved function, not just its LS address, avoids affecting
   * unrelated overlays using the same address. Registration precedes execution. */
-@@ -1637,6 +1876,7 @@ void spu_overlay_register_sig(const uint8_t sig[16], int image_id)
+@@ -1637,6 +1916,7 @@ void spu_overlay_register_sig(const uint8_t sig[16], int image_id)
          s_ovl_src[s_ovl_src_count].image_id = image_id;
          memcpy(s_ovl_src[s_ovl_src_count].sig, sig, 16);
          s_ovl_src[s_ovl_src_count].has_sig = 1;
@@ -5584,7 +5767,7 @@ index 59f5e4b..496ec15 100644
          s_ovl_src_count++;
      }
  }
-@@ -1699,7 +1939,29 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
+@@ -1699,7 +1979,29 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
  {
      uint32_t lsa = (uint32_t)(ls - ctx->ls);
      spu_ovl_dump(ctx, ea, lsa, ls, size);
@@ -5615,7 +5798,7 @@ index 59f5e4b..496ec15 100644
          if (!ctx->resident_code[slot].image_id) continue;
          uint32_t base = ctx->resident_code[slot].lsa;
          uint32_t end = base + ctx->resident_code[slot].size;
-@@ -1707,14 +1969,22 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
+@@ -1707,14 +2009,22 @@ void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint
              (lsa < base || ea != ctx->resident_code[slot].source_ea + (lsa - base)))
              ctx->resident_code[slot].image_id = 0;
      }
@@ -5644,7 +5827,7 @@ index 59f5e4b..496ec15 100644
                      if (ctx->resident_code[slot].image_id && ctx->resident_code[slot].lsa != lsa)
                          continue;
                      ctx->resident_code[slot].lsa = lsa;
-@@ -1944,6 +2214,7 @@ void spu_spurs_taskset_syscall(spu_context* ctx)   /* non-static: also called by
+@@ -1944,6 +2254,7 @@ void spu_spurs_taskset_syscall(spu_context* ctx)   /* non-static: also called by
  static int spu_smc_microstep(spu_context* ctx)
  {
      uint32_t pc = ctx->pc & SPU_LS_MASK & ~3u;
@@ -5652,7 +5835,7 @@ index 59f5e4b..496ec15 100644
      for (int steps = 0; steps < 4096; steps++) {
          uint32_t w = ((uint32_t)ctx->ls[pc] << 24) | ((uint32_t)ctx->ls[pc+1] << 16) |
                       ((uint32_t)ctx->ls[pc+2] << 8) | ctx->ls[pc+3];
-@@ -2022,7 +2293,9 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2022,7 +2333,9 @@ static int spu_smc_microstep(spu_context* ctx)
          }
          if (op9 == 0x041 || op9 == 0x061) {                   /* stqa / lqa (abs) */
              /* LSA = I16 << 2 (SPU ISA, RI16 form), as in spu_interp.c and
@@ -5663,7 +5846,7 @@ index 59f5e4b..496ec15 100644
              uint32_t a = (((w >> 7) & 0xFFFF) << 2) & SPU_LS_MASK & ~15u;
              if (op9 == 0x041) spu_ls_write128(ctx, a, ctx->gpr[rt]);
              else              ctx->gpr[rt] = spu_ls_read128(ctx, a);
-@@ -2092,16 +2365,85 @@ static int spu_smc_microstep(spu_context* ctx)
+@@ -2092,16 +2405,85 @@ static int spu_smc_microstep(spu_context* ctx)
                        " microstep set -- handing to the interpreter (steps=%d)\n",
                        ctx->image_id, pc, w, steps); }
          ctx->pc = pc;
@@ -5753,7 +5936,7 @@ index 59f5e4b..496ec15 100644
          if (ctx->image_id >= 0 && (ctx->status & SPU_STATUS_RUNNING) &&
              (!return_pc || (ctx->pc & SPU_LS_MASK) != return_pc) &&
              spu_lifted_lookup(ctx, ctx->pc)) {
-@@ -2144,6 +2486,40 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2144,6 +2526,40 @@ void spu_indirect_branch(spu_context* ctx)
              /* Module exit: the workload returned to the kernel (drained/yield).
               * Print gated: fires once per policy run = thousands/sec. */
              g_spurs_pm_exited = 1;
@@ -5794,7 +5977,7 @@ index 59f5e4b..496ec15 100644
              { static SPU_THREAD_LOCAL int s_t = -1; if (s_t < 0) s_t = getenv("SPURS_PM_TRACE") ? 1 : 0;
                if (s_t) { static SPU_THREAD_LOCAL unsigned long _n = 0; unsigned long n = ++_n;
                  if (n <= 64 || (n & 0xFFF) == 0)
-@@ -2157,10 +2533,59 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2157,10 +2573,59 @@ void spu_indirect_branch(spu_context* ctx)
              /* cellSpursModulePoll: report "no contention — keep running".
               * (The host scheduler admits bounded workers; this service does not preempt.) */
              unsigned n = ++g_spurs_pm_polls;
@@ -5857,7 +6040,7 @@ index 59f5e4b..496ec15 100644
              ctx->pc = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
              return;
          }
-@@ -2278,7 +2703,7 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2278,7 +2743,7 @@ void spu_indirect_branch(spu_context* ctx)
       * is 0 outside the region, so this only ever fires for genuine task code.) */
      spu_fn fn = NULL;
      int code_owner = 0;
@@ -5866,7 +6049,7 @@ index 59f5e4b..496ec15 100644
          if (ctx->resident_code[slot].image_id && ctx->pc >= ctx->resident_code[slot].lsa &&
              ctx->pc - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size) {
              code_owner = ctx->resident_code[slot].image_id;
-@@ -2293,6 +2718,12 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2293,6 +2758,12 @@ void spu_indirect_branch(spu_context* ctx)
       * may also be registered (historical junk lifts) and must lose. */
      if (!code_owner && !fn && ctx->resident_ovl) fn = spu_lookup(ctx->pc, ctx->resident_ovl);
      if (!code_owner && !fn) fn = spu_lookup(ctx->pc, ctx->image_id);
@@ -5879,7 +6062,7 @@ index 59f5e4b..496ec15 100644
      /* The job returned through the link register we planted: it is finished.
       * Its outermost frame ends in `bi $r0`, and r0 was 0 -- so without this the
       * return landed on LS 0, which is the job's OWN entry, and it ran a second
-@@ -2407,12 +2838,35 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2407,12 +2878,35 @@ void spu_indirect_branch(spu_context* ctx)
       * ila header identifies which of the 89 lifted job modules it is; match it and
       * mark that overlay resident so the module's lifted functions dispatch. The
       * module arrives via a DMA LIST, so the single-GET note_get hook never fired. */
@@ -5916,7 +6099,7 @@ index 59f5e4b..496ec15 100644
              if (img) {
                  if (ctx->resident_ovl != img) {
                      ctx->resident_ovl = img;
-@@ -2665,12 +3119,65 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2665,12 +3159,65 @@ void spu_indirect_branch(spu_context* ctx)
              fflush(stderr);
          }
      }
@@ -5982,7 +6165,7 @@ index 59f5e4b..496ec15 100644
      /* Cap the unresolved-branch log PER IMAGE: a global cap let one noisy
       * image (the FMOD mixer's overlay calls) exhaust it and silently hide
       * every other image's misses -- LBP's loading jobs skipped their command
-@@ -2679,9 +3186,16 @@ void spu_indirect_branch(spu_context* ctx)
+@@ -2679,9 +3226,16 @@ void spu_indirect_branch(spu_context* ctx)
        static int _bt0[BT0_MAX_IMG];
        unsigned img = (ctx->image_id >= 0 && ctx->image_id < BT0_MAX_IMG)
                       ? (unsigned)ctx->image_id : 0;
@@ -6756,7 +6939,7 @@ index fc3cea1..b38af7f 100644
              spu_task_launch_check(ctx, (void*)fn);
              if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) {
 diff --git a/runtime/spu/spu_helpers.h b/runtime/spu/spu_helpers.h
-index 3f7d733..2913d90 100644
+index 3f7d733..ad7f677 100644
 --- a/runtime/spu/spu_helpers.h
 +++ b/runtime/spu/spu_helpers.h
 @@ -453,6 +453,40 @@ static inline u128 spu_shufb(u128 a, u128 b, u128 c) {
@@ -6818,7 +7001,139 @@ index 3f7d733..2913d90 100644
  #else
  static inline u128 spu_rotqbyi(u128 a, int sh) { return spu_rotqbyi_ref(a, sh); }
  #endif
-@@ -1179,6 +1217,8 @@ static inline u128 spu_shlqby_ref(u128 a, u128 b){ int sh=b._u32[0]&0x1F; u128 r
+@@ -901,6 +939,66 @@ SPU__X8_INLINE u128 spu__x8_fa(u128 a, u128 b, uint32_t negb) {
+     ok = _mm_and_si128(ok, pre);
+     return spu__x8_all4(ok) ? spu__x8_st(r) : spu__x8_fa_fix(spu__x8_st(r), ok, a, b, negb);
+ }
++#if defined(SPU_FP_NATIVE) && defined(__FMA__)
++/* SPU_FP_NATIVE: the single-precision ops as one native instruction each, under
++ * round-toward-zero -- the SPU's rounding. spu_run_with_halt puts every SPU run
++ * in that mode (MXCSR.RC = 11), and nothing else may call these. For two
++ * ordinary singles (or zeros) a native op rounded toward zero IS the SPU result,
++ * so a lane is kept when its inputs are ordinary (exponent 1..254, or +-0) and
++ * its result is an ordinary single below the top binade (exponent 1..253: the
++ * SPU saturates an overflow to 0x7FFFFFFF where IEEE stops at 0x7F7FFFFF), or a
++ * zero that is exact (fa/fs: always, a sum of singles never rounds to zero;
++ * fm/fma: a zero factor, and for fma a zero addend). Zeros lose their sign as
++ * on the x8 path. Every other lane is redone exactly, one by one. FMA3's fused
++ * multiply-add rounds once, like the SPU's. SPU_FP_CHECK=1 compares each result
++ * with the exact path (spu_fp_check, spu_channels.c). */
++extern int g_spu_fp_check;
++void spu_fp_check(int op, u128 a, u128 b, u128 c, u128 r);
++SPU__X8_INLINE __m128i spu__xn_ok(__m128i r) {
++    const __m128i e = spu__x8_bexp(r);
++    return _mm_and_si128(_mm_cmpgt_epi32(e, _mm_setzero_si128()), _mm_cmpgt_epi32(_mm_set1_epi32(254), e));
++}
++SPU__X8_INLINE __m128i spu__xn_pos0(__m128i r, __m128i z) {
++    return _mm_andnot_si128(_mm_and_si128(z, _mm_set1_epi32((int)0x80000000u)), r);
++}
++SPU__X8_INLINE u128 spu__xn_fa(u128 a, u128 b, uint32_t negb, int op) {
++    const __m128i x = spu__x8_ld(a), y = _mm_xor_si128(spu__x8_ld(b), _mm_set1_epi32((int)negb));
++    const __m128i r = _mm_castps_si128(_mm_add_ps(_mm_castsi128_ps(x), _mm_castsi128_ps(y)));
++    const __m128i z = spu__x8_zero(r);
++    const __m128i ok = _mm_and_si128(_mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)), _mm_or_si128(spu__xn_ok(r), z));
++    const u128 v = spu__x8_st(spu__xn_pos0(r, z));
++    const u128 out = spu__x8_all4(ok) ? v : spu__x8_fa_fix(v, ok, a, b, negb);
++    if (g_spu_fp_check) spu_fp_check(op, a, b, b, out);
++    return out;
++}
++SPU__X8_INLINE u128 spu_fa(u128 a, u128 b) { return spu__xn_fa(a, b, 0, 0); }
++SPU__X8_INLINE u128 spu_fs(u128 a, u128 b) { return spu__xn_fa(a, b, 0x80000000u, 1); }
++SPU__X8_INLINE u128 spu_fm(u128 a, u128 b) {
++    const __m128i x = spu__x8_ld(a), y = spu__x8_ld(b);
++    const __m128i r = _mm_castps_si128(_mm_mul_ps(_mm_castsi128_ps(x), _mm_castsi128_ps(y)));
++    const __m128i z = _mm_or_si128(spu__x8_zero(x), spu__x8_zero(y));
++    const __m128i ok = _mm_and_si128(_mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)), _mm_or_si128(spu__xn_ok(r), z));
++    const u128 v = spu__x8_st(spu__xn_pos0(r, z));
++    const u128 out = spu__x8_all4(ok) ? v : spu__x8_fm_fix(v, ok, a, b);
++    if (g_spu_fp_check) spu_fp_check(2, a, b, b, out);
++    return out;
++}
++SPU__X8_INLINE u128 spu__xn_fma(u128 a, u128 b, u128 c, uint32_t negp, uint32_t negc, int op) {
++    const __m128i x = _mm_xor_si128(spu__x8_ld(a), _mm_set1_epi32((int)negp)), y = spu__x8_ld(b);
++    const __m128i w = _mm_xor_si128(spu__x8_ld(c), _mm_set1_epi32((int)negc));
++    const __m128i r = _mm_castps_si128(_mm_fmadd_ps(_mm_castsi128_ps(x), _mm_castsi128_ps(y), _mm_castsi128_ps(w)));
++    const __m128i z = _mm_and_si128(_mm_or_si128(spu__x8_zero(x), spu__x8_zero(y)), spu__x8_zero(w));
++    const __m128i ok = _mm_and_si128(_mm_and_si128(_mm_and_si128(spu__x8_plain0(x), spu__x8_plain0(y)), spu__x8_plain0(w)),
++                                     _mm_or_si128(spu__xn_ok(r), z));
++    const u128 v = spu__x8_st(spu__xn_pos0(r, z));
++    const u128 out = spu__x8_all4(ok) ? v : spu__x8_fma_fix(v, ok, a, b, c, negp, negc);
++    if (g_spu_fp_check) spu_fp_check(op, a, b, c, out);
++    return out;
++}
++SPU__X8_INLINE u128 spu_fma(u128 a, u128 b, u128 c)  { return spu__xn_fma(a, b, c, 0, 0, 3); }            /* a*b + c */
++SPU__X8_INLINE u128 spu_fms(u128 a, u128 b, u128 c)  { return spu__xn_fma(a, b, c, 0, 0x80000000u, 4); }  /* a*b - c */
++SPU__X8_INLINE u128 spu_fnms(u128 a, u128 b, u128 c) { return spu__xn_fma(a, b, c, 0x80000000u, 0, 5); }  /* c - a*b */
++#else
+ SPU__X8_INLINE u128 spu_fa(u128 a, u128 b) { return spu__x8_fa(a, b, 0); }
+ SPU__X8_INLINE u128 spu_fs(u128 a, u128 b) { return spu__x8_fa(a, b, 0x80000000u); }
+ SPU__X8_INLINE u128 spu_fm(u128 a, u128 b) {
+@@ -925,6 +1023,7 @@ SPU__X8_INLINE u128 spu__x8_fma(u128 a, u128 b, u128 c, uint32_t negp, uint32_t
+ SPU__X8_INLINE u128 spu_fma(u128 a, u128 b, u128 c)  { return spu__x8_fma(a, b, c, 0, 0); }            /* a*b + c */
+ SPU__X8_INLINE u128 spu_fms(u128 a, u128 b, u128 c)  { return spu__x8_fma(a, b, c, 0, 0x80000000u); }  /* a*b - c */
+ SPU__X8_INLINE u128 spu_fnms(u128 a, u128 b, u128 c) { return spu__x8_fma(a, b, c, 0x80000000u, 0); }  /* c - a*b */
++#endif /* SPU_FP_NATIVE */
+ #else
+ static inline u128 spu_fa(u128 a, u128 b) { return spu__fa_s(a, b); }
+ static inline u128 spu_fs(u128 a, u128 b) { return spu__fs_s(a, b); }
+@@ -1058,16 +1157,26 @@ static inline uint64_t spu__d_out(double d) {
+     uint64_t u; memcpy(&u, &d, 8);
+     return spu__d_isnan(u) ? 0x7FF8000000000000ull : u;
+ }
+-#define SPU__D_V2(name, op) static inline u128 name(u128 a, u128 b) { u128 r; for (int i = 0; i < 2; i++) { \
++/* SPU_FP_NATIVE runs SPU code with MXCSR rounding toward zero (the single-precision
++ * rule); double precision rounds to nearest, so these put that back around the op. */
++#if defined(SPU_FP_NATIVE) && (defined(__SSE2__) || defined(_M_X64))
++#include <xmmintrin.h>
++#define SPU__RN_BEGIN const unsigned spu__csr = _mm_getcsr(); _mm_setcsr(spu__csr & ~0x6000u);
++#define SPU__RN_END   _mm_setcsr(spu__csr);
++#else
++#define SPU__RN_BEGIN
++#define SPU__RN_END
++#endif
++#define SPU__D_V2(name, op) static inline u128 name(u128 a, u128 b) { SPU__RN_BEGIN u128 r; for (int i = 0; i < 2; i++) { \
+     const uint64_t x = spu__dw_get(a, i), y = spu__dw_get(b, i); \
+     spu__dw_put(&r, i, (spu__d_isnan(x) || spu__d_isnan(y)) ? 0x7FF8000000000000ull \
+-                       : spu__d_out(spu__d_in(x) op spu__d_in(y))); } return r; }
++                       : spu__d_out(spu__d_in(x) op spu__d_in(y))); } SPU__RN_END return r; }
+ SPU__D_V2(spu_dfa, +)
+ SPU__D_V2(spu_dfs, -)
+ SPU__D_V2(spu_dfm, *)
+ #undef SPU__D_V2
+ /* dfma = a*b + c, dfms = a*b - c, dfnms = -(a*b - c), dfnma = -(a*b + c); c is rt. Fused. */
+-static inline u128 spu__dfmx(u128 a, u128 b, u128 c, int negate, int subtract) { u128 r;
++static inline u128 spu__dfmx(u128 a, u128 b, u128 c, int negate, int subtract) { SPU__RN_BEGIN u128 r;
+     for (int i = 0; i < 2; i++) {
+         const uint64_t x = spu__dw_get(a, i), y = spu__dw_get(b, i), z = spu__dw_get(c, i);
+         if (spu__d_isnan(x) || spu__d_isnan(y) || spu__d_isnan(z)) { spu__dw_put(&r, i, 0x7FF8000000000000ull); continue; }
+@@ -1079,7 +1188,7 @@ static inline u128 spu__dfmx(u128 a, u128 b, u128 c, int negate, int subtract) {
+         const uint64_t u = spu__d_out(v);
+         spu__dw_put(&r, i, (negate && !spu__d_isnan(u)) ? u ^ 0x8000000000000000ull : u);
+     }
+-    return r; }
++    SPU__RN_END return r; }
+ static inline u128 spu_dfma(u128 a, u128 b, u128 t)  { return spu__dfmx(a, b, t, 0, 0); }
+ static inline u128 spu_dfms(u128 a, u128 b, u128 t)  { return spu__dfmx(a, b, t, 0, 1); }
+ static inline u128 spu_dfnms(u128 a, u128 b, u128 t) { return spu__dfmx(a, b, t, 1, 1); }
+@@ -1099,7 +1208,7 @@ static inline u128 spu_fesd(u128 a) { u128 r;
+         spu__dw_put(&r, i, u);
+     }
+     return r; }
+-static inline u128 spu_frds(u128 a) { u128 r;
++static inline u128 spu_frds(u128 a) { SPU__RN_BEGIN u128 r;
+     for (int i = 0; i < 2; i++) {
+         const uint64_t u = spu__dw_get(a, i);
+         if (spu__d_isnan(u)) { r._u32[2*i] = 0x7FC00000u; r._u32[2*i+1] = 0; continue; }
+@@ -1107,7 +1216,7 @@ static inline u128 spu_frds(u128 a) { u128 r;
+         uint32_t w; memcpy(&w, &f, 4);
+         r._u32[2*i] = w; r._u32[2*i+1] = 0;
+     }
+-    return r; }
++    SPU__RN_END return r; }
+ 
+ 
+ /* ---- SPU double-precision (2 doubles/reg; dword i = words 2i(high),2i+1(low)).
+@@ -1179,6 +1288,8 @@ static inline u128 spu_shlqby_ref(u128 a, u128 b){ int sh=b._u32[0]&0x1F; u128 r
  static inline u128 spu_shlqby(u128 a, u128 b) {
      return spu__perm(a, vaddq_u8(spu__iota(), vdupq_n_u8((uint8_t)(b._u32[0] & 0x1F))));
  }
@@ -6827,7 +7142,7 @@ index 3f7d733..2913d90 100644
  #else
  static inline u128 spu_shlqby(u128 a, u128 b) { return spu_shlqby_ref(a, b); }
  #endif
-@@ -1187,6 +1227,8 @@ static inline u128 spu_rotqby_ref(u128 a, u128 b){ int sh=b._u32[0]&0x0F; u128 r
+@@ -1187,6 +1298,8 @@ static inline u128 spu_rotqby_ref(u128 a, u128 b){ int sh=b._u32[0]&0x0F; u128 r
  static inline u128 spu_rotqby(u128 a, u128 b) {
      return spu__perm(a, vandq_u8(vaddq_u8(spu__iota(), vdupq_n_u8((uint8_t)b._u32[0])), vdupq_n_u8(15)));
  }
@@ -6836,7 +7151,7 @@ index 3f7d733..2913d90 100644
  #else
  static inline u128 spu_rotqby(u128 a, u128 b) { return spu_rotqby_ref(a, b); }
  #endif
-@@ -1195,6 +1237,8 @@ static inline u128 spu_shlqbybi_ref(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x1F;
+@@ -1195,6 +1308,8 @@ static inline u128 spu_shlqbybi_ref(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x1F;
  static inline u128 spu_shlqbybi(u128 a, u128 b) {
      return spu__perm(a, vaddq_u8(spu__iota(), vdupq_n_u8((uint8_t)((b._u32[0] >> 3) & 0x1F))));
  }
@@ -6845,7 +7160,7 @@ index 3f7d733..2913d90 100644
  #else
  static inline u128 spu_shlqbybi(u128 a, u128 b) { return spu_shlqbybi_ref(a, b); }
  #endif
-@@ -1203,6 +1247,8 @@ static inline u128 spu_rotqbybi_ref(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x0F;
+@@ -1203,6 +1318,8 @@ static inline u128 spu_rotqbybi_ref(u128 a, u128 b){ int sh=(b._u32[0]>>3)&0x0F;
  static inline u128 spu_rotqbybi(u128 a, u128 b) {
      return spu__perm(a, vandq_u8(vaddq_u8(spu__iota(), vdupq_n_u8((uint8_t)(b._u32[0] >> 3))), vdupq_n_u8(15)));
  }
@@ -6854,7 +7169,7 @@ index 3f7d733..2913d90 100644
  #else
  static inline u128 spu_rotqbybi(u128 a, u128 b) { return spu_rotqbybi_ref(a, b); }
  #endif
-@@ -1441,6 +1487,8 @@ static inline u128 spu_rotqmby_ref(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])
+@@ -1441,6 +1558,8 @@ static inline u128 spu_rotqmby_ref(u128 a, u128 b)   { int sh=(0-(int)b._u32[0])
  static inline u128 spu_rotqmby(u128 a, u128 b) {
      return spu__perm(a, vsubq_u8(spu__iota(), vdupq_n_u8((uint8_t)((0 - (int)b._u32[0]) & 0x1F))));
  }
@@ -6863,7 +7178,7 @@ index 3f7d733..2913d90 100644
  #else
  static inline u128 spu_rotqmby(u128 a, u128 b) { return spu_rotqmby_ref(a, b); }
  #endif
-@@ -1449,6 +1497,8 @@ static inline u128 spu_rotqmbybi_ref(u128 a, u128 b) { int sh=(0-((int)b._u32[0]
+@@ -1449,6 +1568,8 @@ static inline u128 spu_rotqmbybi_ref(u128 a, u128 b) { int sh=(0-((int)b._u32[0]
  static inline u128 spu_rotqmbybi(u128 a, u128 b) {
      return spu__perm(a, vsubq_u8(spu__iota(), vdupq_n_u8((uint8_t)((0 - ((int)b._u32[0] >> 3)) & 0x1F))));
  }
@@ -6872,7 +7187,7 @@ index 3f7d733..2913d90 100644
  #else
  static inline u128 spu_rotqmbybi(u128 a, u128 b) { return spu_rotqmbybi_ref(a, b); }
  #endif
-@@ -1461,6 +1511,8 @@ static inline u128 spu_rotqmbyi_ref(u128 a, int i7)  { int sh=(0-i7)&0x1F; u128
+@@ -1461,6 +1582,8 @@ static inline u128 spu_rotqmbyi_ref(u128 a, int i7)  { int sh=(0-i7)&0x1F; u128
  static inline u128 spu_rotqmbyi(u128 a, int i7) {
      return spu__perm(a, vsubq_u8(spu__iota(), vdupq_n_u8((uint8_t)((0 - i7) & 0x1F))));
  }
@@ -7448,10 +7763,18 @@ index 2008961..da01608 100644
      CloseHandle(th);   /* detached */
  #else
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 905b351..3ad7ef1 100644
+index 905b351..cf8b190 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
-@@ -34,24 +34,155 @@
+@@ -26,6 +26,7 @@
+ #include "spu_coherency.h"
+ #include "../platform/win32_compat.h"
+ #include "spu_workload.h"
++#include "ps3emu/ps3_ftrace.h"
+ #include "spu_coherency.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -34,24 +35,155 @@
  
  extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
  
@@ -7609,7 +7932,7 @@ index 905b351..3ad7ef1 100644
  } s_pm_instances[SPURS_PM_INSTANCES];
  static SRWLOCK s_pm_directory_lock = SRWLOCK_INIT;
  static CONDITION_VARIABLE s_pm_directory_wake;
-@@ -98,7 +229,7 @@ static void policy_slot_release(struct PmSlot* slot)
+@@ -98,7 +230,7 @@ static void policy_slot_release(struct PmSlot* slot)
   * a direct caller that still owns a reference makes removal BUSY instead. */
  int spurs_policy_release_workload(uint32_t ea, uint32_t wid)
  {
@@ -7618,7 +7941,7 @@ index 905b351..3ad7ef1 100644
      AcquireSRWLockExclusive(&s_pm_directory_lock);
      for (unsigned i = 0; i < SPURS_PM_INSTANCES; i++) {
          struct PmInstance* pi = &s_pm_instances[i];
-@@ -134,7 +265,7 @@ void spurs_policy_release_instance(uint32_t ea)
+@@ -134,7 +266,7 @@ void spurs_policy_release_instance(uint32_t ea)
          pi->retiring = 1;
          while (pi->users)
              SleepConditionVariableSRW(&s_pm_directory_wake, &s_pm_directory_lock, INFINITE, 0);
@@ -7627,7 +7950,7 @@ index 905b351..3ad7ef1 100644
              struct PmSlot* slot = &pi->slots[w][n];
              AcquireSRWLockExclusive(&slot->lock);
              if (slot->ctx) {
-@@ -172,7 +303,6 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -172,7 +304,6 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * never progress its claim/stage pipeline). Image + context init happen
       * once; re-entries keep LS and only refresh the entry registers and the
       * (possibly game-updated) kernel-context fields. */
@@ -7635,7 +7958,7 @@ index 905b351..3ad7ef1 100644
      if (wid >= SPURS_PM_MAX_WKL || spu_num >= 6) return -1;
      struct PmSlot* resident = policy_slot(spurs_ea, wid, spu_num);
      if (!resident) return -1;
-@@ -225,6 +355,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -225,6 +356,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                          (unsigned long long)wkl_data);
          }
          first = 1;
@@ -7644,7 +7967,7 @@ index 905b351..3ad7ef1 100644
          spu_coh_unregister(ctx);
          spu_mfc_release(ctx);
          memset(ctx, 0, sizeof(*ctx));
-@@ -255,6 +387,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -255,6 +388,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * selectWorkload -- so it called our exit intercept for every poll and
       * branched to 0 for every select. It also tests wklCurrentId (0x1DC) against
       * 1, which only reads sensibly at the correct offset. */
@@ -7657,7 +7980,7 @@ index 905b351..3ad7ef1 100644
      KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
      KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
      KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
-@@ -281,15 +419,43 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -281,15 +420,43 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * treated the list header as an audit header and wrote FFFF over the
       * list's per-SPU cursor rows (SPU 0-3) and first job slots (SPU 4): the
       * "ticket values exploding" with extra SPUs. Titles pass a 32-bit list
@@ -7702,7 +8025,7 @@ index 905b351..3ad7ef1 100644
  
      /* RUN/END tracing: thousands of policy dispatches per second made these
       * unconditional fprintf+fflush pairs a real fraction of movie playback.
-@@ -300,6 +466,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -300,6 +467,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static SPU_THREAD_LOCAL unsigned long s_runs = 0;
      unsigned long runno = ++s_runs;
      int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
@@ -7717,7 +8040,7 @@ index 905b351..3ad7ef1 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -391,7 +565,101 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -391,7 +566,115 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -7733,7 +8056,21 @@ index 905b351..3ad7ef1 100644
 +    memcpy(prof_rc0, g_spu_rdch_ch_ticks, sizeof prof_rc0);
 +    const unsigned prof_j0 = g_spu_job_entries;
 +#endif
++    /* PS3_FTRACE: each module run is an SPU busy span, tagged with the image
++     * and the workload id (kernel threads never block on a channel, so the
++     * channel-wait hook in spu_channels.c records nothing for them). */
++    const uint64_t ft_t0 = PS3_FT_ON() ? ps3_ft_now() : 0;
      const int pm_halted = spu_run_with_halt(entry, ctx);
++    if (ft_t0) {
++        const uint64_t ft_t1 = ps3_ft_now();
++        if (ft_t1 - ft_t0 >= ps3_ft_min_ns()) {
++            /* who = the host kernel thread, numbered in first-run order (policy
++             * contexts all carry spu_id 0, so that would merge every thread). */
++            static SPU_THREAD_LOCAL int t_ft_k = -1; static volatile LONG s_ft_k;
++            if (t_ft_k < 0) t_ft_k = (int)InterlockedIncrement(&s_ft_k) - 1;
++            ps3_ft_span(PS3_FT_SPU_BUSY, (uint32_t)t_ft_k, (uint32_t)ctx->image_id, (uint32_t)wid, ft_t0, ft_t1);
++        }
++    }
 +#ifdef _WIN32
 +    /* SPURS_PM_PROF=<s>: every s seconds, the wall time each workload's module
 +     * runs took, as a share of the window. All of an instance's modules run on
@@ -7819,7 +8156,7 @@ index 905b351..3ad7ef1 100644
      /* A lane's run should only end through exitToKernel. Anything else strands
       * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
      if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-@@ -429,12 +697,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -429,12 +712,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */
@@ -8010,7 +8347,7 @@ index 66eef25..f109c29 100644
      int slot = -1;
      for (int i = 0; i < SYS_MEMORY_ALLOC_MAX; ++i)
 diff --git a/tools/ftrace_report.py b/tools/ftrace_report.py
-index d324e9b..864b163 100644
+index d324e9b..fef5776 100644
 --- a/tools/ftrace_report.py
 +++ b/tools/ftrace_report.py
 @@ -23,7 +23,8 @@ import sys
@@ -8019,7 +8356,7 @@ index d324e9b..864b163 100644
   GPU_ENCODE, GPU_WAIT, READBACK, GPU_EXEC) = range(1, 15)
 -GPU_WAIT_KIND = {0: "gpu wait (flush)", 1: "gpu wait (present)", 2: "gpu wait (in-flight)"}
 +GPU_WAIT_KIND = {0: "gpu wait (flush)", 1: "gpu wait (present)", 2: "gpu wait (in-flight)",
-+                 3: "gpu wait (sync submit)"}   # 3: Vulkan, b = caller RVA
++                 3: "gpu wait (sync submit)", 4: "gpu wait (batch slot)"}   # 3, 4: Vulkan; 3: b = caller RVA
  
  SYSCALL_NAMES = {   # runtime/syscalls/lv2_syscall_table.h
      43: "thread_yield", 44: "thread_join", 85: "event_flag_wait", 92: "semaphore_wait",
@@ -8029,7 +8366,7 @@ index d324e9b..864b163 100644
  RSX_ROWS = ("acquire wait", "drain", "present", "encode (flush)", "encode (present)",
 -            "gpu wait (flush)", "gpu wait (present)", "gpu wait (in-flight)", "readback")
 +            "gpu wait (flush)", "gpu wait (present)", "gpu wait (in-flight)",
-+            "gpu wait (sync submit)", "readback")
++            "gpu wait (sync submit)", "gpu wait (batch slot)", "readback")
  
  
  def load(path):

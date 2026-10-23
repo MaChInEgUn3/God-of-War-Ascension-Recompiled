@@ -461,6 +461,38 @@ Update (M0.55, 2026-10-22): **a steadier metric, and the batching results re-sco
   garbage usually appears, so they say nothing about it either way.
 - Where the level is now: ~1-1.4 game frames/s late in the level (the boss fight), ~1.6 right after loading. The GPU
   wait is no longer the limit; the CPU side is (SPU job cost and how many host threads run SPU work).
+Update (M0.56, 2026-10-22): **in gameplay, two chains of about the same length.**
+Measured from a `PS3_FTRACE` timeline at 700-720 s, where a frame is ~500 ms:
+- **Walker chain.** The RSX walker is busy ("drain") ~400 ms per frame and never waits on a semaphore ACQUIRE.
+  ~170 ms of that is waiting on the GPU at batch flushes: `vk_eng_submit_and_wait` (315 x 10 ms) and `vk_begin`
+  (146 x 11.7 ms). The submit-and-waits come from coherence readbacks (a surface read back into guest memory) and
+  wait for the whole open batch.
+- **SPU / main chain.** The main thread waits ~353 ms per frame for the WWS job lists (`0x3E8388`) and ~32 ms in
+  the game's frame pacing.
+  - The pacing is `0x375A60`: `usleep(30)` until the flip counter at `*(0x9BE004)+8` reaches the game frame
+    counter (`0x9710C8`) − 1.
+  - The kernel threads are not saturated. Audio (wid 8) keeps one thread 81% busy. The other two are ~73% busy,
+    with EDGE (wids 15-17, ~1500 jobs per game frame) taking ~85% of a thread's worth.
+  - EDGE ch8 is down to 3-5%, so the ring-space backoff is mostly gone. The job lists are bound by the latency
+    of the job chain, not by thread count.
+- `VK_ASYNC=1`: batches are submitted without waiting, with up to 3 in flight. The GPU sync wait went from 199 to
+  81 ms per frame, but frames did not move (swapped 2+2, tail 0.918 vs 0.917): the SPU chain is as long as the
+  walker's. It stays off by default.
+- `PS3_FTRACE` now records SPU busy spans for SPURS module runs, tagged with kernel thread, image and workload. In a
+  heavy scene the SPUs are 232% busy of 300%: audio is 34% of that, EDGE 42% (~800 ms of SPU work per ~835 ms
+  frame).
+
+Update (M0.57, 2026-10-22): **native SPU single-precision floats** (`SPU_FP_NATIVE`, port build option
+`GOW_SPU_FP_NATIVE`, on).
+- The lifted SPU code emulated `fa`/`fs`/`fm`/`fma`/`fms`/`fnms` bit for bit, through doubles, with checks. The SPU
+  rounds singles toward zero, so with the host's MXCSR set to round toward zero (every `spu_run_with_halt`) a
+  native add, multiply or FMA3 gives the same bits for ordinary operands. Other lanes still take the exact path,
+  and double-precision ops put round-to-nearest back around themselves.
+- `SPU_FP_CHECK=1` compares every op with the exact path: 1.34e9 ops through boot and gameplay, 0 mismatches.
+- Swapped 2+2 A/B, tail: 1.175/1.269/1.098/1.031 vs 1.169/1.242/1.042/0.998 (+2.7%, 3 of 4 pairs). EDGE per-job cost
+  went down 5-20% (`[pm-prof]`).
+- Frames moved much less than the job cost. The job lists the main thread waits on are bound by the job chain's
+  latency more than by its total compute.
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
 looks like texels read from memory that does not hold the texture (yet). Examples: `vos_1` f_08400 with batching

@@ -5,7 +5,8 @@ Reads a run log made with PS3_POLLTOP=60 and GOW_HEARTBEAT=30. For each 60 s
 usleep-poll report it takes the milliseconds slept at the main loop's wait site
 (lr 0x003E8388: the frame waits there for the WWS job lists the policy module
 completes) and the game frames counted by the heartbeats around that report, and
-prints wait_ms/frame and work_ms/frame. Runs reach the level at different times
+prints wait_ms/frame and work_ms/frame. "work" is everything else, including the
+game's frame pacing wait (usleep(30) at lr 0x00375A88 until the flip counter catches up). Runs reach the level at different times
 and in different scenes, so frames per 300 s varies by +-12% between identical
 builds; these two numbers are steadier and say which side of the frame moved.
 

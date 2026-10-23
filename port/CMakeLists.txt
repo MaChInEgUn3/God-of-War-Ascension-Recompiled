@@ -74,6 +74,15 @@ if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     add_compile_options(/Zc:tlsGuards-)
 endif()
 
+# SPU single-precision ops as native instructions under round-toward-zero (the
+# SPU's rounding), instead of exact emulation through doubles. Exact for
+# ordinary operands; other lanes still take the exact path. spu_helpers.h,
+# spu_run_with_halt. SPU_FP_CHECK=1 at run time compares every op.
+option(GOW_SPU_FP_NATIVE "Native SPU single-precision ops (round toward zero)" ON)
+if(GOW_SPU_FP_NATIVE)
+    add_compile_definitions(SPU_FP_NATIVE=1)
+endif()
+
 # ---------------------------------------------------------------------------
 # ps3recomp runtime library
 # ---------------------------------------------------------------------------
