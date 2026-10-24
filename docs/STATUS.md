@@ -714,6 +714,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Moving to 1.12 means a full PPU re-lift, those 12 modules and the EDGE fragments re-lifted, and every hardcoded
     address remapped (best done with a function-matching tool). That is several days. Parked as a milestone for
     before any release, since most players will have 1.12 installed.
+- **SPU MLAA off: no gain.**
+  - RPCS3's public "Disable SPU MLAA - God of War: Ascension" patch (`il r2,0` at LS `0x4440`, `il r10,0` at
+    `0x56C4`) matches our `gowtask0` (image 14): the original instructions there write exactly r2 and r10.
+  - Both arms were re-lifted with the current lifter from a patched copy of the EBOOT and from the original one.
+    A/B, no hang:
+    - pair 1: tail 2.283 (MLAA off) vs 2.396 (on);
+    - pair 2: 1.971 vs 1.950.
+
+    EDGE ms/job is flat as well. MLAA runs outside the serial EDGE chain, so the frame does not shorten. The patch is
+    not kept.
+  - Side effect of the re-lift: the seven SPU images (`images.json`) are now lifted with the current lifter (a
+    `_bt`/`_tg` rename, and `srepm0`'s `stop` now carries code `0x3FFF`). No hang in the four runs.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
