@@ -785,6 +785,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - The A/B harness's `SPURS_PM_PROF` itself costs ~5% of EDGE time: two `QueryPerformanceCounter` calls per channel
     op. It is not set in normal play, so absolute tail numbers here are slightly pessimistic.
   - Level tail today: ~2.2 (runU, morning) -> ~2.8-2.9 game frames/s.
+  - Bound re-checked on runZg (`PS3_FTRACE` 600-620 s, one instance): 74 frames, median 283 ms, against 38 frames
+    on this morning's build. The main thread waits on EDGE for 168 ms per frame; the walker drains for 163 ms
+    (~60%). EDGE ring waits (`ch8`) are ~1%, so the frame is still EDGE-bound.
+  - EDGE-only profile now: lifted code 79%, runtime ~20% in pieces of 1-4% each (`spu_drain_call` 4.0%,
+    `spu_indirect_branch` 3.7%, MFC ~6%, `spu_lookup` 1.5%), ntdll 0.2%.
+  - 31-minute soak of runZg without harness instrumentation: no hang and steady memory. The later level runs at
+    ~3.6-4.0 game frames/s (game frame 7951 -> 8611 between 1650 and 1830 s).
+  - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
+    Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
+    spills.
   - Same method on ucrtbase (3.4% of EDGE samples): 97% was `getenv`'s environment walk. The sampler now unwinds such
     samples to their exe caller; all of them came from `spu_run_with_halt`, which read `SPU_ARGWATCH` after every
     module run. It is read once now. The A/B was neutral within noise (runZg vs runZe: -3.2% / +0.4%, EDGE ms/job
