@@ -614,6 +614,25 @@ Update (M0.60, 2026-10-24): **what bounds the frame now: the EDGE chain, one job
     probe.
   - Next: compile those probes out of the lifted SPU code, and get a fuller profile. Keeping GPRs in locals (lifter)
     is the larger lever and needs a spike first.
+
+Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% frames/s.**
+- The toolkit's `SPU_LS_PROBES` (default 1) gates the probes and the watch checks in
+  `spu_ls_read128`/`spu_ls_write128`. The port builds its lifted SPU sources with `SPU_LS_PROBES=0` (CMake
+  `GOW_SPU_LS_PROBES`, default OFF).
+- An LS store in the hot EDGE function went from ~17 host instructions to 7. Three things went away: the LBP-only
+  `0x1320` probe and two global flags reloaded after every store. The `pshufb` mask now stays in a register.
+- Swapped A/B against the build with probes (runR vs runQ), both pairs agreeing, no hang:
+
+  | | with probes | without |
+  |---|---|---|
+  | tail, pair 1 | 1.796 | 2.017 (+12.3%) |
+  | tail, pair 2 | 1.831 | 2.069 (+13.0%) |
+  | EDGE ms/job, pair 1 | 0.343 | 0.302 (-12%) |
+  | EDGE ms/job, pair 2 | 0.329 | 0.295 (-10%) |
+
+  The level tail is now above 2 game frames/s.
+- The host sampler took one round per ~430 ms, a system-wide thread snapshot each time, so profiles held a few
+  hundred samples per thread. It now keeps thread handles. `PS3_SAMPLE_RANKS` raises the RVA buckets per report.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.

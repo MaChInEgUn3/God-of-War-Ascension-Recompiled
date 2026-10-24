@@ -242,11 +242,19 @@ endif()
 #                          fma/fms/fnms are fmaf() -- a libm call without FMA.
 #                          The default SSE2 target ran all of those as loops/calls.
 #   -ffp-contract=off   -- only the explicit fmaf()s fuse, as on the SPU.
+#   SPU_LS_PROBES=0     -- (GOW_SPU_LS_PROBES OFF) no diagnostic probe or
+#                          SPU_LS_WATCH check on each LS access of lifted code;
+#                          those env diagnostics then see only runtime accesses.
+option(GOW_SPU_LS_PROBES "LS diagnostic probes in lifted SPU code" OFF)
 set(SPU_HOST_ARCH "-march=x86-64-v3" CACHE STRING "Host ISA flag for lifted SPU sources")
 if(SPU_SOURCES)
+    set(_spu_defs SPU_USE_DISPATCH_MT)
+    if(NOT GOW_SPU_LS_PROBES)
+        list(APPEND _spu_defs SPU_LS_PROBES=0)
+    endif()
     set_source_files_properties(${SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
-        COMPILE_DEFINITIONS SPU_USE_DISPATCH_MT)
+        COMPILE_DEFINITIONS "${_spu_defs}")
     if(NOT MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS
             "-O2;${SPU_HOST_ARCH};-ffp-contract=off")

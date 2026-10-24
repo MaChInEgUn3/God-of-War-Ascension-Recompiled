@@ -156,11 +156,28 @@ Lessons that cost days; keep them.
   `vfs/cache/BCUS98232/fios/cache.{idx,dat}` that survives between runs. A warm cache made the menu ~30 game
   frames/s against ~20 with a cold one, and a cache left by a run killed mid-write once made the next build loop
   reopening it. Delete both files before every timed run (the `work/ab_*.sh` scripts do).
+* **Draw engine time by phase**: `ENG_PHASE_STATS=<s>` prints, every `<s>` seconds, the walker's time in draw
+  methods and in BEGIN_END groups. It splits that by phase (fetch, pipeline, textures, index build, backend), then
+  splits textures by path: depth/colour snapshots, depth/colour stored to guest memory, hash, re-upload, miss.
+  `ENG_SLOW_MS=<ms>` logs single groups slower than that, with their sizes (first 64).
+* **Slow Vulkan driver calls**: `VK_SLOW_MS=<ms>` logs every queue-lock wait, submit, fence wait, allocate, map,
+  free and idle that takes longer, with the thread and the number of live `VkDeviceMemory` objects (up to 3000
+  lines). This is how the M0.59e hang was found: seconds inside `vkFreeMemory`/`vkAllocateMemory`, outside any
+  fence.
+* **Who shares which lock line**: `SPU_ATOM_WIDS=<s>` lists, per SPURS workload, the 128-byte lines its atomics
+  touch (lines with 100+ hits). `put` counts PUTLLC, PUTLLUC and PUTQLLUC together. `SPU_ATOM_EA=<ea>`
+  (`SPU_ATOM_FULL=1`, `SPU_ATOM_PUTONLY=1`) then dumps one line's contents at each write.
+* **LS probes in lifted SPU code**: the port builds its lifted SPU sources with `SPU_LS_PROBES=0`
+  (CMake `GOW_SPU_LS_PROBES`, default OFF). `SPU_LS_WATCH`, `SPU_SMC_WATCH` and `SPU_LS_LOWREAD` then see only
+  accesses made by the runtime. Configure with `-DGOW_SPU_LS_PROBES=ON` to watch lifted code again. That costs
+  ~10% per EDGE job (M0.61).
 * **Host-side profile**: `PS3_SAMPLE=<ms>` samples every thread's RIP (reports every 10 s: guest functions,
   host modules, per-thread busy/ntdll split). `PS3_SAMPLE_HOST=1` buckets every sample by executable RVA and
   thread instead (lifted SPU job modules and overlay fragments are not in the guest map); resolve with
   `python repo/analysis/samp_resolve.py run.log build_vk/MyGameRecomp.map t<seconds> [top]` (the build links
-  with `/MAP`). It prints the top symbols overall and per thread.
+  with `/MAP`). It prints the top symbols overall and per thread. `PS3_SAMPLE_RANKS=<n>` raises the 400 RVA buckets each report
+  keeps (lifted code spreads over thousands). Since M0.61 the sampler keeps thread handles: before, one round took
+  ~430 ms whatever the period.
   A top count above 25 also lengthens the per-thread lists. Write watches (`PPU_WDEC`, `PPU_WJUMPBACK`,
   `PPU_WVAL`, `PPU_WWATCH`) are read once; with none set, a guest store skips the watch walk entirely.
 * **EDGE cost per job**: `python repo/analysis/pmprof_edge.py run.log...` reads the `SPURS_PM_PROF=60` lines and
