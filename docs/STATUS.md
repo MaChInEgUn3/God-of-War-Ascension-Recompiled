@@ -576,8 +576,12 @@ Update (M0.59e, 2026-10-23 night): **the level hang was the Vulkan driver's memo
   | re-upload | 29 ms per call | 2.7 ms |
   | depth to guest | 47 ms per call | 8 ms |
 
-  Game frames/s did not clearly move: tail 1.83/1.59/1.31 over the three pairs, which is within the spread of earlier
-  runs. The walker now has headroom; the frame is bound elsewhere (SPU job chain and main thread).
+  Frames/s, swapped A/B against runL, the last exe before #512 and this fix (no diagnostics on): tail 1.738/1.777 vs
+  1.571/1.631. That is +10.6% and +9.0%; stopped after two agreeing pairs, with no hang in either arm. #512 accounts
+  for about 3% of it (M0.59d), so this fix is worth roughly +6-7%. Level entry also came sooner: 120-180 s vs
+  150-210 s.
+  EDGE's wait for RSX ring space (`[pm-prof-ch] ch8`, wids 15-17, after 600 s) fell from ~13% of its time (x5, x9)
+  to 1-7% (x12, x13).
 - Still slow: `vkQueueSubmit` (up to 1.8 s, ~80 per run) and image frees from evictions and target re-creation.
   Every texture still has its own `VkDeviceMemory`; sub-allocating from large blocks is the next candidate.
 - No texture garbage in the dumps of these runs (8-px chroma detector, all below 0.012).
