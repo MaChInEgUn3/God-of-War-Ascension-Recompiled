@@ -138,7 +138,7 @@ index 204a005..1f5c7bc 100644
      u32 fmt_ea = (u32)(uintptr_t)format, dst = (u32)(uintptr_t)outBuff;
      if (handle >= MAX_VDEC || !s_vdec[handle].in_use || !fmt_ea)
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516..8c92d52 100644
+index 19a8516..3d7f601 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -13,6 +13,7 @@
@@ -772,7 +772,7 @@ index 19a8516..8c92d52 100644
              s_workloads[i].in_use = 1;
              s_workloads[i].pm = pm;
              s_workloads[i].sizePm = sizePm;
-@@ -1380,24 +1597,43 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1380,24 +1597,45 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
              s_workloads[i].maxContention = maxContention;
              s_workloads[i].readyCount = 0;
  
@@ -794,10 +794,12 @@ index 19a8516..8c92d52 100644
                  memcpy(s_workloads[i].priority, priority_h, CELL_SPURS_MAX_SPU);
              else
                  memset(s_workloads[i].priority, 1, CELL_SPURS_MAX_SPU);
-+            fprintf(stderr, "[cellSpurs] wid=%u priority per SPU: %u %u %u %u %u %u %u %u (1 = highest, 0 = never)\n",
++            fprintf(stderr, "[cellSpurs] wid=%u priority per SPU: %u %u %u %u %u %u %u %u (1 = highest, 0 = never), "
++                    "contention min %u max %u\n",
 +                    i, s_workloads[i].priority[0], s_workloads[i].priority[1], s_workloads[i].priority[2],
 +                    s_workloads[i].priority[3], s_workloads[i].priority[4], s_workloads[i].priority[5],
-+                    s_workloads[i].priority[6], s_workloads[i].priority[7]);
++                    s_workloads[i].priority[6], s_workloads[i].priority[7],
++                    (unsigned)minContention, (unsigned)maxContention);
  
              /* Publish the workload in the REAL BE instance so the game's
               * inlined kernel protocol (readyCount stores, signal bits, state
@@ -820,7 +822,7 @@ index 19a8516..8c92d52 100644
              vm_write32(spurs_ea + SPURS_WKL_ENABLED,
                         vm_read32(spurs_ea + SPURS_WKL_ENABLED) | (0x80000000u >> i));
              *(vm_base + spurs_ea + SPURS_SYSSRV_MSG) = 0xFF;
-@@ -1406,12 +1642,10 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1406,12 +1644,10 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
              vm_write32((u32)(uintptr_t)wid, i);
              printf("[cellSpurs] AddWorkload(wid=%u, pm=%p, size=%u)\n",
                     i, pm, sizePm);
@@ -833,7 +835,7 @@ index 19a8516..8c92d52 100644
      return CELL_SPURS_CORE_ERROR_NOMEM;
  }
  
-@@ -1577,24 +1811,20 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
+@@ -1577,24 +1813,20 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
  s32 cellSpursRemoveWorkload(CellSpurs* spurs, CellSpursWorkloadId wid)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -870,7 +872,7 @@ index 19a8516..8c92d52 100644
      return CELL_OK;
  }
  
-@@ -1625,7 +1855,7 @@ s32 cellSpursWorkloadAttributeInitialize(CellSpursWorkloadAttribute* attr,
+@@ -1625,7 +1857,7 @@ s32 cellSpursWorkloadAttributeInitialize(CellSpursWorkloadAttribute* attr,
  }
  
  /* ---------------------------------------------------------------------------
@@ -879,7 +881,7 @@ index 19a8516..8c92d52 100644
   *
   * The game kicks work by storing a nonzero wklReadyCount1[wid] byte or a
   * wklSignal1 bit into the instance — mostly with INLINED atomics (LBP never
-@@ -1639,7 +1869,21 @@ typedef struct {
+@@ -1639,7 +1871,21 @@ typedef struct {
      int                 image_id;
      int                 resolved;   /* 0=not tried, 1=found, -1=missing */
  } WklPm;
@@ -902,7 +904,7 @@ index 19a8516..8c92d52 100644
  
  static WklPm* spurs_resolve_pm(u32 wid)
  {
-@@ -1649,6 +1893,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1649,6 +1895,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
      uint64_t fp = spu_workload_fingerprint(vm_base + (uint32_t)(uintptr_t)w->pm,
                                             w->sizePm);
      r->fn = spu_workload_find_img(fp, &r->image_id);
@@ -923,7 +925,7 @@ index 19a8516..8c92d52 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,184 +1933,442 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,184 +1935,442 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1515,7 +1517,7 @@ index 19a8516..8c92d52 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1860,30 +2376,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1860,30 +2378,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
              printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
          _n++;
      }
@@ -1555,7 +1557,7 @@ index 19a8516..8c92d52 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2403,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2405,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -1616,7 +1618,7 @@ index 19a8516..8c92d52 100644
      return CELL_OK;
  }
  
-@@ -3095,6 +3640,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3642,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -1659,7 +1661,7 @@ index 19a8516..8c92d52 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3683,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3685,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1668,7 +1670,7 @@ index 19a8516..8c92d52 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +3704,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +3706,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -1699,7 +1701,7 @@ index 19a8516..8c92d52 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4008,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4010,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  

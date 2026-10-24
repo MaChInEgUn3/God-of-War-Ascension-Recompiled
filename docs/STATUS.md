@@ -795,6 +795,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **Parallel EDGE lanes (beyond hardware) -- assessed, not started (2026-10-24).**
+  - The game registers every workload, EDGE included, with contention min 1 max 1 (now printed at registration):
+    on the console each EDGE workload runs on one SPU at a time. Our `SPURS_MAXCONT` lanes run one after another in
+    one kernel thread, so they add no parallelism.
+  - EDGE priority is `8 8 8 8 0 0 0 3` on a 6-SPU instance: at most 4 lanes (SPUs 0-3), with real spuNums, because
+    the WWS sync rows sit at `+0x40+16*spuNum`.
+  - Blocker: EDGE job code updates the shared allocator line `0x83257500` with GETLLAR -> compute -> unconditional
+    PUTLLUC (pcs `0x424C`/`0x6988`/`0xC760` -> `0x448C`/`0x6724`/`0xC910`). Two lanes would lose updates.
+  - Plan, if this is pursued:
+    1. The runtime holds a line's reservation from a context's GETLLAR until its next PUTLL*.
+    2. One wid, two lanes: a per-wid run count, a distinct spuNum and a persistent PM context per lane, and more
+       kernel threads.
+    3. Correctness first: no `[pm-hang]`, no texture garbage, every EDGE list completes.
+  - The soak's present rate is ~7.1 presents/s (flips ~3.7/s, which is what "game frames/s" counts here).
   - Same method on ucrtbase (3.4% of EDGE samples): 97% was `getenv`'s environment walk. The sampler now unwinds such
     samples to their exe caller; all of them came from `spu_run_with_halt`, which read `SPU_ARGWATCH` after every
     module run. It is read once now. The A/B was neutral within noise (runZg vs runZe: -3.2% / +0.4%, EDGE ms/job
