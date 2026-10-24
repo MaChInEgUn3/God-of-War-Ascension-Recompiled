@@ -694,6 +694,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
 
   Of the 18 runs that reach f_09000, that is 2, against 6 of 22 before. Both counts are small, so "rarer" is not
   established. The cause is still open.
+- **Checked on a real PS3 (HEN, webMAN MOD PS3MAPI, read only; the console runs patch 1.12, our lift is 1.00).**
+  - The game's `CellSpurs` sits at `0x3001AD00` (ours: `0x8001AD00`, the same offset in its region).
+    `wklInfo1` is at `+0xB00`, `wklInfo2` at `+0x1000`, and there are 23 workloads.
+  - The wid numbers differ from ours. The EDGE workloads are wids 19-21 there: their `arg` pointers are
+    `0x14280` apart, exactly as our wids 15-17 are. Boomrang audio is wid 12 there (SPU 5 only).
+  - 700 samples of `wklCurrentContention` (+0x20, high nibble for wids 16+), taken while walking in the first
+    level: two or more EDGE wids running at once in **0** samples; exactly one in 349 (50%).
+  - So EDGE is serial on the real console too, by the game's design. On hardware it occupies about half the wall
+    time at full speed; here it fills 96% of a much longer frame. The lever stays the cost per EDGE job.
+  - Also seen: SPURS on the console spreads EDGE over SPUs 0-5 (priority 3 on 0-3, priority 8 on 1-2 for wid 21).
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
