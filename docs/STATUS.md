@@ -745,6 +745,29 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     (fmt `0xA5`/`0xE5`), RGBA8 targets read as Y16_X16_FLOAT (`0xBF`), and sub-rectangles of the 1408x1408
     shadow map. These are the remaining readbacks if the walker becomes the bound again.
   - Upstream: the readback is in PR #532's batching path; the fix is pushed there.
+- **M0.63: the WWS interrupt handler's generated stubs, +3.5%.**
+  - A per-workload profile (`PS3_SAMPLE_WIDS=15,16,17`, new) shows where EDGE time goes:
+    - lifted code 73%;
+    - `spu_indirect_branch` 7.0%;
+    - `spu_drain_call` 5.1%;
+    - `spu_lookup` 1.6%;
+    - MFC ~4%.
+
+    The earlier "15% dispatch on the EDGE threads" was mixed with the audio workload, which makes ~4M of the ~4.4M
+    indirect branches a second (`SPU_IB_STATS`, new).
+  - EDGE's ~400k indirect branches a second are mostly the WWS policy module's stall-and-notify handler (LS
+    `0xA2C`). On every interrupt it generates a stub at LS `0x3FEC0` that saves r0-r75, built from the template at
+    `0xA40` minus `0x804` per quadword, plus a `bi $r79`. It calls the stub, runs the handler at `0x2390`, then builds
+    and calls a restore stub (template `0xAD0`). That is ~13k interrupts a second per EDGE workload. The stubs only
+    exist at runtime, so they ran in the SMC microstepper at ~25 ns an instruction.
+  - The microstepper now runs straight sequences of `lqa`/`stqa`/`lqd`/`stqd` in a tight loop, with raw
+    byte-swapped copies and no per-access probe. This only applies while every LS diagnostic is off.
+    `spu_indirect_branch` went from 7.0% to 4.2% of EDGE samples.
+  - Swapped A/B, runZb vs runY, no hang:
+    - tail 2.688 vs 2.598 (+3.5%), EDGE ms/job 0.225 vs 0.232;
+    - tail 2.712 vs 2.621 (+3.5%), EDGE ms/job 0.221 vs 0.230.
+  - Still interpreted: the handler's stub-builder loop (`0xA60`, `stqx` is outside the microstep set), because
+    `0xA2C` is no lifted entry of the policy module. Lifting it as an `images.json` extra is the next candidate.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.

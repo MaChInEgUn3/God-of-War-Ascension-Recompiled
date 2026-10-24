@@ -168,6 +168,12 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **Profile one SPURS workload**: `PS3_SAMPLE_WIDS=<w>[,<w>...]` (with `PS3_SAMPLE` / `PS3_SAMPLE_HOST`) keeps
+  only samples of SPURS kernel threads that are running one of those workloads at that moment. Workloads share kernel
+  threads, so without it the audio workload (wid 8) and the EDGE ones (15-17) land in the same buckets.
+* **Indirect branches**: `SPU_IB_STATS=1` prints, every 20 s, how many indirect branches the SPU dispatcher resolved
+  and the 24 most frequent by (workload, image or resident overlay, target, link register).
+  `SPU_IB_STATS_WIDS=15,16,17` counts only those workloads.
 * **Targets sampled through guest memory**: with `ENG_PHASE_STATS` set, `[eng-via-guest]` lists each distinct way a
   draw samples a depth or colour target as a texture by storing it to guest memory first (z2guest/s2guest): the
   texture format, the target's format and size (first 32).
