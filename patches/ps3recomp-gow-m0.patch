@@ -2914,7 +2914,7 @@ index 6be29e4..a7f89c3 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b..6222952 100644
+index f99986b..08e0070 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -125,6 +125,8 @@ typedef struct {
@@ -3293,10 +3293,30 @@ index f99986b..6222952 100644
      }
      dc.n_verts = dc.n_refs;
  }
-@@ -2071,6 +2215,14 @@ static u32 eng_color_feedback_failure(u32 unit, const eng_surface* s,
+@@ -2071,6 +2215,34 @@ static u32 eng_color_feedback_failure(u32 unit, const eng_surface* s,
      return ENG_INVALID;
  }
  
++/* With ENG_PHASE_STATS set: each distinct way a draw samples a depth or colour
++ * target through guest memory (first 32) -- the texture format it reads the
++ * target as, the target's own format and size. */
++static void eng_note_via_guest(const char* path, const rsx_dsp_texture* t, u32 src_fmt, u32 w, u32 h)
++{
++    static int on = -1;
++    if (on < 0) on = getenv("ENG_PHASE_STATS") ? 1 : 0;
++    if (!on) return;
++    static u32 seen[32][4];
++    static u32 n_seen;
++    const u32 key[4] = { (u32)path[0], t->format, src_fmt, (w << 16) | h };
++    for (u32 i = 0; i < n_seen; i++)
++        if (!memcmp(seen[i], key, sizeof key)) return;
++    if (n_seen >= 32) return;
++    memcpy(seen[n_seen++], key, sizeof key);
++    fprintf(stderr, "[eng-via-guest] %s: texture fmt 0x%02X %ux%u pitch %u remap 0x%04X at %u:0x%08X, "
++            "target fmt %u %ux%u\n", path, t->format, t->width, t->height, t->pitch, t->remap & 0xFFFFu,
++            t->location, t->offset, src_fmt, w, h);
++}
++
 +static int eng_surface_to_guest_timed(u32 slot)
 +{
 +    ENG_ST_BEGIN();
@@ -3308,7 +3328,7 @@ index f99986b..6222952 100644
  static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
                                u32 current_zslot, u32 tex_used,
                                u32 textures[RSX_BE_MAX_TEXTURES],
-@@ -2117,10 +2269,14 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2117,10 +2289,16 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
              /* DEPTH24_D8 keeps the backend's own snapshot when it has one;
               * anything else goes through guest memory. */
              if (base_fmt == RSX_TEX_FMT_DEPTH24_D8 && current_zslot != (u32)zsrc) {
@@ -3319,12 +3339,14 @@ index f99986b..6222952 100644
              }
 -            if (eng_zdepth_to_guest((u32)zsrc)) {
 +            int z2g;
++            eng_note_via_guest(current_zslot == (u32)zsrc ? "z2guest (bound zeta)" : "z2guest", &t,
++                               g.zdepths[zsrc].zfmt, g.zdepths[zsrc].w, g.zdepths[zsrc].h);
 +            { ENG_ST_BEGIN(); z2g = eng_zdepth_to_guest((u32)zsrc); ENG_ST_END(ST_Z2G); }
 +            if (z2g) {
                  textures[u] = eng_texture_slot(t.location, t.offset, t.format,
                                                 t.width, t.height, t.mipmaps, t.pitch,
                                                 (int)t.cubemap, t.remap & 0xFFFFu,
-@@ -2138,7 +2294,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2138,7 +2316,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
              while (k < n_targets && target_slots[k] != (u32)surface_at) k++;
              if (k == n_targets) return eng_color_feedback_failure(u, s, &t);
              if (!feedback[k]) {
@@ -3334,16 +3356,18 @@ index f99986b..6222952 100644
                  if (!copy) return eng_color_feedback_failure(u, s, &t);
                  if (s->feedback) g.be->texture_release(g.be->user, s->feedback);
                  s->feedback = feedback[k] = copy;
-@@ -2157,7 +2315,7 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2157,7 +2337,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
          if (sampled >= 0 && zsrc < 0 &&
              g.surfaces[sampled].fmt == RSX_BE_FMT_R8G8B8A8 &&
              eng_format_reinterprets_rgba8(base_fmt) &&
 -            eng_surface_to_guest((u32)sampled)) {
++            (eng_note_via_guest("s2guest", &t, (u32)g.surfaces[sampled].fmt,
++                                g.surfaces[sampled].w, g.surfaces[sampled].h), 1) &&
 +            eng_surface_to_guest_timed((u32)sampled)) {
              textures[u] = eng_texture_slot(t.location, t.offset, t.format,
                                             t.width, t.height, t.mipmaps, t.pitch,
                                             (int)t.cubemap, t.remap & 0xFFFFu,
-@@ -2176,7 +2334,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2176,7 +2358,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
              for (u32 i = 0; i < g.n_zdepths; i++)
                  if (g.zdepths[i].location == t.location &&
                      g.zdepths[i].offset == t.offset && current_zslot != i) {
@@ -3353,7 +3377,7 @@ index f99986b..6222952 100644
                      if (snap) textures[u] = snap;
                      break;
                  }
-@@ -2449,16 +2609,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -2449,16 +2633,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
      }
      if (s_pd.draws_log) {
          fprintf(s_pd.draws_log, "pass %03u draw %u: pipe %u cmask %08X blend %u %X/%X"
@@ -3448,7 +3472,7 @@ index f99986b..6222952 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2506,6 +2741,41 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -2506,6 +2765,41 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
  /* Called on every present: arm on the first frame heavy enough when no delay
   * was asked for, and while capturing, close the pass in progress and write
   * the presented surface. */
@@ -3490,7 +3514,7 @@ index f99986b..6222952 100644
  static void pd_present(u32 presented)
  {
      if (s_pd.state == 0) pd_capturing();
-@@ -2527,14 +2797,105 @@ static void pd_present(u32 presented)
+@@ -2527,14 +2821,105 @@ static void pd_present(u32 presented)
      }
  }
  
@@ -3599,7 +3623,7 @@ index f99986b..6222952 100644
  
      const u32 prim = g.rsx.current_primitive;
      /* Everything that becomes triangles -- lists, strips, fans, quads, quad
-@@ -2549,33 +2910,34 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2549,33 +2934,34 @@ static void sink_end(void* user, const rsx_dispatch* r)
      int scratch = 0;
      const int rebuild = eng_topology_rebuild(prim, 0, &scratch) != 0;
      if (!rebuild) {
@@ -3640,7 +3664,7 @@ index f99986b..6222952 100644
      const u32 target = targets[0];
  
      rsx_dsp_surface sf;
-@@ -2596,7 +2958,8 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2596,7 +2982,8 @@ static void sink_end(void* user, const rsx_dispatch* r)
                                            eng_surface_format(sf.color_format),
                                            n_targets, &pipeline_is_fixed, &tex_used,
                                            &fp_hash);
@@ -3650,7 +3674,7 @@ index f99986b..6222952 100644
      if (fp_hash && eng_debug_fp(fp_hash, pipeline)) return;
  
      /* Textures before any pipeline or target binding: a cache refresh can
-@@ -2614,9 +2977,10 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2614,9 +3001,10 @@ static void sink_end(void* user, const rsx_dispatch* r)
      if (tex_mask == ENG_INVALID) return;
      const u32 vtex_mask = sink_bind_vertex_textures(eng_vtex_mask(), vtextures,
                                                      vsamplers);
@@ -3662,7 +3686,7 @@ index f99986b..6222952 100644
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
              dc.refs_remapped ? dc.ref_remap.occurrence_to_unique : NULL,
-@@ -2722,8 +3086,71 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2722,8 +3110,71 @@ static void sink_end(void* user, const rsx_dispatch* r)
      }
  
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
@@ -3734,7 +3758,7 @@ index f99986b..6222952 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2787,6 +3214,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2787,6 +3238,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -3748,7 +3772,7 @@ index f99986b..6222952 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2818,9 +3252,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2818,9 +3276,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -3782,7 +3806,7 @@ index f99986b..6222952 100644
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
-@@ -2945,6 +3402,33 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+@@ -2945,6 +3426,33 @@ void rsx_draw_engine_method(u32 method, u32 arg)
       * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
       * preserve them with the wider mask. */
      u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
@@ -4135,7 +4159,7 @@ index ad21361..6a12f6f 100644
   * refs is rewritten in place with the unique prefix.  The occurrence map
   * remains valid until the next call using the same remap object. */
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index b22e08f..68efeb8 100644
+index b22e08f..8b7b734 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -4671,9 +4695,8 @@ index b22e08f..68efeb8 100644
              for (u32 row = 0; row < h; row++)
 -                memcpy((u8*)out + (size_t)row * out_pitch, (const u8*)st.ptr + (size_t)row * tight, tight);
 +                memcpy((u8*)out + (size_t)row * out_pitch, (const u8*)st->ptr + (size_t)row * tight, tight);
-         }
-     }
--    vk_destroy_buffer(&st);
++        }
++    }
 +}
 +
 +/* PS3RECOMP_VK_DUMP_SURFACES=<present#>,<dir>: at that present, write every
@@ -4716,7 +4739,7 @@ index b22e08f..68efeb8 100644
 +                if (c[k] != 0.0f) nz++;
 +                if (c[k] > mx) mx = c[k];
 +            }
-+        }
+         }
 +        const float scale = (o->fmt == VK_FORMAT_R32_SFLOAT && mx > 0.0f) ? 1.0f / mx : 1.0f;
 +        for (size_t i = 0; i < (size_t)w * h; i++) {
 +            float c[3] = { 0, 0, 0 };
@@ -4739,7 +4762,8 @@ index b22e08f..68efeb8 100644
 +        VK_LOG("surface dump h%u %ux%u fmt %d: max %.4g, nonzero components %zu of %zu -> %s\n",
 +               hd, w, h, (int)o->fmt, mx, nz, (size_t)w * h * 3, path);
 +        free(raw); free(rgb);
-+    }
+     }
+-    vk_destroy_buffer(&st);
  }
  
  /* ---- E3: textures ---------------------------------------------------------
@@ -4899,7 +4923,15 @@ index b22e08f..68efeb8 100644
      return rc ? -1 : 0;
  }
  /* ---- E2: pipelines and draws ---------------------------------------------
-@@ -2774,6 +3106,7 @@ static u32 s_esamp_count;
+@@ -2748,6 +3080,7 @@ static struct {
+     u32          scratch_w, scratch_h;
+     u32          pipeline;
+     u32          vs_bytes, ps_bytes;
++    u8*          ucpu;                /* the constants, in the shared UBO's layout */
+     u32          tex[RSX_BE_MAX_TEXTURES];
+     rsx_be_sampler_desc samp[RSX_BE_MAX_TEXTURES];
+     u32          tex_mask;
+@@ -2774,6 +3107,7 @@ static u32 s_esamp_count;
  
  static void vk_eng_drop_framebuffers(void)
  {
@@ -4907,7 +4939,7 @@ index b22e08f..68efeb8 100644
      for (u32 i = 0; i < s_e2.fb_count; i++)
          if (s_e2.fb[i].fb) pvkDestroyFramebuffer(s_vk.device, s_e2.fb[i].fb, NULL);
      s_e2.fb_count = 0;
-@@ -2983,6 +3316,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
+@@ -2983,6 +3317,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
  static void vk_eng_pipeline_release(void* user, u32 pipeline)
  {
      (void)user;
@@ -4915,7 +4947,7 @@ index b22e08f..68efeb8 100644
      if (!pipeline || pipeline > VK_ENG_MAX_PIPE || !s_epipe[pipeline - 1].used) return;
      vk_eng_pipe* P = &s_epipe[pipeline - 1];
      for (u32 t = 0; t < VK_ENG_TOPOLOGIES; t++)
-@@ -3068,10 +3402,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+@@ -3068,10 +3403,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
      if ((rs->color_mask >>  8) & 0xFFu) wm |= VK_COLOR_COMPONENT_G_BIT;
      if ((rs->color_mask >>  0) & 0xFFu) wm |= VK_COLOR_COMPONENT_B_BIT;
      if ((rs->color_mask >> 24) & 0xFFu) wm |= VK_COLOR_COMPONENT_A_BIT;
@@ -4944,7 +4976,55 @@ index b22e08f..68efeb8 100644
              .srcColorBlendFactor = vk_gcm_blend_factor(rs->sf_rgb),
              .dstColorBlendFactor = vk_gcm_blend_factor(rs->df_rgb),
              .colorBlendOp = vk_gcm_blend_op(rs->eq_rgb),
-@@ -3296,19 +3647,248 @@ static VkImageView vk_eng_dummy_cube_view(void)
+@@ -3115,29 +3467,41 @@ static void vk_eng2_shutdown(void* user)
+     if (s_e2.split_pipe_layout) pvkDestroyPipelineLayout(s_vk.device, s_e2.split_pipe_layout, NULL);
+     if (s_e2.split_pool)        pvkDestroyDescriptorPool(s_vk.device, s_e2.split_pool, NULL);
+     if (s_e2.split_layout)      pvkDestroyDescriptorSetLayout(s_vk.device, s_e2.split_layout, NULL);
++    free(s_e2.ucpu);
+     memset(&s_e2, 0, sizeof s_e2);
+     for (u32 i = 0; i < s_esamp_count; i++) pvkDestroySampler(s_vk.device, s_esamp[i].s, NULL);
+     s_esamp_count = 0;
+ }
+ 
+-/* Constants go straight into the shared UBO: vertex at 0, pixel at ps_off.
+- * Every operation is waited on, so overwriting per draw is safe. */
++/* Constants are kept in ordinary memory laid out like the shared UBO (vertex
++ * at 0, pixel at ps_off) and copied to the GPU per draw: into the draw's ring
++ * slice when batched, into the shared UBO otherwise (every such draw is waited
++ * on, so overwriting it is safe). They used to be written straight into the
++ * UBO, and a batched draw then read them back out of it: that memory is
++ * host-coherent, i.e. write-combined and uncached on most drivers, and reading
++ * ~8 KB of it took ~40 us -- 85% of a draw's backend time in God of War:
++ * Ascension (VK_DRAW_PROF). */
++static u8* vk_eng_ucpu(void)
++{
++    if (!s_e2.ucpu && s_g.ubo.size) s_e2.ucpu = (u8*)calloc(1, (size_t)s_g.ubo.size);
++    return s_e2.ucpu;
++}
+ static void vk_eng_bind_vs_constants(void* user, const void* data, u32 bytes)
+ {
+     (void)user;
+-    if (!s_g.on || !data) { s_e2.vs_bytes = 0; return; }
++    if (!s_g.on || !data || !vk_eng_ucpu()) { s_e2.vs_bytes = 0; return; }
+     const u32 cap = (u32)s_g.ps_off;
+     if (bytes > cap) { bytes = cap; if (!(s_e2.warned & 2u)) { VK_LOG("engine: VS constants truncated\n"); s_e2.warned |= 2u; } }
+-    memcpy(s_g.ubo.ptr, data, bytes);
++    memcpy(s_e2.ucpu, data, bytes);
+     s_e2.vs_bytes = bytes;
+ }
+ static void vk_eng_bind_ps_constants(void* user, const void* data, u32 bytes)
+ {
+     (void)user;
+-    if (!s_g.on || !data) { s_e2.ps_bytes = 0; return; }
++    if (!s_g.on || !data || !vk_eng_ucpu()) { s_e2.ps_bytes = 0; return; }
+     const u32 cap = (u32)(s_g.ubo.size - s_g.ps_off);
+     if (bytes > cap) { bytes = cap; if (!(s_e2.warned & 4u)) { VK_LOG("engine: PS constants truncated\n"); s_e2.warned |= 4u; } }
+-    memcpy((u8*)s_g.ubo.ptr + s_g.ps_off, data, bytes);
++    memcpy(s_e2.ucpu + s_g.ps_off, data, bytes);
+     s_e2.ps_bytes = bytes;
+ }
+ static void vk_eng_bind_textures(void* user, const u32* textures,
+@@ -3296,21 +3660,255 @@ static VkImageView vk_eng_dummy_cube_view(void)
      return s_eobj[s_e2.dummy_cube].im.view;
  }
  
@@ -5170,6 +5250,10 @@ index b22e08f..68efeb8 100644
 +
 +static VkDescriptorSet vk_eng_write_descriptors_to(const vk_eng_pipe* P, VkDescriptorSet set,
 +                                                   VkBuffer ubo, VkDeviceSize vs_off, VkDeviceSize ps_off);
++/* VK_DRAW_PROF's split of the descriptor work: set allocation, uniform
++ * copies, view and sampler resolve, vkUpdateDescriptorSets. */
++static unsigned long long s_dq_us[4];
++static unsigned long long vk_dp_now(void);
 +
  /* Fill the set the bound pipeline uses: the shared one (sixteen textures in
   * one binding), or for a pipeline with cube units the split one (one binding
@@ -5195,9 +5279,70 @@ index b22e08f..68efeb8 100644
 +        { ubo, ps_off, s_e2.ps_bytes ? s_e2.ps_bytes : 16u },
      };
      VkDescriptorImageInfo ii[RSX_MAX_TEXTURES], si[RSX_MAX_TEXTURES];
++    const unsigned long long q0 = vk_dp_now();
      for (u32 u = 0; u < RSX_MAX_TEXTURES; u++) {
-@@ -3381,16 +3961,64 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+         const int cube = (P->cube_mask >> u) & 1u;
+         VkImageView v = ((s_e2.tex_mask >> u) & 1u) ? vk_eng_sample_view(s_e2.tex[u], cube)
+@@ -3342,14 +3940,54 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
+               .dstBinding = RSX_SPIRV_TEXTURE_BINDING, .descriptorCount = RSX_MAX_TEXTURES,
+               .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .pImageInfo = ii };
+     }
++    const unsigned long long q1 = q0 ? vk_dp_now() : 0;
+     pvkUpdateDescriptorSets(s_vk.device, n, w, 0, NULL);
++    if (q0) { s_dq_us[2] += q1 - q0; s_dq_us[3] += vk_dp_now() - q1; }
+     return set;
+ }
+ 
++/* VK_DRAW_PROF=<s>: every <s> seconds, where vk_eng_draw's time goes -- cache
++ * lookups (pipeline variant, render pass, framebuffer), descriptor set and
++ * uniform slices, vertex/index copies, command recording, and the batch flush
++ * (submit, and the wait for a free in-flight slot). */
++static int s_dp_s = -1;
++static unsigned long long s_dp_w0, s_dp_us[5], s_dp_draws;
++static const char* const s_dp_name[5] = { "lookup", "desc", "copy", "record", "flush" };
++static unsigned long long vk_dp_now(void)
++{
++    if (s_dp_s < 0) { const char* e = getenv("VK_DRAW_PROF"); s_dp_s = e ? atoi(e) : 0; }
++    if (s_dp_s <= 0) return 0;
++    struct timespec ts;
++    timespec_get(&ts, TIME_UTC);
++    return (unsigned long long)ts.tv_sec * 1000000ull + (unsigned long long)ts.tv_nsec / 1000ull;
++}
++static void vk_dp_end(const unsigned long long t[6])
++{
++    if (!t[0]) return;
++    for (int i = 0; i < 5; i++) s_dp_us[i] += t[i + 1] - t[i];
++    s_dp_draws++;
++    if (!s_dp_w0) s_dp_w0 = t[0];
++    if (t[5] - s_dp_w0 < (unsigned long long)s_dp_s * 1000000ull) return;
++    fprintf(stderr, "[vk-draw-prof] %.0f ms: %llu draws, us/draw:", (t[5] - s_dp_w0) / 1000.0, s_dp_draws);
++    for (int i = 0; i < 5; i++)
++        fprintf(stderr, " %s %.1f", s_dp_name[i], (double)s_dp_us[i] / (double)s_dp_draws);
++    fprintf(stderr, " | ms: %.0f %.0f %.0f %.0f %.0f | desc us/draw: alloc %.1f ubcopy %.1f resolve %.1f update %.1f"
++            " (ub %u+%u B)\n", s_dp_us[0] / 1000.0, s_dp_us[1] / 1000.0,
++            s_dp_us[2] / 1000.0, s_dp_us[3] / 1000.0, s_dp_us[4] / 1000.0,
++            (double)s_dq_us[0] / s_dp_draws, (double)s_dq_us[1] / s_dp_draws,
++            (double)s_dq_us[2] / s_dp_draws, (double)s_dq_us[3] / s_dp_draws, s_e2.vs_bytes, s_e2.ps_bytes);
++    memset(s_dp_us, 0, sizeof s_dp_us);
++    memset(s_dq_us, 0, sizeof s_dq_us);
++    s_dp_draws = 0;
++    s_dp_w0 = t[5];
++}
++
+ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices, u32 vertex_count,
+                         u32 stride, const u32* indices, u32 index_count)
+ {
+     (void)user;
++    unsigned long long dp[6];
++    dp[0] = vk_dp_now();
+     if (!s_e2.pipeline || !vertices || !vertex_count || !stride) return;
+     if (topology < RSX_TOPOLOGY_POINTS || topology > RSX_TOPOLOGY_TRIANGLE_STRIP) return;
+     vk_eng_pipe* P = &s_epipe[s_e2.pipeline - 1];
+@@ -3379,18 +4017,76 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+     VkRenderPass rp = vk_eng_render_pass(P->rt_fmt, n);
+     VkFramebuffer fb = vk_eng_framebuffer(rp, s_eng_bound.rt, n, dview, dkey, w, h);
      if (!pipe || !rp || !fb) return;
++    dp[1] = dp[0] ? vk_dp_now() : 0;
  
      const VkDeviceSize vbytes = (VkDeviceSize)vertex_count * stride;
 -    if (vk_ensure_vertex_buffer(vbytes)) return;
@@ -5227,11 +5372,14 @@ index b22e08f..68efeb8 100644
 +                VkDescriptorSetAllocateInfo dai = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 +                                                    .descriptorPool = s_eb.pool, .descriptorSetCount = 1,
 +                                                    .pSetLayouts = &lay };
++                const unsigned long long qa = dp[0] ? vk_dp_now() : 0;
 +                if (pvkAllocateDescriptorSets(s_vk.device, &dai, &set) == VK_SUCCESS) {
++                    const unsigned long long qb = qa ? vk_dp_now() : 0;
 +                    s_eb.sets++;
 +                    s_eb.vb_head = vh; s_eb.ib_head = ih; s_eb.ub_head = uh;
-+                    memcpy((u8*)s_eb.ub.ptr + uvs, s_g.ubo.ptr, vsb);
-+                    memcpy((u8*)s_eb.ub.ptr + ups, (const u8*)s_g.ubo.ptr + s_g.ps_off, psb);
++                    memcpy((u8*)s_eb.ub.ptr + uvs, vk_eng_ucpu(), vsb);
++                    memcpy((u8*)s_eb.ub.ptr + ups, vk_eng_ucpu() + s_g.ps_off, psb);
++                    if (qa) { s_dq_us[0] += qb - qa; s_dq_us[1] += vk_dp_now() - qb; }
 +                    if (!vk_eng_write_descriptors_to(P, set, s_eb.ub.buf, uvs, ups)) return;
 +                    break;
 +                }
@@ -5242,9 +5390,11 @@ index b22e08f..68efeb8 100644
 +        }
 +        if (batched && !set) batched = 0;
 +    }
++    dp[2] = dp[0] ? vk_dp_now() : 0;
 +    if (batched) {
 +        memcpy((u8*)s_eb.vb.ptr + voff, vertices, (size_t)vbytes);
 +        if (ibytes) memcpy((u8*)s_eb.ib.ptr + ioff, indices, (size_t)ibytes);
++        dp[3] = dp[0] ? vk_dp_now() : 0;
 +        vbuf = s_eb.vb.buf; ibuf = s_eb.ib.buf;
 +        if (!s_eb_pending && vk_begin()) return;
 +        /* Earlier draws of this batch may have rendered what this one samples
@@ -5259,9 +5409,13 @@ index b22e08f..68efeb8 100644
 +            memcpy(s_e2.indices.ptr, indices, (size_t)ibytes);
 +        }
 +        vbuf = s_vk.vertices.buf; ibuf = s_e2.indices.buf; voff = ioff = 0;
++        if (!vk_eng_ucpu()) return;
++        memcpy(s_g.ubo.ptr, s_e2.ucpu, vsb);
++        memcpy((u8*)s_g.ubo.ptr + s_g.ps_off, s_e2.ucpu + s_g.ps_off, psb);
 +        set = vk_eng_write_descriptors(P);
 +        if (!set) return;
 +        if (vk_begin()) return;
++        dp[3] = dp[0] ? vk_dp_now() : 0;
      }
 -    const VkDescriptorSet set = vk_eng_write_descriptors(P);
 -    if (!set) return;
@@ -5270,7 +5424,7 @@ index b22e08f..68efeb8 100644
      /* Everything submitted before is complete (each submission is waited
       * on); this orders memory for the surfaces this draw touches. */
      for (u32 i = 0; i < n; i++)
-@@ -3421,16 +4049,17 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+@@ -3421,16 +4117,22 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
      pvkCmdBindDescriptorSets(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               P->cube_mask ? s_e2.split_pipe_layout : s_g.pipe_layout,
                               0, 1, &set, 0, NULL);
@@ -5287,13 +5441,18 @@ index b22e08f..68efeb8 100644
      }
      pvkCmdEndRenderPass(s_vk.cmd);
 -    vk_submit_and_wait();
-+    if (!batched) { vk_submit_and_wait(); return; }
-+    s_eb.draws++;
-+    if (++s_eb_pending >= s_eb.max_draws) vk_eng_flush();
++    dp[4] = dp[0] ? vk_dp_now() : 0;
++    if (!batched) {
++        vk_submit_and_wait();
++    } else {
++        s_eb.draws++;
++        if (++s_eb_pending >= s_eb.max_draws) vk_eng_flush();
++    }
++    if (dp[0]) { dp[5] = vk_dp_now(); vk_dp_end(dp); }
  }
  
  static const rsx_draw_backend s_vk_engine_backend = {
-@@ -3466,7 +4095,11 @@ static const rsx_draw_backend s_vk_engine_backend = {
+@@ -3466,7 +4168,11 @@ static const rsx_draw_backend s_vk_engine_backend = {
      .present              = vk_eng_present,
      .readback             = vk_eng_readback,
      .depth_readback       = vk_eng_depth_readback,
@@ -5305,7 +5464,7 @@ index b22e08f..68efeb8 100644
  };
  
  static rsx_backend s_vulkan_backend = {
-@@ -3685,6 +4318,18 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3685,6 +4391,18 @@ void rsx_vulkan_backend_shutdown(void)
          vk_destroy_image(&s_vk.color);
          vk_destroy_buffer(&s_vk.vertices);
          vk_destroy_buffer(&s_vk.readback);
@@ -5324,7 +5483,7 @@ index b22e08f..68efeb8 100644
          if (s_vk.fence) pvkDestroyFence(s_vk.device, s_vk.fence, NULL);
          if (s_vk.pool)  pvkDestroyCommandPool(s_vk.device, s_vk.pool, NULL);
          if (s_vk.present_fence) pvkDestroyFence(s_vk.device, s_vk.present_fence, NULL);
-@@ -3693,7 +4338,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3693,7 +4411,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -5333,7 +5492,7 @@ index b22e08f..68efeb8 100644
      free(s_vk.cpu_verts);
      pthread_mutex_destroy(&s_vk.queue_mu);
      pthread_mutex_destroy(&s_vk.present_mu);
-@@ -3757,5 +4402,3 @@ int rsx_vulkan_backend_depth_bounds(void)
+@@ -3757,5 +4475,3 @@ int rsx_vulkan_backend_depth_bounds(void)
  {
      return s_vk.eng_active && s_vk.depth_bounds_ok;
  }

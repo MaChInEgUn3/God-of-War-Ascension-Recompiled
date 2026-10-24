@@ -164,6 +164,13 @@ Lessons that cost days; keep them.
   free and idle that takes longer, with the thread and the number of live `VkDeviceMemory` objects (up to 3000
   lines). This is how the M0.59e hang was found: seconds inside `vkFreeMemory`/`vkAllocateMemory`, outside any
   fence.
+* **Where a Vulkan draw's time goes**: `VK_DRAW_PROF=<s>` prints, every `<s>` seconds, the average µs per engine
+  draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
+  descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
+  the constants being read back out of write-combined memory (M0.62).
+* **Targets sampled through guest memory**: with `ENG_PHASE_STATS` set, `[eng-via-guest]` lists each distinct way a
+  draw samples a depth or colour target as a texture by storing it to guest memory first (z2guest/s2guest): the
+  texture format, the target's format and size (first 32).
 * **Who shares which lock line**: `SPU_ATOM_WIDS=<s>` lists, per SPURS workload, the 128-byte lines its atomics
   touch (lines with 100+ hits). `put` counts PUTLLC, PUTLLUC and PUTQLLUC together. `SPU_ATOM_EA=<ea>`
   (`SPU_ATOM_FULL=1`, `SPU_ATOM_PUTONLY=1`) then dumps one line's contents at each write.

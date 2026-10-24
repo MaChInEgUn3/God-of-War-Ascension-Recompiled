@@ -726,6 +726,25 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     not kept.
   - Side effect of the re-lift: the seven SPU images (`images.json`) are now lifted with the current lifter (a
     `_bt`/`_tg` rename, and `srepm0`'s `stop` now carries code `0x3FFF`). No hang in the four runs.
+- **M0.62: the RSX walker had become a co-bound; a Vulkan backend fix frees it.**
+  - A `PS3_FTRACE` of the current build (600-620 s, one instance) put the walker's drains at 470 ms of a ~526 ms
+    mean frame, up from 344 ms at runP: the EDGE gains had moved the walker close to the bound. 3.0 s of the
+    20 s were synchronous GPU waits from readbacks and texture creates.
+  - `ENG_PHASE_STATS`: per 10 s the walker spent 3.7-4.1 s in the backend draw call (~65 us per draw), 1.9-3.6 s
+    in textures and ~0.6 s in vertex fetch.
+  - `VK_DRAW_PROF` (new) split `vk_eng_draw`: 41 us of it was the uniform copy. The engine wrote the shader
+    constants straight into the shared UBO, and each batched draw read them back out into its ring slice. That UBO
+    is host-coherent memory, write-combined and uncached on this driver (RTX 3080, NVIDIA 617.42), so reading
+    ~8 KB took ~40 us. The constants now live in ordinary memory.
+  - After the fix: descriptor work 41 -> 2.5 us per draw, backend 3.7-4.1 -> 1.0-1.3 s per 10 s, walker busy
+    7-8.8 -> 3.9-5.4 s per 10 s.
+  - Game frames/s barely move, because the frame is again bound by the serial EDGE chain. Swapped A/B, runY vs
+    runX, no hang: tail 2.558 vs 2.527 (+1.2%) and 2.267 vs 2.206 (+2.8%). EDGE ms/job flat, EDGE ring waits
+    (`ch8`) slightly lower. The walker now has slack for when the EDGE side gets faster.
+  - Textures sampled through guest memory (`[eng-via-guest]`, new): the 1280x720 D24S8 zeta read as A8R8G8B8
+    (fmt `0xA5`/`0xE5`), RGBA8 targets read as Y16_X16_FLOAT (`0xBF`), and sub-rectangles of the 1408x1408
+    shadow map. These are the remaining readbacks if the walker becomes the bound again.
+  - Upstream: the readback is in PR #532's batching path; the fix is pushed there.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
