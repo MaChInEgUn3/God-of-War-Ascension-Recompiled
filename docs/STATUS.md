@@ -534,14 +534,8 @@ Update (M0.59, 2026-10-23): **timer resolution, upstream fixes, and an intermitt
 - Taken from open upstream PRs: #492 (`event_status` updated atomically), #491 (`SPU_IRQWAIT_DIAG`) and #522 (PPU
   reservation re-checked under the lock-line lock). The triage of all 116 open upstream PRs is a local working
   note, not in this repo.
-- **Open: an intermittent hang in the level.**
-  - An EDGE job spins in its ring-space backoff (`pc=0xC834`, `r3=0x960`) after the RSX walker stops flipping,
-    then `[pm-hang]` repeats.
-  - Both instances of a pair hang together, because the same pad script brings them to the same scene at the same
-    time. Seen in about 4 of 12 runs this morning, with and without the timer fix.
-  - It did not show in 16 runs with `GOW_CLOCK_WATCH=20` (which names the walker's state at a stall) and
-    `SPU_IRQWAIT_DIAG=1`. Those are cheap, so this is most likely chance (hangs come in pairs).
-  - Next: keep the watchdog on in every run until one is caught.
+- An intermittent hang in the level (fixed in M0.59e below): an EDGE job spins in its ring-space backoff
+  (`pc=0xC834`, `r3=0x960`) after the RSX walker stops flipping, then `[pm-hang]` repeats.
 - Also from upstream: #533 (the SPU drain's per-hop hooks run their common case inline) and #534 (guest stores
   test the SPU reserved-line bitmap inline). A/B against the build without them, swapped 2+2: tail 1.508/1.510/
   1.656/1.540 vs 1.417/1.477/1.579/1.515 (+3.8%, 4 of 4), with no hang or bad size in 8 runs.
@@ -552,11 +546,42 @@ Update (M0.59, 2026-10-23): **timer resolution, upstream fixes, and an intermitt
 - Also from upstream: #512 (SSE4.1/AVX2 forms of the SPU per-lane integer and quadword helpers; our SSE quadword
   forms kept). Three clean pairs: tail 1.400/1.273/1.350 vs 1.356/1.252/1.294 (+3.2%, +1.7%, +4.3%). The fourth
   pair hung in both arms at the same scene.
-- That hang was caught by the watchdog (`GOW_CLOCK_WATCH=20`). The walker is not waiting on a semaphore
-  (`sema_wait_get=0xFFFFFFFF`), a self-JUMP park or a GPU fence (`vk_fence_waiting=0`). get sits on a
-  `SET_BEGIN_END(0)` right after ten `DRAW_INDEX_ARRAY` words, with put far ahead, and flips still come (4813 ->
-  5119 -> 5246) with 20 s gaps. So the walker is crawling through the draw engine's END, not deadlocked. Next:
-  `ENG_SLOW_MS=<ms>` logs any BEGIN_END group slower than that, with its sizes and per-phase times.
+
+Update (M0.59e, 2026-10-23 night): **the level hang was the Vulkan driver's memory calls; fixed.**
+- The watchdog (`GOW_CLOCK_WATCH=20`) showed the walker on a `SET_BEGIN_END(0)`, with put far ahead and flips still
+  coming every ~5 s. It was not waiting on a semaphore, a self-JUMP park or a GPU fence (`vk_fence_waiting=0`), so it
+  was crawling through the draw engine's END.
+- `ENG_PHASE_STATS=<s>` (toolkit) splits the engine's time per window by phase and by texture path. During a hang,
+  single texture binds took 15-24 s, all inside depth/colour readbacks to guest memory and texture re-uploads.
+- `VK_SLOW_MS=<ms>` (toolkit) times the driver calls. `vkFreeMemory` took up to 2.35 s, `vkAllocateMemory` 1.5 s
+  and `vkQueueSubmit` 1.6 s, none of them fence waits.
+  - Each readback allocated, mapped and freed a host buffer.
+  - Each changed texture was re-created (an allocation and a synchronous layout submit). The old one was then
+    destroyed, which waits for every batch in flight and frees.
+- Not the same scene, as M0.59 assumed: the two arms of a pair hung at different times (120 s vs 270 s, 450 s vs
+  510 s). They share one GPU and its kernel memory manager, which is how one instance's stall reaches the other.
+  VRAM peaked at 3.3 of 8 GB (`nvidia-smi`), so capacity is not the cause; the volume of calls is.
+- Fix (toolkit):
+  - Readbacks and unbatched uploads reuse one grow-only staging buffer each.
+  - A changed 2D texture is rewritten in place when the backend orders uploads after recorded draws
+    (`rsx_draw_backend.texture_upload_ordered`, set by Vulkan), with the same mip count; otherwise create-and-swap
+    as before.
+- Hangs: 0 of 4 pairs with the fix (8 runs), against 4 of the 5 pairs before it.
+- Walker time per 10 s of level (one pair each):
+
+  | | before | after |
+  |---|---|---|
+  | texture binding | 5.3 s | 1.4 s |
+  | all ENDs | 7.7 s | 4.1 s |
+  | re-upload | 29 ms per call | 2.7 ms |
+  | depth to guest | 47 ms per call | 8 ms |
+
+  Game frames/s did not clearly move: tail 1.83/1.59/1.31 over the three pairs, which is within the spread of earlier
+  runs. The walker now has headroom; the frame is bound elsewhere (SPU job chain and main thread).
+- Still slow: `vkQueueSubmit` (up to 1.8 s, ~80 per run) and image frees from evictions and target re-creation.
+  Every texture still has its own `VkDeviceMemory`; sub-allocating from large blocks is the next candidate.
+- No texture garbage in the dumps of these runs (8-px chroma detector, all below 0.012).
+- `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - Process Lasso's ProBalance on the test machine can lower the game's priority mid-run. Benchmark with it closed.
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
