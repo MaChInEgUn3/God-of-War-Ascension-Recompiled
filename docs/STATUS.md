@@ -772,6 +772,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     hang:
     - tail 2.663 vs 2.610 (+2.0%), EDGE ms/job 0.219 vs 0.223;
     - tail 2.792 vs 2.750 (+1.5%), EDGE ms/job 0.216 vs 0.220.
+- **M0.64: `longjmp` without unwinding, +6-7%.**
+  - Even with the A/B harness's per-channel timers off, 8.4% of the EDGE samples were in ntdll. `PS3_SAMPLE_MOD`
+    (new) put 60% of those in `RtlVirtualUnwind2`, `RtlLookupFunctionEntry`, `ZwContinueEx` and `RtlUnwindEx`.
+  - On 64-bit Windows, `longjmp` unwinds every host frame back to its `setjmp`, and the SPU runtime longjmps on every
+    halt (each policy-module run's exit) and every iret.
+  - `spu_jmp_no_unwind` zeroes the `jmp_buf`'s `Frame` right after `setjmp`, so the jump only restores registers. The
+    jumps cross only C frames of the runtime and of lifted code. ntdll dropped to 2.8%, all condition-variable waits.
+  - Swapped A/B, runZe vs runZc, no hang:
+    - tail 2.935 vs 2.744 (+7.0%), EDGE ms/job 0.205 vs 0.220;
+    - tail 2.802 vs 2.654 (+5.6%), EDGE ms/job 0.208 vs 0.222.
+  - The A/B harness's `SPURS_PM_PROF` itself costs ~5% of EDGE time: two `QueryPerformanceCounter` calls per channel
+    op. It is not set in normal play, so absolute tail numbers here are slightly pessimistic.
+  - Level tail today: ~2.2 (runU, morning) -> ~2.8-2.9 game frames/s.
   - What remains on EDGE outside lifted code:
     - the dispatch of the policy module's own functions through its call table (`0x1BA4`/`0x1BE8`/`0x1CC0` from
       `0x2E8C`, ~5k/s each per workload);

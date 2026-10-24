@@ -171,6 +171,12 @@ Lessons that cost days; keep them.
 * **Profile one SPURS workload**: `PS3_SAMPLE_WIDS=<w>[,<w>...]` (with `PS3_SAMPLE` / `PS3_SAMPLE_HOST`) keeps
   only samples of SPURS kernel threads that are running one of those workloads at that moment. Workloads share kernel
   threads, so without it the audio workload (wid 8) and the EDGE ones (15-17) land in the same buckets.
+* **Time inside a system DLL**: `PS3_SAMPLE_MOD=ntdll.dll` (one module) also buckets that module's samples by RVA
+  (`[samp] modrva ntdll.dll+0x...`); resolve them against the DLL's export table, nearest export at or below. This is
+  how the `longjmp` unwinding was found (M0.64). `SPU_LONGJMP_UNWIND=1` brings the unwinding jump back.
+* **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU
+  channel read/write with two `QueryPerformanceCounter` calls, ~5% of EDGE time. A/B comparisons stay valid; absolute
+  numbers are a bit pessimistic. `NOPMPROF=1` runs without them (no `[pm-prof]`, so no EDGE ms/job).
 * **Indirect branches**: `SPU_IB_STATS=1` prints, every 20 s, how many indirect branches the SPU dispatcher resolved
   and the 24 most frequent by (workload, image or resident overlay, target, link register).
   `SPU_IB_STATS_WIDS=15,16,17` counts only those workloads.
