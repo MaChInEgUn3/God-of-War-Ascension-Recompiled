@@ -582,6 +582,14 @@ Update (M0.59e, 2026-10-23 night): **the level hang was the Vulkan driver's memo
   Every texture still has its own `VkDeviceMemory`; sub-allocating from large blocks is the next candidate.
 - No texture garbage in the dumps of these runs (8-px chroma detector, all below 0.012).
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
+- A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
+  `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
+  Slow `vkQueueSubmit` calls happened with as few as 17 alive, so the allocation count alone does not explain
+  them. What is still slow adds up to about 6% of a run: image frees from cache evictions (251 calls, 28.6 s),
+  submits (67, 21.6 s) and fence waits.
+- Upstream: the fix is PR #552 (ported to `master`, which has no batching). PR #532 (`VK_DRAW_BATCH`) failed CI on
+  shutdown leaks under the validation layer. A reviewer sent the fix, which is now on the PR branch with their
+  authorship. The same leaks (batching rings and the depth-snapshot bounce buffer) are fixed in this fork's toolkit.
 - Process Lasso's ProBalance on the test machine can lower the game's priority mid-run. Benchmark with it closed.
 
 **Open bug: texture garbage in the level.** Some meshes and backgrounds sample tiled, multicoloured noise, which
