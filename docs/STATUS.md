@@ -785,6 +785,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - The A/B harness's `SPURS_PM_PROF` itself costs ~5% of EDGE time: two `QueryPerformanceCounter` calls per channel
     op. It is not set in normal play, so absolute tail numbers here are slightly pessimistic.
   - Level tail today: ~2.2 (runU, morning) -> ~2.8-2.9 game frames/s.
+  - Same method on ucrtbase (3.4% of EDGE samples): 97% was `getenv`'s environment walk. The sampler now unwinds such
+    samples to their exe caller; all of them came from `spu_run_with_halt`, which read `SPU_ARGWATCH` after every
+    module run. It is read once now. The A/B was neutral within noise (runZg vs runZe: -3.2% / +0.4%, EDGE ms/job
+    equal), since that cost sits outside the measured job time. Kept: it is a plain per-run cost.
   - What remains on EDGE outside lifted code:
     - the dispatch of the policy module's own functions through its call table (`0x1BA4`/`0x1BE8`/`0x1CC0` from
       `0x2E8C`, ~5k/s each per workload);

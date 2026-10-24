@@ -174,6 +174,8 @@ Lessons that cost days; keep them.
 * **Time inside a system DLL**: `PS3_SAMPLE_MOD=ntdll.dll` (one module) also buckets that module's samples by RVA
   (`[samp] modrva ntdll.dll+0x...`); resolve them against the DLL's export table, nearest export at or below. This is
   how the `longjmp` unwinding was found (M0.64). `SPU_LONGJMP_UNWIND=1` brings the unwinding jump back.
+  Each such sample is also unwound to the first frame in the exe (`[samp] modcaller rva 0x...`, resolve against the
+  link map): which code calls into the DLL. That found an uncached `getenv` in `spu_run_with_halt`.
 * **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU
   channel read/write with two `QueryPerformanceCounter` calls, ~5% of EDGE time. A/B comparisons stay valid; absolute
   numbers are a bit pessimistic. `NOPMPROF=1` runs without them (no `[pm-prof]`, so no EDGE ms/job).
