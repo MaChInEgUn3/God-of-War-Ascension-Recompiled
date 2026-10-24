@@ -167,10 +167,10 @@ Lessons that cost days; keep them.
 * **Who shares which lock line**: `SPU_ATOM_WIDS=<s>` lists, per SPURS workload, the 128-byte lines its atomics
   touch (lines with 100+ hits). `put` counts PUTLLC, PUTLLUC and PUTQLLUC together. `SPU_ATOM_EA=<ea>`
   (`SPU_ATOM_FULL=1`, `SPU_ATOM_PUTONLY=1`) then dumps one line's contents at each write.
-* **LS probes in lifted SPU code**: the port builds its lifted SPU sources with `SPU_LS_PROBES=0`
-  (CMake `GOW_SPU_LS_PROBES`, default OFF). `SPU_LS_WATCH`, `SPU_SMC_WATCH` and `SPU_LS_LOWREAD` then see only
-  accesses made by the runtime. Configure with `-DGOW_SPU_LS_PROBES=ON` to watch lifted code again. That costs
-  ~10% per EDGE job (M0.61).
+* **LS probes and FP check in lifted SPU code**: the port builds its lifted SPU sources with `SPU_LS_PROBES=0` and
+  `SPU_FP_CHECK_HOOK=0` (CMake `GOW_SPU_LS_PROBES`, default OFF). `SPU_LS_WATCH`, `SPU_SMC_WATCH` and
+  `SPU_LS_LOWREAD` then see only accesses made by the runtime, and `SPU_FP_CHECK=1` checks nothing. Configure with
+  `-DGOW_SPU_LS_PROBES=ON` to get both back. That costs ~10-15% per EDGE job (M0.61).
 * **Host-side profile**: `PS3_SAMPLE=<ms>` samples every thread's RIP (reports every 10 s: guest functions,
   host modules, per-thread busy/ntdll split). `PS3_SAMPLE_HOST=1` buckets every sample by executable RVA and
   thread instead (lifted SPU job modules and overlay fragments are not in the guest map); resolve with

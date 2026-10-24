@@ -243,14 +243,15 @@ endif()
 #                          The default SSE2 target ran all of those as loops/calls.
 #   -ffp-contract=off   -- only the explicit fmaf()s fuse, as on the SPU.
 #   SPU_LS_PROBES=0     -- (GOW_SPU_LS_PROBES OFF) no diagnostic probe or
-#                          SPU_LS_WATCH check on each LS access of lifted code;
-#                          those env diagnostics then see only runtime accesses.
-option(GOW_SPU_LS_PROBES "LS diagnostic probes in lifted SPU code" OFF)
+#   SPU_FP_CHECK_HOOK=0    SPU_LS_WATCH check on each LS access of lifted code,
+#                          and no SPU_FP_CHECK call after each float op; those
+#                          env diagnostics then see only runtime code.
+option(GOW_SPU_LS_PROBES "LS probes and the SPU_FP_CHECK hook in lifted SPU code" OFF)
 set(SPU_HOST_ARCH "-march=x86-64-v3" CACHE STRING "Host ISA flag for lifted SPU sources")
 if(SPU_SOURCES)
     set(_spu_defs SPU_USE_DISPATCH_MT)
     if(NOT GOW_SPU_LS_PROBES)
-        list(APPEND _spu_defs SPU_LS_PROBES=0)
+        list(APPEND _spu_defs SPU_LS_PROBES=0 SPU_FP_CHECK_HOOK=0)
     endif()
     set_source_files_properties(${SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"

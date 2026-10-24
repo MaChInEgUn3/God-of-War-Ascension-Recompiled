@@ -633,6 +633,21 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   The level tail is now above 2 game frames/s.
 - The host sampler took one round per ~430 ms, a system-wide thread snapshot each time, so profiles held a few
   hundred samples per thread. It now keeps thread handles. `PS3_SAMPLE_RANKS` raises the RVA buckets per report.
+- `SPU_FP_CHECK_HOOK=0`: the `SPU_FP_CHECK` call after every native `fa`/`fm`/`fma` is never taken, but it is an
+  outside call, so registers held in `ctx` were reloaded after each float op. The port turns it off with the LS
+  probes (same CMake option).
+  - In the three hottest EDGE functions: calls -45-50%, host instructions -17-23%.
+  - A/B runS vs runR, 4 swapped pairs, all positive, no hang: tail +3.9/+4.8/+4.7/+4.8%; EDGE ms/job -2.5% to
+    -5.4%.
+  - The fourth pair finished on its own after the batch script was stopped for low memory; its timeouts were still
+    running.
+- Profile with the fixed sampler (~43k samples per 10 s): on the EDGE threads ~45-49% is lifted code and ~22% is
+  dispatch (`spu_lookup`, `spu_step`, `spu_indirect_branch`, `spu_drain_call`). Another ~6-7% is the interpreter
+  (`spu_step`, `spu_interp_run_until_impl`), so some EDGE code still runs unlifted. Next: `SPU_INTERP_MISS=1` and
+  a re-lift of what it finds.
+- A static study of keeping GPRs in locals (lifter) found it feasible. No function is entered except at its start,
+  and only `_u32[0]`/`_u16[0]` views are used. It needs a shadow-run harness (two lifts compared from one
+  snapshot) before it can ship. It is parked behind the cheaper items.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
