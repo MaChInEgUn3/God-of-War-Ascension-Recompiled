@@ -704,6 +704,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - So EDGE is serial on the real console too, by the game's design. On hardware it occupies about half the wall
     time at full speed; here it fills 96% of a much longer frame. The lever stays the cost per EDGE job.
   - Also seen: SPURS on the console spreads EDGE over SPUs 0-5 (priority 3 on 0-3, priority 8 on 1-2 for wid 21).
+- **Patch 1.12 vs our 1.00.**
+  - The patched `GOWA.SELF` would not decrypt with our RPCS3 (`Failed to decrypt SELF metadata info`). Its loaded
+    image was read from the running game through PS3MAPI instead. It stays outside the repository.
+  - Code is +176 KB (+2.2%). The data segment moved from `0x800000` to `0x820000`, and `.bss` grew ~283 KB.
+  - 53% of the 1.00 code's 64-byte blocks appear unchanged, at dozens of different shifts. The binary was relinked,
+    so every address the port uses would move.
+  - 12 of the 33 embedded SPU job modules changed, among them `d935`, the main EDGE module.
+  - Moving to 1.12 means a full PPU re-lift, those 12 modules and the EDGE fragments re-lifted, and every hardcoded
+    address remapped (best done with a function-matching tool). That is several days. Parked as a milestone for
+    before any release, since most players will have 1.12 installed.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
