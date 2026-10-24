@@ -648,6 +648,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
 - A static study of keeping GPRs in locals (lifter) found it feasible. No function is entered except at its start,
   and only `_u32[0]`/`_u16[0]` views are used. It needs a shadow-run harness (two lifts compared from one
   snapshot) before it can ship. It is parked behind the cheaper items.
+- Re-lift from a `SPU_INTERP_MISS=1 SPU_LSA_GETLOG=...` run of the current build.
+  - In that run the EDGE wids interpreted ~1.5 s per 20 s, mostly fragment placements not lifted yet (image 225 at
+    LS `0x11730`, `0x112E0`, ...).
+  - `lift_edge_frags.py`: 361 -> 438 placements.
+  - `interp_miss_to_extra.py`: +40 job-module entries in `spu/jobmod_extra.json`, then `lift_jobmods.py`. 42 more
+    targets lay past their module's image (module end = LS `0x4000` + its size), d935's at `0x11xxx` and 759d's
+    above `0xEA66`. Those are not module code and were left out.
+  - Swapped A/B against the build before the re-lift, no hang, the same 40 "unresolved" lines in both:
+    - pair 2, both arms entering at 120 s: tail 2.212 vs 2.050 (+7.9%), EDGE ms/job 0.285 vs 0.302;
+    - pair 1: 2.219 vs 1.848 (+20%), ms/job 0.267 vs 0.327. Its arms entered the level at 120 s and 210 s, so this
+      pair overstates the gain.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
