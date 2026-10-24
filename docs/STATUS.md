@@ -659,6 +659,34 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - pair 2, both arms entering at 120 s: tail 2.212 vs 2.050 (+7.9%), EDGE ms/job 0.285 vs 0.302;
     - pair 1: 2.219 vs 1.848 (+20%), ms/job 0.267 vs 0.327. Its arms entered the level at 120 s and 210 s, so this
       pair overstates the gain.
+  - A second `SPU_INTERP_MISS` run on the new build: EDGE interpreted time fell from ~650 to ~48 ms per 20 s per wid
+    (-93%), and all workloads together from ~4 s to ~1.4 s per 20 s.
+  - Known item, not chased: wid 7 (`Wws_Job/BatchJobList`, job module 759d) interprets ~1 s per 20 s. That code
+    sits at LS `0x16670`-`0x359C0`, outside the module's image, staged somewhere the lift never saw (the WWS
+    manager's second code buffer is a candidate; `SPU_JOBMOD_LOG=1` would show the code base). It is not on the
+    frame's path.
+- Profile of that build (runU, fixed sampler, 600-720 s):
+  - On the three EDGE threads, ~50% is lifted code. Dispatch takes ~15-16%: `spu_indirect_branch` 5.5,
+    `spu_drain_call` ~4.8, `spu_lookup` ~2.7, `spu_overlay_note_get` ~1, `spu_step` ~1, `spu_run_with_halt` ~0.9.
+    MFC helpers take another ~5%.
+  - Inside the hottest lifted functions (E550, 73E0, 4AB0, A880) the samples spread over 600-1400 16-byte buckets,
+    with no hotspot. By instruction class:
+
+    | class | share |
+    |---|---|
+    | vector/ALU | 48-57% |
+    | `ctx` memory | 11-18% |
+    | stack spills | 11-17% |
+    | `pshufb` | 4-7% |
+    | constants | ~5% |
+    | LS memory | 1-3% |
+
+  - Keeping GPRs in locals would mainly remove the `ctx` traffic and some spills, which is an upper bound of
+    ~8-12% of an EDGE thread. Days of work and a new test harness, so it stays parked.
+  - The dispatch path is the nearer target, but it is hang-sensitive (interrupt frames, setjmp in
+    `spu_drain_call`).
+- `scratchpad`-style helpers used for this (not in the repo): a 16-byte bucket classifier over the link map and
+  the exe (capstone), and an asm counter per lifted function.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
