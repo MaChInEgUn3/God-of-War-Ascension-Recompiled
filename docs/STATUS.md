@@ -687,6 +687,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     `spu_drain_call`).
 - `scratchpad`-style helpers used for this (not in the repo): a 16-byte bucket classifier over the link map and
   the exe (capstone), and an asm counter per lifted function.
+- Texture garbage is still there, but rarer. Over the 30 runs since the hang fix that have dumps at f_06600 and
+  later, the 8-px chroma detector flagged 2:
+  - `x15qs_1` (runQ): 5 frames, up to 0.058; noise on the golden wing meshes;
+  - `im_2` (runU): 1 frame, 0.018; tiled columns in the background.
+
+  Of the 18 runs that reach f_09000, that is 2, against 6 of 22 before. Both counts are small, so "rarer" is not
+  established. The cause is still open.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
