@@ -585,6 +585,35 @@ Update (M0.59e, 2026-10-23 night): **the level hang was the Vulkan driver's memo
 - Still slow: `vkQueueSubmit` (up to 1.8 s, ~80 per run) and image frees from evictions and target re-creation.
   Every texture still has its own `VkDeviceMemory`; sub-allocating from large blocks is the next candidate.
 - No texture garbage in the dumps of these runs (8-px chroma detector, all below 0.012).
+
+Update (M0.60, 2026-10-24): **what bounds the frame now: the EDGE chain, one job at a time.**
+- `PS3_FTRACE` over 20 s of the level (600-620 s, runP, one instance): frame median 463 ms. The main thread
+  sleeps 310 ms per frame at `0x3E8388`, waiting for WWS job lists. The walker drains 344 ms per frame. GPU waits
+  are down to 34 ms.
+- The busiest SPU (93%) runs wid 8, `Wws_Job/BrBDblBufWrkld`, almost alone. That is the game's Boomrang audio
+  engine (`src/common/boomrang/api_brb.cpp`, Scream plugin packs), which the title pins to SPU 5 (`priority per
+  SPU: 0 0 0 0 0 1 0 0`). It is real-time audio, not per-frame work, so it is not on the frame's path.
+- The EDGE workloads (wids 15-17, `Wws_Job/EDGE0-2`) are:
+  - busy for 96% of wall time (union of their spans);
+  - overlapping each other for 15 ms in 20 s;
+  - active during 98.8% of the main thread's waits.
+
+  So the frame is the EDGE chain, and it runs serially. Each wid runs ~1100 jobs/s, with a median span of
+  0.18 ms (`pmprof_edge.py`: 0.29 ms per job). No run is idle (`z0%`).
+- Serial by design, most likely. `SPU_ATOM_WIDS=<s>` (toolkit) lists the lock lines each workload's atomics touch.
+  Each EDGE wid has its own line (its `AddWorkloadWA` data). All three also share `0x83257500`: a ring allocator
+  (a write pointer in `0x8326xxxx`, and one in the `0x81966300 + 0x60000` command ring). They update it with
+  GETLLAR + PUTLLUC: a read-modify-write with no conditional store, which is only correct if one EDGE runs at a
+  time. Checking `wklCurrentContention` on a real PS3 (HEN) would settle it.
+- The lever is the cost per EDGE job.
+  - Host samples on the EDGE threads: roughly 20% runtime dispatch (`spu_indirect_branch`, `spu_lookup`,
+    `spu_drain_call`, `spu_step`). The rest is lifted code, hottest `jobmod_d935...` `E550`/`73E0`/`A880` and
+    `jobmod_a67e...` `4AB0`.
+  - The lifted code keeps every GPR in `ctx->gpr[]` in memory. Each LS store, a char-type `memcpy`, forces `r1` and
+    the LS pointer to be reloaded. Each LS write also tests two global watch flags and the LBP-only `0x1320`
+    probe.
+  - Next: compile those probes out of the lifted SPU code, and get a fuller profile. Keeping GPRs in locals (lifter)
+    is the larger lever and needs a spike first.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
