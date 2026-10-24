@@ -766,8 +766,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Swapped A/B, runZb vs runY, no hang:
     - tail 2.688 vs 2.598 (+3.5%), EDGE ms/job 0.225 vs 0.232;
     - tail 2.712 vs 2.621 (+3.5%), EDGE ms/job 0.221 vs 0.230.
-  - Still interpreted: the handler's stub-builder loop (`0xA60`, `stqx` is outside the microstep set), because
-    `0xA2C` is no lifted entry of the policy module. Lifting it as an `images.json` extra is the next candidate.
+  - The handler itself (`0xA2C`) was no lifted entry of the policy module, so its stub-builder loop (`0xA60`)
+    ran in the microstepper and then the interpreter (`stqx` is outside the microstep set). It is now an extra
+    entry of `gowpm0` in `spu/images.json`. No EDGE workload is left in `SPU_INTERP_MISS`. A/B runZc vs runZb, no
+    hang:
+    - tail 2.663 vs 2.610 (+2.0%), EDGE ms/job 0.219 vs 0.223;
+    - tail 2.792 vs 2.750 (+1.5%), EDGE ms/job 0.216 vs 0.220.
+  - What remains on EDGE outside lifted code:
+    - the dispatch of the policy module's own functions through its call table (`0x1BA4`/`0x1BE8`/`0x1CC0` from
+      `0x2E8C`, ~5k/s each per workload);
+    - the generated stubs;
+    - `spu_drain_call`.
 - `level_rate.py` now tolerates heartbeats that drift off the 30 s grid.
 - A fifth pair (x13) also ran clean: 0 of 5 pairs hung with the fix. `VK_SLOW_MS` now also counts live
   `VkDeviceMemory` objects. They peak at ~1094, which is the 1024-entry texture cache full plus targets and rings.
