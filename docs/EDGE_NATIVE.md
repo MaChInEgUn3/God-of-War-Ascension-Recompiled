@@ -44,7 +44,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   - GETLLAR: the line contents;
   - PUTLLC/PUTLLUC: the line written and the result;
   - every channel read and its value (decrementer, tag status, events): the nondeterminism sources.
-- **Job end:** the first dispatch back into PM code (pc < 0x4000) while a capture is open.
+- **Job end:** a dispatch to the link the job was entered with, `spu_halt` on the context, or the next job start on
+  the same thread. Other dispatches into PM code (pc < 0x4000) are JobApi calls and stay in the capture. On EDGE the
+  job never returns to its link, so a capture ends at the module's exit to the kernel (see progress log).
 - **File:** one per job, `job_<wid>_<n>.bin`: header, LS snapshot, registers, then the event records.
 
 ## Replay (`SPU_JOB_REPLAY=<dir>`, a mode of the game exe)
@@ -72,3 +74,25 @@ Status: design, started 2026-10-24. Progress log at the end.
 
 - 2026-10-24: design. No SPU job capture/replay existed in the toolkit; the nearest pieces are `SPU_JOBEXEC_DUMP`
   (LS at first job entry), `g_spu_put_hook` and `spu_interp_diff_test.c` (lifted vs interpreter on one context).
+- 2026-10-24: capture built (toolkit `runtime/spu/spu_channels.c` + `spu_dma.h`; the file format is in the header
+  comment of the "SPU job capture" block). Reader: `analysis/jobcap_dump.py <file> [-v]`.
+  - **Beyond the plan:** a 32-byte record per event; a POLL event (the HLE selectWorkload writes LS 0x100..0x17F and
+    r3); a PMCALL event for every dispatch into PM code during the job; an END record carrying GPRs and the full LS
+    at the end, which replay compares against. The header also stores `resident_task`, `policy_mode`, the
+    `resident_code` slots and the capture time.
+  - **Job end is not "first pc < 0x4000":** jobs call JobApi in PM code through the dispatcher (19 such dispatches
+    per EDGE job), so that rule would cut every job at its first call. The capture closes when the job dispatches
+    to the link it was entered with, at `spu_halt`, or at the next job start on the thread. Measured: the EDGE job
+    never returns to its link (0x3368). It leaves by a PM dispatch to 0x2F5C with r0 = 0. The PM then completes the
+    job (GETLLAR/PUTLLC at 0x35E0), polls once (answer 0) and exits to the kernel. So all 200 captures end at that
+    halt (pc 0x9C0) and hold exactly one job plus the PM tail. Within a file, the job proper ends at the PMCALL to
+    0x2F5C.
+  - **Run cap_1** (`SPU_JOB_CAPTURE_N=200 SPU_JOB_CAPTURE_T0=600`, runCap exe): 200 files in 344 ms of game time
+    (t = 600.0-600.3 s). Workloads: wid 17 x123, wid 16 x77, wid 15 x0 in that window. 198 jobs are overlay 225,
+    entry 0xAD98; one is overlay 220 (entry 0x4270) and one overlay 205 (entry 0x4138). Files are 531-568 KB
+    (median 537 KB; two LS copies make up 512 KB of that), 108 MB in total. Per job: 47-86 events (median 60), GET
+    0-4 (median 0: the PM stages job inputs before entry, so they are in the LS snapshot), PUT 0-5 (3), GETLLAR 2-4,
+    PUTLLC 1-3, PUTLLUC 0-2, RDCH 24-50 (32), POLL 1, PMCALL 16-19. Heartbeats kept rising through and after the
+    capture (game_frame 4160 at 575 s, 4613 at 695 s), and the log shows no crash.
+  - **Not recorded:** rchcnt values, interrupts, PPU stores between the job's own transfers. `spu_id` reads 0 in
+    every capture (the policy contexts' field, not the physical SPU).

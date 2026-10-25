@@ -182,6 +182,12 @@ Lessons that cost days; keep them.
 * **Indirect branches**: `SPU_IB_STATS=1` prints, every 20 s, how many indirect branches the SPU dispatcher resolved
   and the 24 most frequent by (workload, image or resident overlay, target, link register).
   `SPU_IB_STATS_WIDS=15,16,17` counts only those workloads.
+* **SPU job capture**: `SPU_JOB_CAPTURE=<dir>` writes one file per policy-module job, `job_<wid>_<seq>.bin`: LS and
+  GPRs at entry, then every GET/PUT (with the bytes), GETLLAR/PUTLLC/PUTLLUC line, channel read, JobApi dispatch,
+  and LS and GPRs at the end. `SPU_JOB_CAPTURE_WIDS` (default `15,16,17`), `SPU_JOB_CAPTURE_N` (default 100, all
+  threads), `SPU_JOB_CAPTURE_T0=<s>` (skip boot). One `[jobcap]` line per job. `analysis/jobcap_dump.py <file> [-v]`
+  prints a file. Format: `runtime/spu/spu_channels.c` (toolkit), see `docs/EDGE_NATIVE.md`. Captures hold game data:
+  keep them under `work/`.
 * **Targets sampled through guest memory**: with `ENG_PHASE_STATS` set, `[eng-via-guest]` lists each distinct way a
   draw samples a depth or colour target as a texture by storing it to guest memory first (z2guest/s2guest): the
   texture format, the target's format and size (first 32).
