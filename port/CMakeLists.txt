@@ -186,6 +186,13 @@ if(PORT_ENABLE_SPU)
                 DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_e550_body.py"
                 COMMENT "Generating the E550 loop body from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native.c" "${EDGE_BODY}")
+            # 73E0's region at loc_79B0 (gow_edge_native_73e0.c, switch GOW_EDGE_73E0, default lifted)
+            set(EDGE_BODY73 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_73e0_body.h")
+            add_custom_command(OUTPUT "${EDGE_BODY73}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_73e0_body.py" "${EDGE_LIFT}" "${EDGE_BODY73}"
+                DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_73e0_body.py"
+                COMMENT "Generating the 73E0 region from the d935 lift")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_73e0.c" "${EDGE_BODY73}")
         endif()
         # Generated beside the lift; each is present only once its generator
         # has been run, so each is included only if it is actually here.

@@ -66,7 +66,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | function | share of EDGE samples | stage | native status |
 |---|---|---|---|
 | `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in production (v3, default): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms, in game +8.0/+8.8% |
-| `73E0` | 11.8% | ? | |
+| `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in lab (v3, `GOW_EDGE_73E0=1`; default lifted): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%); not run in game |
 | `A880` | 5.8% | ? | |
 | `D640` | 3.6% | ? | |
 | `F538` | 3.6% | ? | |
@@ -308,3 +308,114 @@ Status: design, started 2026-10-24. Progress log at the end.
   time is neutral (sum of per-job minimum, alternated: before 32.556 33.472 32.583 32.793, after 32.734 33.469
   32.680 32.633 ms). The 150 remaining `unknown argument` warnings are toolkit runtime files, built with
   `-msse4.1` (no FMA), where nothing can contract. PPU lifted code has no `-march` either.
+- 2026-10-25: 73E0 boundary probe and block map (lab lift `work/spu_recomp_d935.fnpb_73e0.c`:
+  `spu_fnprobe_lift.py --no-reads --blocks`, 73E0 and its callees 5D90 6AC8 7040 B5F0 B600 B670; exe
+  `build_runLab73P`; cap_3 still 400/400).
+  - **Calls:** 118 over the 400 jobs, one per calling job (282 jobs never call it). `r3` is always 0x107A0 (the
+    job-context block E550 gets too), `r8` 0, `r9` 0x29000; `r4` `r5` `r6` `r7` `r10` are buffers (37-38 distinct
+    values each). Writes per call: 1.2-41.9 KB (median 7.9 KB), in scratch at 0x12xxx/0x13xxx, the output buffers
+    0x29000-0x37xxx, and the stack.
+  - **Time** (`[fnpt]`, per-call minimum, REPEAT=20): 6126 us in total, mean 52, median 26, max 245 us: 18.8% of
+    the 32.67 ms summed per-job minimum. Per-call time tracks the inner iterations (corr 0.99) and the bytes
+    written (0.95).
+  - **The indirect branch:** lifted 73E0 has no `spu_indirect_branch`. Its only exit other than `SPU_RET` is the
+    tail call to 6AC8 at the end of the `821C` block (taken when LS[r1+0x40] != 0), lifted as a trampoline return.
+    It was never taken in cap_3: `076F0` (the `SPU_RET` epilogue) is entered 118 times, from `821C` each time, and
+    `06AC8:118` is the direct call at 0x8200. The lift also has function 75D8, a second copy of 73E0's blocks from
+    `loc_75D8` on (an alternate entry, reached only through dispatch); it stays lifted.
+  - **Block map** (counts x lifted statements per block, 5.03M in all): the outer loop `loc_79B0` (1869 iterations
+    per pass, 8 vertices each) with its two inner loops is 76.1%: `7BB4` (inner loop 1, 127 statements) 38.0%,
+    `7ED8` (inner loop 2, 93) 27.8%, and the outer blocks `79B0` 4.7%, `8058` 3.1%, `7DC0` 2.5%. Both inner loops
+    run r83 times per outer iteration (15056 iterations each per pass; r83 = 3-42 per call, mostly 6-10). Outside
+    the region: callee 6AC8 ~12.6% (`6DE0` 6.3%, `6BE0` 4.6%), the index-table loops `7670` 4.5% and `75D8` 4.1%,
+    `83E8` 1.6%. No calls inside the region.
+- 2026-10-25: the 73E0 region (`loc_79B0` to `loc_81C0`) native, in a lab build (`build_runLab73EN`).
+  - **Pieces:** `port/gow_edge_native_73e0.c` (an SPU source like `gow_edge_native.c`), behind `GOW_EDGE_73E0`
+    (read once): unset/0 = lifted, 1 = native v3 (`GOW_EDGE_73E0_V2=1`: v2), 2 = native v1, 3 = check v3/v2,
+    4 = check v1. `port/gen_edge_73e0_body.py <lift> <out.h>` writes `gow_edge_73e0_body.h` (`GOW_73_REGS/LOAD/
+    STORE` and the segments `S79B0 S79B0T B7BB4 S7DC0 S7DC0T B7ED8 S8058`) from 73E0's copy of the blocks into the
+    build tree; it checks that the lift has exactly the expected branches and labels and fails otherwise.
+    `port/gen_edge_native_lift.py` now adds each switch only where it is missing (per loop, no longer
+    `"gow_edge_native_mode" in text`), so a lift that already has the E550 switch still gets the 73E0 one; in
+    73E0 (or its `_impl`) it inserts `if (g_edge_73) { if (g_edge_73 <= 2) { gow_edge_73e0_79b0(ctx); goto
+    loc_000081C0; } gow_edge_73e0_check_begin(ctx); }` before `loc_000079B0:` (entered only by falling through
+    from the 7890 block; the back edge jumps to the label) and `check_end` after `loc_000081C0:` (also reached
+    by the skip at 7890 when r107 = 0). The port's CMakeLists builds the new source and header like E550's.
+  - **What the region computes** (a reading of the lift and of the region constants, identical in all 118
+    entries of cap_3; to verify): per outer iteration, 8 vertices are gathered through 8 offsets (lane 3 of the
+    quads at r103, +128 per group) and transposed into SoA quads, vertices 0-3 / 4-7 (the lift's paired
+    registers): positions (r66|r65, r62|r63, r60|r61), normals (r52|r50, r54|r53, r56|r55).
+    - Inner loop 1, over the r83 lights (16-byte records at r99: position and w = 1/radius; r97: colour, scaled
+      by r93 = 0x3F7EFEFE; r98: direction), software pipelined: d = P - V, d2 = d.d + 1e-4 (r84 = 0x38D1B717),
+      rsq = fi(frsqest(d2)) for light j+1 while light j finishes. n = d * rsq, or the light's direction for the
+      first r100/16 lights (the shufb control r9 is r104 = all of the second operand while j < that count, else
+      r64 = LS[0xF920] = all of the first); n goes to the scratch at r23 (r105 + 96j). t = min(d2 * rsq * w, 1),
+      s = 1 - t, a = (s*s*(3 - 2s))^2 * colour.w (r101 = 3, r102 = 2); colour.xyz * a goes to the scratch at r29
+      (r106 + 96j). wrap = min(|0.5 * (N.n) + 0.5|, 1) (r72 = 0.5, r44 = sign mask, r33 = 1.0), weight =
+      |a| * wrap; the weights are summed (fa) and n * weight accumulated (fma): 8 accumulators.
+    - 7DC0 normalises the accumulated direction (frest/frsqest + fi) into N2 = (r71|r70, r69|r68, r67|r64).
+    - Inner loop 2, over the same lights, reads both scratch buffers back (light j+1 loaded in iteration j):
+      c = clamp(N2.n, 0, 1) (fcgt/selb against 1.0, and with cgti 0), v = colour.xyz * a * c, and the positive
+      and the negated parts of v's three components summed into six accumulators per vertex (fa).
+    - 8058 transposes back and stores 3 x 8 quads per group to r73/r74/r75 (+ the 8 offsets).
+  - **Liveness** (script over the generated segments): after loop 1 the region always runs S7DC0, S7DC0T,
+    loop 2 (same count, at least once) and S8058, which overwrite every register loop 1 writes except its 8
+    accumulators (r42 r45 r47 r48 r49 r51 r57 r58). After loop 2, S8058 overwrites all but 23 of loop 2's: the 12
+    accumulators, r2 r3 r4 r23 r24 r25 (fa results that the accumulators copy), r10 r11 r12 (last-iteration
+    values) and r66 r52 (last-iteration loads). So the packed loops run every iteration, the last too, and write
+    back only those registers; the others stay stale until those blocks overwrite them, so at `loc_81C0`, where
+    check mode compares all 128, every register is the lifted one. (E550's native loop leaves all 57 registers
+    it writes exact; here the unit is the region.) The last iteration's next-light loads (one record past the
+    last) feed only dead registers in loop 1 and are skipped; in loop 2 they feed r12, which the 4-lane helpers
+    compute (fm, fma, fma, as the lift) from whatever is there.
+  - **Versions** (every float result is the same op on the same operands):
+    - v1: the region statement for statement, the SPU registers in C locals (the generated macros), direct LS
+      access, the lift's control flow between the segments.
+    - v2: v1 with both inner loops 8-wide (vertices 0-3 low, 4-7 high), every op with the SPU_FP_NATIVE lane rule
+      and a 4-lane fallback per half. New 8-lane ops: fa/fs (zero results allowed), fnms, fcgt (the toolkit's key
+      compare), frsqest (one gather; the 4-lane form's table select also kept), fi, cgti/and/xor/andc/selb.
+      A self-test at mode init checks frsqest (both forms), fi and fcgt against the 4-lane helpers (200000
+      quadword compares, 0 differ). Loop 1 loads the next light before storing the r23 quads (the lift stores
+      first), so the packed loop runs only if the scratch it writes does not overlap the records it reads
+      (else the lifted loop; 0 such entries in cap_3).
+    - v3: v2 with one range check per iteration, as E550's v3 (min/max of every op result and LS input shifted
+      left by one; allowed zero lanes out of the min, +0 out): an iteration that fails is recomputed with v2's
+      ops before anything is stored. It needs whole-word shufb controls (then a splat is one vpermilps), the
+      sign mask, r59 = splat-word-0 (so the r9 choice is one scalar compare), plain nonzero constants and plain
+      vertex inputs; the region-invariant part is checked once per region entry, r64 when its value changes.
+      Per cap_3 pass: 240 iterations recomputed exactly (both loops together), 240 loop-1 iterations run on the
+      checked ops without a try (their carried values were not all plain), 0 entries to v2, 0 to the lifted
+      loops, 0 ops redone by the 4-lane helpers.
+  - **Gates** (`build_runLab73EN`, `SPU_JOB_REPLAY=work/jobcap3`): `GOW_EDGE_73E0=0`, unset, `=1` (v3), v2
+    (`GOW_EDGE_73E0_V2=1`) and `=2` (v1): each `[replay] 400/400 jobs identical`. Check mode (all 128 GPRs and the
+    whole LS compared at `loc_81C0` after each region run): v3, v2 and v1 each `[edge-73e0-check] 118 calls
+    checked, 0 differ; 1869 outer iterations (8 vertices each), 15056 inner iterations per loop; region
+    constants differ from the first call in 0 calls`. Negative tests (`GOW_EDGE_73E0_FAULT`, first native run):
+    - LS bit (1, byte 15 of the last quad the last outer iteration stores): job gate `job_15_6.bin FAIL ... final
+      LS differs first at 0x2B2FF: recorded 00, replay 01`, `399/400`; check mode `call 0: LS differs in 1 bytes,
+      first at 0x2B2FF (lifted 00 native 01)`, `118 calls checked, 1 differ`.
+    - r60 bit (2): job gate 400/400 (r60 is overwritten before every job end on cap_3's paths); check mode
+      `call 0: r60 lifted 00000000 ... native 00000001 ...`, `1 differ`. As for E550, that the registers come out
+      exact rests on check mode.
+  - **Timing** (pinned replay, REPEAT=50, sum of per-job minimum, ms; one exe, env alternated):
+    - lifted 33.270 33.217 33.350 33.384, v3 30.141 31.549 30.099 30.114 (median 33.31 vs 30.13, -9.5%);
+    - a 4-way set: lifted 36.744 33.600 33.265 34.790 (noisy), v3 30.273 31.592 30.098 30.225, v2 31.379 31.440
+      31.422 31.550, v1 32.560 32.601 32.521 32.638.
+  - **73E0 alone** (`build_runLab73ENP`: the probe lift above through the switch; `SPU_FN_PROBE=73E0`,
+    REPEAT=20, sum of the 118 per-call minimums, us): lifted 6112 6111 6164, v3 3028 3286 3025 (2.0x for the
+    whole function; the region is 76% of it). The probe's `--blocks` counters are skipped by the native path.
+  - **The pieces alone** (check mode, rdtsc, one pass): region native 8.6 M vs lifted 20.2 M ticks (570 vs 1342
+    per inner iteration, 2.35x); inside it, packed loop 1 237 and loop 2 129 ticks per iteration (8 vertices).
+    The rest, 3.1 M (~36%), is the outer blocks 79B0/7DC0/8058 in locals, no faster than lifted: the next piece
+    of this region if it is worth it (~1.5% of the replay at 3x). An earlier build that rebuilt the shuffle
+    tables and checked the constants at every inner-loop entry ran loop 1 at 472-529 ticks per iteration.
+  - **Production:** the port's CMakeLists builds the switch and the native source into every exe; the default is
+    the lifted region. Flipping the default (`GOW_EDGE_73E0` unset = native) is left for an in-game A/B and an
+    in-game check-mode run, as E550 had. Not covered by any run: the overlap fallback, the v2 fallback, the
+    lifted-loop fallbacks, r116 = 0 with r107 > 0, and IRQ/RCHCNT inside a job (cap_3 has none).
+- 2026-10-25: 73E0 in-game check (x35, production exe, `GOW_EDGE_73E0=3`, one 1100 s level run): `1146880 calls
+  checked, 0 differ; 17445388 outer iterations (8 vertices each), 134513874 inner iterations per loop; region
+  constants differ from the first call in 0 calls`. Unlike cap_3, the game exercised the fallbacks: 87 entries to
+  v2 (unexpected constants), 2213516 v3 iterations recomputed exactly, 2214949 loop-1 iterations on the checked
+  ops without a try, 8295 8-lane ops redone by the 4-lane helpers; all exact. Region rdtsc: 733.6 vs 1817.3
+  ticks per inner iteration (2.5x).
