@@ -652,3 +652,14 @@ Status: design, started 2026-10-24. Progress log at the end.
   - Timeline 600-620 s: 91 -> 98 frames, median 208.5 -> 200.0 ms; main blocked at `3E8388` 123.3 -> 98.2 ms,
     RSX walker drain 143.9 -> 142.5 ms per frame against ~181 ms of EDGE work (0.96 x 189): ~21% headroom left
     before the walker co-bounds.
+- 2026-10-25: replay profile after four stages (x48: lab build of the production tree, all four native,
+  `PS3_SAMPLE=1 PS3_SAMPLE_HOST=1`, REPEAT=1000, cap_3 400/400, sum of per-job minimum 26.53 ms; 11559 samples
+  in the job window). Groups: d935 lifted 33.1%, overlay fragments 21.6%, runtime 12.8%, replay serving 12.3%
+  (not game cost), native 73E0 7.0%, E550 6.4%, D640 4.0%, A880 1.4%. Top lifted d935 functions: F538 5.5%,
+  DCC0 4.4%, 6AC8 3.7%, E550 outside its loop 2.9%, BBC8 2.0%. Overlay fragments are spread out: the largest
+  function, `117D0` of overlay 0x719900, is ~4% summed over the several fragment lifts that each carry a copy;
+  next `12250` (0x71c310) 2.5%, `11430` (0x7228c0) 2.2%. A native stage there would have to hook every lift
+  holding the function, so the next stage is F538, then DCC0.
+  - **Stop condition:** with ~181 ms of EDGE work per frame against a 142.5 ms RSX walker drain (x47), EDGE
+    stages pay in full only while EDGE stays the longer one. F538 and DCC0 together would take EDGE to about
+    165 ms; after that, re-measure the walker before another d935 stage.
