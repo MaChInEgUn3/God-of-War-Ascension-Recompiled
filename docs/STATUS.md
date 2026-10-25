@@ -873,6 +873,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     and cap_3). Still open: spuNum must be unique across all concurrent EDGE contexts, not only within one wid;
     and whether the GETLLAR/PUTLLC reservation is safe across host threads (its "real lock-line semantics" code
     predates the 2026-07-23 LBP note about two threads racing on a jobIndex CAS).
+  - **First lanes runs (toolkit `SPURS_LANES`, 2026-10-25).** Up to n kernel threads may claim one workload at
+    once (`s_wid_busy` is a count for those wids), each running the module as the SPU its thread plays, so each
+    lane has its own spuNum, PM context and allocator line; no thread is created per dispatch and
+    `SPURS_PM_RERUN_US` keeps working per lane. x61 (`15,16,17=2`) froze at ~150 s: the thread playing SPU 5 ran an
+    EDGE lane as spuNum 5, whose line the game never set up (EDGE priority is 0 there), and spun at the
+    ring-space wait `0x409C`. Lanes now run only on SPUs the workload has a priority on (0-3 for EDGE). x62 (same,
+    1100 s, one instance, no PM profiling): no `[pm-hang]`/HALT, the cursors of lines 0, 1 and 2 all move
+    (~16.5k changes each), `[edge-diag]` another EDGE wid busy 15-16%, frame dumps clean. t 600-1080 s: 9.08
+    game frames/s and 13.96 presents/s, against x56's 5.95 and 11.85 (x56 had PM profiling on; one run each).
+    The alternated single-instance measurement follows.
   - Same method on ucrtbase (3.4% of EDGE samples): 97% was `getenv`'s environment walk. The sampler now unwinds such
     samples to their exe caller; all of them came from `spu_run_with_halt`, which read `SPU_ARGWATCH` after every
     module run. It is read once now. The A/B was neutral within noise (runZg vs runZe: -3.2% / +0.4%, EDGE ms/job
