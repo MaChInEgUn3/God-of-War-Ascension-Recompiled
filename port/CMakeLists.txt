@@ -166,6 +166,18 @@ if(PORT_ENABLE_SPU)
         list(APPEND SPU_SOURCES ${SPU_LIFTED}
              "${PS3RECOMP_DIR}/runtime/spu/spu_dispatch_mt.c"
              "${CMAKE_CURRENT_SOURCE_DIR}/gow_mlaa_hle.c")   # HLE of the MLAA taskset
+        # Native EDGE loops, called only by a lab lift. Their lifted-body macros are
+        # game code: generated from the d935 lift into the build tree, never committed.
+        set(EDGE_LIFT "${SPU_DIR}/jobmod_d93503647dd8_e6d98/spu_recomp.c")
+        if(EXISTS "${EDGE_LIFT}")
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            set(EDGE_BODY "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_e550_body.h")
+            add_custom_command(OUTPUT "${EDGE_BODY}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_e550_body.py" "${EDGE_LIFT}" "${EDGE_BODY}"
+                DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_e550_body.py"
+                COMMENT "Generating the E550 loop body from the d935 lift")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native.c" "${EDGE_BODY}")
+        endif()
         # Generated beside the lift; each is present only once its generator
         # has been run, so each is included only if it is actually here.
         foreach(gen IN ITEMS spu_workloads.c jobmods_register.c edgefrags_register.c taskset_policy_bytes.c)
@@ -279,6 +291,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${PS3RECOMP_DIR}/runtime/platform"        # win32_compat.h and friends
     "${PS3RECOMP_DIR}/libs/video"
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_BINARY_DIR}"              # generated gow_edge_e550_body.h
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE

@@ -65,7 +65,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 
 | function | share of EDGE samples | stage | native status |
 |---|---|---|---|
-| `E550` | 13.4% | ? | |
+| `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in lab (v3, 400/400): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms |
 | `73E0` | 11.8% | ? | |
 | `A880` | 5.8% | ? | |
 | `D640` | 3.6% | ? | |
@@ -203,3 +203,83 @@ Status: design, started 2026-10-24. Progress log at the end.
   - **Float helpers:** with `SPU_FP_NATIVE` each fm/fma is the native op under round-toward-zero plus validity
     masks. The exact per-lane fallback is rare (`spu__x8_fma_fix` 0.3% of replay samples). A native loop can reuse
     the same helpers and stay bit-exact.
+- 2026-10-25: the E550 loop at `loc_EC08` native, in a lab lift (first native stage).
+  - **Pieces:** `port/gow_edge_native.c` (an SPU source: same flags and defines as the lift; compiled into
+    production too, where nothing calls it, and only when the d935 lift is present). The lifted loop body it
+    reuses is game code, so the repo has none of it: `port/gen_edge_e550_body.py <lift> <out.h>` writes
+    `gow_edge_e550_body.h` (`GOW_E550_REGS/LOAD_INPUTS/STORE_OUTPUTS/BODY`) from the d935 lift into the build
+    tree, and CMake reruns it when the lift changes. `analysis/edge_native_lift.py <lift> <out>` inserts, just before
+    `loc_0000EC08:` in E550 (so once per loop entry, not per iteration),
+    `if (g_edge_native) { if (g_edge_native <= 2) { gow_edge_e550_ec08(ctx); goto loc_0000EDE8; } check_begin }`,
+    and a `check_end` after `loc_0000EDE8:`. `g_edge_native` is `GOW_EDGE_NATIVE`, read once: unset = lifted,
+    1 = native v3 (`GOW_EDGE_V2=1`: v2), 2 = native v1, 3 = check v3/v2, 4 = check v1. It composes with
+    `spu_fnprobe_lift.py` in either order. Lab exes: `build_runLabEN` (lift `work/spu_recomp_d935.edgenat.c`) and
+    `build_runLabENP` (plus the `--no-reads --blocks` E550 probe).
+  - **What the loop computes** (from the lift, plus the loop constants, identical in all 606 loop runs of
+    cap_3): matrix-palette skinning, 2 vertices (A, B) per iteration, r48 -= 2 until 0, at least once.
+    - Bone stream at r51, 16 bytes per pair: 8 halfwords, byte 0 = weight, byte 1 = bone index; A = halfwords
+      0-3, B = 4-7. Weight = `cuflt(byte, 155) * r91` (r91 = 0x3B808080 = 1/255), splat per bone by shufb (r81,
+      r95, r94, r93 = words 0-3). Offset = index * 48 (andhi 255, shli 4 + shli 5).
+    - Palette: one 48-byte 3x4 matrix per bone, rows at r37, r35 = r37 + 16, r34 = r37 + 32 (all 606 loop
+      entries; r37 = 0x144C0 in the four printed). Each blended row = w0*M[b0] + w1*M[b1] + w2*M[b2] + w3*M[b3]
+      (fm, then three fma).
+    - Out 1, r49 (0x2EB00 in the runs printed, +96 per pair): the blended rows in palette order, lanes 0-2
+      kept (r84 = FFFFFFFF x3, 0), lane 3 = r97 = 1.0 in row 0, 0 in rows 1 and 2.
+    - Out 2, r86 (+32 per pair): the vertex input from r50 (16 bytes each, X = (x,y,z,w)) transformed:
+      P = X*row0' + Y*row1' + Z*row2' + T with Y = (y,z,x,w), Z = (z,x,y,w) (r36, r82), T = (row0.w, row1.w,
+      row2.w, 0) (r70, r69), in that order. Lane l = in[l]*row0[l] + in[l+1]*row1[l] + in[l+2]*row2[l] + row_l.w
+      (indices mod 3): the palette stores the 3x3 part skewed by lane, translation in lane 3. Lane 3 of P is w.
+      r86 = r50 - 32 at entry (all 606 entries), so each result lands on its own input (in place). The r86/r49 buffers are the
+      0x2B700/0x2EB00 outputs the boundary probe saw.
+    - Software pipelining: an iteration loads the next pair's bone quadword and inputs and forms the next
+      offsets, weights and input rotations; within an iteration every load precedes every store.
+  - **Loop counts** (cap_3, one pass): E550's 166 calls enter the loop 606 times (E550 loops back to `EA0C`),
+    27980 iterations, 55960 vertices.
+  - **Liveness at `loc_EDE8`** (script over E550's body: labels/gotos; a call reads r0, r1, r3-r10, r80-r127;
+    `SPU_RET` reads r0-r3, r80-r127): of the 57 registers the loop writes, r4 r5 r6 r8 r10 r80 r83 r86 are live.
+    If calls and halts read every register, r11-r28, r30, r31, r33, r61, r78 too. The job replay compares all
+    GPRs at job end, so every native version leaves all 57 with the lifted loop's final values (pipeline values
+    for the iteration that never runs included).
+  - **Versions** (all bit-exact by construction; every float result is the same op on the same operands):
+    - v1: the lifted body statement for statement (the generated header: `ctx->gpr[N]` -> locals,
+      direct LS access), same helpers.
+    - v2: A and B packed in one 256-bit vector. All iterations but the last run on packed state; the last one
+      runs the lifted body from that state, so the 57 registers come out exactly. shufb with a loop-invariant
+      control becomes one pshufb per operand, built from the control's value (any control). fm/fma 8 lanes at a
+      time with the SPU_FP_NATIVE per-lane rule; if any lane fails, that half is redone by `spu_fm`/`spu_fma`.
+      Odd or zero r48, or fewer than 2 iterations: v1.
+    - v3: v2 with the lane rule checked once per iteration: compute speculatively, keep the iteration if every
+      lane of every op passes, else recompute it with v2's ops (nothing is stored before that decision). Inputs
+      are checked as loaded (matrix rows, next inputs); op results are not rechecked where they feed the next op
+      (they are ordinary or zero when the iteration passes) and their zero lanes are the op's zero-factor lanes.
+      Shuffles that move whole words, word masks and checked constants keep that property; their form is
+      verified at entry (else v2). `cuflt(x, 155)` of a word below 2^24 (verified on r77/r102) is the plain
+      int-to-float conversion. Per cap_3 pass: 40 of 27980 iterations recomputed exactly, 171 8-lane ops redone
+      by the 4-lane helpers.
+  - **Gates** (`build_runLabEN`, the gate command of the task): `GOW_EDGE_NATIVE=1` (v3):
+    `[replay] 400/400 jobs identical`; unset: `[replay] 400/400 jobs identical`; v2 (`GOW_EDGE_V2=1`) and v1
+    (`=2`): 400/400. Check mode (all 128 GPRs and the whole LS compared at `loc_EDE8` after each loop run):
+    v3, v2 and v1 each `606 calls checked, 0 differ`. Negative tests (`GOW_EDGE_FAULT`, first native run only):
+    - LS bit (1): job gate `job_15_3.bin FAIL ... final LS differs first at 0x2BB2F: recorded 00, replay 01`,
+      `399/400`; check mode `call 0: LS differs in 1 bytes, first at 0x2BB2F (lifted 00 native 01)`,
+      `606 calls checked, 1 differ`.
+    - r5 bit (2): job gate 400/400, it does not see it; check mode `call 0: r5 lifted BEAFD312 ... native
+      BEAFD313 ...`, `1 differ`. r5 is live at `EDE8` by the liveness above, yet overwritten before every job end
+      on the paths cap_3 takes. So the job gate is weak for the loop's exit registers: that all 57 come out
+      exactly rests on check mode, which compares every register at the loop exit.
+  - **Timing** (pinned replay, `SPU_JOB_REPLAY_REPEAT=50`, sum of per-job minimum, ms; one exe, env on/off,
+    alternated): lifted 35.784 35.732 35.719 35.963 35.819 38.205 35.799 35.671 (median 35.79); v3 33.008 35.382
+    32.750 32.655 32.760 32.714 32.794 32.966 (median 32.78, -8.4%); v2 33.939 34.017 34.045 33.998 (-5.0%);
+    v1 35.273 35.267 37.586 35.254 (-1.5%). 38.205 and 35.382 are single outliers. The last lifted/v3 pair ran on
+    the final rebuild, whose only change is check-mode output.
+  - **E550 alone** (`build_runLabENP`, `SPU_FN_PROBE=E550 SPU_JOB_REPLAY_REPEAT=20`, sum of the 166 per-call
+    minimums, us): lifted 5583 6151 5602 (5555 5907 5571 on the previous build of the same lift); v3 2593 2632
+    2591 (2.16x); v2 3878 3880 3898; v1 5164 5160 5189. With `--blocks` the lifted loop also pays one counter
+    increment per iteration that the native path skips.
+  - **The loop alone** (check mode, rdtsc around each loop run, REPEAT=10): lifted 601-612 ticks per iteration,
+    v1 554, v2 381-392, v3 222-228 (2.7x). v2's per-op lane checks were ~3/4 of its ~1000 instructions per
+    iteration; v3's iteration is ~550 instructions, with some spills (16 ymm registers).
+  - **Seen on the way, not changed:** clang-cl ignores `-ffp-contract=off` (`unknown argument ignored`, 150 times
+    in `buildv017.log`), so the SPU sources build with clang's default contraction. The SPU helpers use intrinsics
+    and the gates pass; whether any scalar fallback expression is contracted is not verified. The clang-cl
+    spelling is `/clang:-ffp-contract=off`.
