@@ -530,8 +530,23 @@ Status: design, started 2026-10-24. Progress log at the end.
 - 2026-10-25: D640 native in game, then the default.
   - **In-game A/B** (x41): the production exe (E550 and 73E0 native, their defaults) in two copies,
     `GOW_EDGE_D640=1` vs `=0`, swapped pairs, no PM profiling: window 3.989 vs 3.876 (+2.9%) and 4.057 vs 3.893
-    (+4.2%) game frames/s. The replay predicted -6.7% of job time: in game this stage returns about half of
-    that, where E550 and 73E0 returned 0.83-1x. Not explained yet; one candidate is the RSX walker starting to
-    share the bound (x38 put it at 152 ms per frame against ~218 ms of EDGE work, before this stage).
+    (+4.2%) game frames/s. The replay predicted -6.7% of job time. Paired A/B measured over expected fps
+    (expected = 1/(1 - job-time saving) - 1) falls stage by stage: E550 0.91, 73E0 0.75, D640 0.50. The
+    single-instance profiled run after the flip (x43, next entry) shows the stage landed at full value, so the
+    decay belongs to the paired measurement. Candidate cause (not verified): two instances on the 6-core/12-thread
+    host are contention-bound, and the paired run absorbs a growing share of each saving (paired over single
+    native rate: 3.88/4.565 = 85% after 73E0, 4.0/5.06 = 79% after D640). The paired swapped A/B stays the
+    gate for a default flip (its pairs agree within ~1.5%); a stage is sized by single-instance ms/job.
   - **Default:** `GOW_EDGE_D640` unset = native packed v3 now, `=0` the lifted loops. Gates on the lab build of
     that tree (`build_runLabD6D`): unset and `=0` both `[replay] 400/400 jobs identical`.
+- 2026-10-25: where the frame goes after three stages (x43: production exe, all three native, one instance,
+  1100 s, PM profiling on, `PS3_FTRACE=600:20`), against x38 (after two stages, same setup).
+  - EDGE w15-17 busy: 96% of wall in both, so the frame is still bound by EDGE job throughput.
+  - ms/job (pm-prof median over the tail windows): 0.1291 -> 0.1183 (-8.4%), against the replay's -6.7%: the
+    D640 saving reached the game in full. Single-instance tail rate 4.565 -> 5.058 game frames/s (219 -> 198 ms
+    per frame); single runs carry about +-12% scene noise, so that is not quoted as the gain.
+  - Main thread at the EDGE list wait (`3E8388`): 56.4% -> 54.7% of samples (124 -> 108 ms per frame).
+  - Timeline 600-620 s (`ftrace_report.py`): 88 -> 91 frames, median 208.9 -> 208.5 ms; main blocked at
+    `3E8388` 129.1 -> 123.3 ms, RSX walker drain 151.8 -> 143.9 ms per frame, against ~190 ms of EDGE work per
+    frame (0.96 x 198): the walker is not co-bounding yet, ~25% headroom.
+  - So the next EDGE stage is still worth its job-time share: A880 (7.2% of job time in the x38 ranking).

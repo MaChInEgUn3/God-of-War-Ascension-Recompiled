@@ -804,8 +804,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     caller `D640` (`loc_D92C`, index compaction), ~10% of job time together, as hand-written AVX2, two
     iterations per vector (`port/gow_edge_native_d640.c`). Bit-exact: cap_3 replay 400/400, and an in-game
     check of 917504 runs of each loop against the lifted loops with 0 differences (docs/EDGE_NATIVE.md).
-  - Swapped in-game A/B, same exe, on top of the first two stages: +2.9% and +4.2% game frames/s (3.88 ->
-    4.02), half of what the replay predicted. Default on; `GOW_EDGE_D640=0` restores the lifted loops.
+  - Swapped in-game A/B (two instances), same exe, on top of the first two stages: +2.9% and +4.2% game
+    frames/s (3.88 -> 4.02). Measured alone (one instance, profiled), the cost per EDGE job fell 8.4%, more than
+    the replay's -6.7%: the paired A/B understates the gain (docs/EDGE_NATIVE.md). Default on;
+    `GOW_EDGE_D640=0` restores the lifted loops.
 - **M0.66: the second native EDGE stage, +8% (2026-10-25).**
   - The light-accumulation region of EDGE job function `73E0` (`loc_79B0`..`81C0`, 76% of 73E0, which is
     ~19% of job time) as hand-written AVX2, 8 vertices per vector (`port/gow_edge_native_73e0.c`, v3).
