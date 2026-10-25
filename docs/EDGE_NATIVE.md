@@ -67,7 +67,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 |---|---|---|---|
 | `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in production (v3, default): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms, in game +8.0/+8.8% |
 | `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in production (v3, default): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%), in game +7.8/+7.9% |
-| `A880` | 5.8% (replay sampler: 7.2% of job time) | per element, the cross product of two input quads scaled by the second's w and normalized (8 elements/iteration) in its loop at `loc_A950` | loop native in a lab build (`GOW_EDGE_A880`, default lifted): A880 ~1996 -> 375 us, jobs 28.34 -> 26.79 ms (-5.4%, replay) |
+| `A880` | 5.8% (replay sampler: 7.2% of job time) | per element, the cross product of two input quads scaled by the second's w and normalized (8 elements/iteration) in its loop at `loc_A950` | loop native in production (`GOW_EDGE_A880`, default): A880 ~1996 -> 375 us, jobs 28.34 -> 26.79 ms (-5.4%, replay), in game +5.6/+5.0% |
 | `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in production (`GOW_EDGE_D640`, default): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay), in game +2.9/+4.2% |
 | `F538` | 3.6% | ? | |
 
@@ -591,7 +591,8 @@ Status: design, started 2026-10-24. Progress log at the end.
     packed path was written for. `gen_edge_native_lift.py` adds the fourth switch only where it is missing: in
     A880 (or its `_impl`) before `loc_0000A950:` (`goto loc_0000AD48`) and `check_end` after `loc_0000AD48:`
     (also reached by the skip in the A928 block when the count is not positive; not taken in cap_3). The port's
-    CMakeLists builds the source and header like D640's; the default is the lifted loop.
+    CMakeLists builds the source and header like D640's; the default was the lifted loop (now 0 = lifted, unset =
+    native: see below).
   - **Versions** (every value kept is the same op on the same operands as in the lift):
     - v1: the loop statement for statement in C locals (the generated macros), direct LS access.
     - packed: one iteration at a time, the 8 elements in the 8 lanes (the 16 input quads transposed into
@@ -632,3 +633,10 @@ Status: design, started 2026-10-24. Progress log at the end.
   1100 s, no PM profiling): `[edge-a880-check] 1736704 calls checked, 0 differ; 55373180 iterations`; the paths
   cap_3 never took ran too: 126 speculative iterations recomputed with v2's ops, 126 8-lane ops redone by the
   4-lane helpers, 30 entries left to v1 (short). Check-mode rdtsc ~415 vs ~2035 ticks per iteration.
+- 2026-10-25: A880 native in game, then the default.
+  - **In-game A/B** (x45): the production exe (E550, 73E0 and D640 native, their defaults) in two copies,
+    `GOW_EDGE_A880=1` vs unset (then lifted), swapped pairs, no PM profiling: window 4.219 vs 3.996 (+5.6%) and
+    4.163 vs 3.965 (+5.0%) game frames/s. The replay predicted -5.4% of job time; measured over expected fps
+    (see the D640 entry) is about 0.93 this time.
+  - **Default:** `GOW_EDGE_A880` unset = native packed v3 now, `=0` the lifted loop. Gates on the lab build of
+    that tree (`build_runLabA8D`): unset and `=0` both `[replay] 400/400 jobs identical`.

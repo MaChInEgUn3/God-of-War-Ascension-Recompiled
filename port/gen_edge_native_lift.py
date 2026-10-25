@@ -41,7 +41,7 @@ an env variable.
    before `loc_0000A950:` and `if (g_edge_a880 > 2) gow_edge_a880_check_end(ctx);` after
    `loc_0000AD48:` (also reached by the skip in the A928 block when the count is not positive; check_end
    ignores that). Only function A880: the alternate-entry functions A928, A950, AD48, AD4C and AD80 keep
-   their lifted copies. g_edge_a880: unset/0 the lifted loop, 1 native (packed), 2 native v1, 3/4 check.
+   their lifted copies. g_edge_a880: 0 the lifted loop, unset/1 native (packed), 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,
 untracked: it is the lift). Each switch is added only if the lift does not have it yet, so a lab lift made

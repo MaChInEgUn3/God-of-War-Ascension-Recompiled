@@ -223,7 +223,7 @@ Lessons that cost days; keep them.
   `port/gow_edge_native_d640.c`) share `GOW_EDGE_D640`: 0 = lifted, unset/1 = native v3 (`GOW_EDGE_D640_V2=1`: v2),
   2 = v1, 3/4 = check (`[edge-d640-check] D92C: N calls checked, M differ` and the same for D4DC);
   `GOW_EDGE_D640_FAULT=1..4` flips an LS bit (1 D92C, 3 D4DC) or a register bit (2 r5 in D92C, 4 r24 in D4DC).
-  A880's loop (`loc_A950`, `port/gow_edge_native_a880.c`) has `GOW_EDGE_A880`: unset/0 = lifted, 1 = native v3
+  A880's loop (`loc_A950`, `port/gow_edge_native_a880.c`) has `GOW_EDGE_A880`: 0 = lifted, unset/1 = native v3
   (`GOW_EDGE_A880_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-a880-check] N calls checked, M differ`);
   `GOW_EDGE_A880_FAULT=<n>[,<k>]` flips one LS bit (1) or bit 0 of r73 (2) in native run k (default the first).
 * **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job

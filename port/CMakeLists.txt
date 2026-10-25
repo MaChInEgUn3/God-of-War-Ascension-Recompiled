@@ -200,7 +200,7 @@ if(PORT_ENABLE_SPU)
                 DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_d640_body.py"
                 COMMENT "Generating the D640/D250 loops from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_d640.c" "${EDGE_BODYD6}")
-            # A880's loop at loc_A950 (gow_edge_native_a880.c, switch GOW_EDGE_A880, default lifted)
+            # A880's loop at loc_A950 (gow_edge_native_a880.c, switch GOW_EDGE_A880, default native)
             set(EDGE_BODYA8 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_a880_body.h")
             add_custom_command(OUTPUT "${EDGE_BODYA8}"
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_a880_body.py" "${EDGE_LIFT}" "${EDGE_BODYA8}"
