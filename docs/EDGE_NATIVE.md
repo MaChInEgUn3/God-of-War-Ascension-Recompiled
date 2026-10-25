@@ -141,3 +141,38 @@ Status: design, started 2026-10-24. Progress log at the end.
     measured in game. The in-game figure includes the PM's own work around the job, other kernel threads competing,
     and cold caches; the replay figure is the job proper, warm and alone. Use REPEAT medians, and compare A/B on the
     same machine state.
+- 2026-10-24: hook cost and the in-game split.
+  - **Hook cost:** with the env unset, the capture/replay checks on every transfer, channel op and hop cost 1.1% level
+    fps (swapped A/B, `NOPMPROF=1`: tail 3.221/3.217 vs 3.258/3.254). The hooks now build only with
+    `-DPS3RECOMP_SPU_JOBLAB=ON` (toolkit CMake option, default off). Production exes are built without them; lab exes
+    are staged as `build_runLab`.
+  - **Job proper vs module run, in game** (`[pm-jobt]`, lab build, `SPURS_PM_PROF`, 60 s windows in the level): EDGE
+    wids 15-17 each run ~133k jobs/min at 144 us per module run, of which 116 us (81%) is the job proper (job start to
+    its return to 0x3368). p50 <= 70 us, p90 <= 280 us. So the policy module's own work around a job is ~19%; the job
+    code is the target, and the native-stage plan stands. The replay median (56-71 us) matches the in-game p50.
+    Why the in-game mean (116 us) is above cap_2's replay mean (66 us) was answered by cap_3 below: mostly job mix.
+  - **Wider sample:** `SPU_JOB_CAPTURE_EVERY=<k>` keeps one candidate job in k, so N jobs spread over minutes and all
+    three workloads.
+- 2026-10-25: cap_3, the replay profile, and register promotion (closed).
+  - **cap_3** (`SPU_JOB_CAPTURE_N=400 SPU_JOB_CAPTURE_EVERY=2000 SPU_JOB_CAPTURE_T0=300`, lab exe, `work/jobcap3`):
+    400 jobs over minutes, wid 15 x133, 16 x138, 17 x129. All overlay 225, entry 0xAD98, END by return to 0x3368.
+    Still no IRQ or RCHCNT inside a job, so the replay side of those stays unverified. **Gate: 400/400 identical.**
+  - **Replay vs game:** REPEAT=20 mean 99 us per job (median 62) against 116 us in game. The gap to cap_2 was job
+    mix; in-game contention is ~17%. (The replay also pays the per-hop replay hooks, so that slightly understates
+    contention.) A native stage's replay gain should carry over to the game mostly intact.
+  - **Replay profile** (`PS3_SAMPLE=1 PS3_SAMPLE_HOST=1`, REPEAT=500; the sampler starts before the replay): same
+    ranking as in game. `E550` and `73E0` are ~17% of job-code samples each, then `D640`, `A880`, `F538`, `D250`,
+    `DCC0`. E550 is float-heavy (162 float ops, 209 LS reads, 79 LS writes), has no indirect branch, and is called
+    from 4 sites. Its callees are `B600`, `B638`, `B648`, `B650`, `B660` and `BBC8` (x4). 73E0 has one indirect
+    branch.
+  - **Register promotion, tried and closed** (`analysis/spu_regpromote.py`): keeping SPU registers in C locals
+    between calls is bit-exact (400/400), but gains at most ~5%, inside the noise. SPU code keeps ~100 registers
+    live against 16 x86 vector registers, so the locals spill to the stack: E550 grew from 13.5k to 22.9k x86
+    instructions, with 3.6x the stack accesses. That supports the native path, where the live state is the
+    algorithm's and not the SPU register file.
+  - **Timing harness:** the replay thread is now pinned (core 2, high priority) and prints the sum of per-job
+    minimums. Three runs of one build: 36.2 / 37.0 / 36.3 ms over 400 jobs (REPEAT=50), against +-10% unpinned.
+    That is the A/B figure for native stages. `work/buildlab.sh <dest>` builds a lab exe into `build_<dest>` and
+    puts `build_v017` back to production.
+  - **Next:** an E550 boundary probe in a lab lift: the arguments and LS ranges written per call, plus the
+    function's own time. Its exit snapshots become the gate for a native E550.

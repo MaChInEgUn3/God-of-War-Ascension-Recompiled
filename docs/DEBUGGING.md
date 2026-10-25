@@ -185,7 +185,8 @@ Lessons that cost days; keep them.
 * **SPU job capture**: `SPU_JOB_CAPTURE=<dir>` writes one file per policy-module job, `job_<wid>_<seq>.bin`: LS and
   GPRs at entry, then every GET/PUT (with the bytes), GETLLAR/PUTLLC/PUTLLUC line, channel read, JobApi dispatch,
   and LS and GPRs at the end. `SPU_JOB_CAPTURE_WIDS` (default `15,16,17`), `SPU_JOB_CAPTURE_N` (default 100, all
-  threads), `SPU_JOB_CAPTURE_T0=<s>` (skip boot). One `[jobcap]` line per job. `analysis/jobcap_dump.py <file> [-v]`
+  threads), `SPU_JOB_CAPTURE_T0=<s>` (skip boot), `SPU_JOB_CAPTURE_EVERY=<k>` (keep one job in k: a
+  sample spread over minutes and workloads instead of one burst). One `[jobcap]` line per job. `analysis/jobcap_dump.py <file> [-v]`
   prints a file. Format: `runtime/spu/spu_channels.c` (toolkit), see `docs/EDGE_NATIVE.md`. Captures hold game data:
   keep them under `work/`. Version 2 adds the context state block, interrupts taken and `rchcnt` values; replay
   refuses version 1.
@@ -195,6 +196,17 @@ Lessons that cost days; keep them.
   job (a FAIL names the event index, recorded vs issued, pc and recent hops, or the first differing byte), then
   `[replay] N/M jobs identical`; exit code 0 only when all are. `SPU_JOB_REPLAY_REPEAT=<n>` runs each job n times and
   reports the median: the timing tool for native EDGE stages. Toolkit `runtime/spu/spu_job_replay.c`.
+* **Job lab build**: capture, replay and the job timer exist only in an exe configured with
+  `-DPS3RECOMP_SPU_JOBLAB=ON` (toolkit CMake option, default off). Without it the hooks compile to nothing (their
+  run-time checks cost 1.1% level fps with the env unset), `SPU_JOB_CAPTURE` is ignored and `SPU_JOB_REPLAY` says
+  so and exits. Lab exes are staged as `build_runLab`; production builds stay off. Toggle with
+  `cmake -S work/port -B work/port/build_v017 -DPS3RECOMP_SPU_JOBLAB=ON|OFF` (only runtime files rebuild).
+* **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
+  p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the
+  entry bracket's drain return), against the whole module run per job. The rest is the policy module's own work:
+  kernel entry and selection, job fetch and staging, completion, interrupts, exit. Read a row only where
+  `timed` is about `jobs`: a job that ends by halt or by the next job start is never timed (GoW:A EDGE wids
+  15-17 are fully timed; w12 and w14 are not).
 * **Targets sampled through guest memory**: with `ENG_PHASE_STATS` set, `[eng-via-guest]` lists each distinct way a
   draw samples a depth or colour target as a texture by storing it to guest memory first (z2guest/s2guest): the
   texture format, the target's format and size (first 32).
