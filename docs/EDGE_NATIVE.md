@@ -44,9 +44,10 @@ Status: design, started 2026-10-24. Progress log at the end.
   - GETLLAR: the line contents;
   - PUTLLC/PUTLLUC: the line written and the result;
   - every channel read and its value (decrementer, tag status, events): the nondeterminism sources.
-- **Job end:** a dispatch to the link the job was entered with, `spu_halt` on the context, or the next job start on
-  the same thread. Other dispatches into PM code (pc < 0x4000) are JobApi calls and stay in the capture. On EDGE the
-  job never returns to its link, so a capture ends at the module's exit to the kernel (see progress log).
+- **Job end:** the job's return to the link it was entered with (the entry bracket's `spu_drain_call` returning there,
+  or a dispatch to it), `spu_halt` on the context, or the next job start on the same thread. Other dispatches into PM
+  code (pc < 0x4000) are JobApi calls and stay in the capture. EDGE jobs end at the return to 0x3368 (format v2; v1
+  missed that return and ran on to the module's exit, see progress log).
 - **File:** one per job, `job_<wid>_<n>.bin`: header, LS snapshot, registers, then the event records.
 
 ## Replay (`SPU_JOB_REPLAY=<dir>`, a mode of the game exe)
@@ -96,3 +97,47 @@ Status: design, started 2026-10-24. Progress log at the end.
     capture (game_frame 4160 at 575 s, 4613 at 695 s), and the log shows no crash.
   - **Not recorded:** rchcnt values, interrupts, PPU stores between the job's own transfers. `spu_id` reads 0 in
     every capture (the policy contexts' field, not the physical SPU).
+- 2026-10-24: replay built (toolkit `runtime/spu/spu_job_replay.c`, format structs in `spu_jobcap.h`; port `main.cpp`
+  calls `spu_job_replay_run` right after `gow_mlaa_hle_register`, before the ELF loads).
+  - **How it runs a job:** one context, loaded from the header, the state block, LS and GPRs. It enters at the snapshot
+    pc through the PM's own `bisle` shape (`host_depth++`, dispatch, `spu_drain_call(link)`) under
+    `spu_run_with_halt`, on a thread with a 256 MB stack. Hooks sit next to the capture's: `mfc_do_transfer` (after
+    the request-only checks, before any guest memory access), `spu_mfc_atomic`, `spu_rdch`, `spu_rchcnt`, the
+    PMCALL/POLL/job-start sites in `spu_indirect_branch`, `spu_halt`, `spu_take_interrupt` and every trampoline hop.
+    Each request must be the next recorded event (type plus cmd/ea/lsa/size, channel or target), or the job stops
+    with a divergence report. A GET still calls `spu_overlay_note_get`, so EDGE fragments become resident as live.
+    RDCH of a pure-state channel (13, 11, 15, 12, 24, 27, 25) also checks the context's own value and prints a note
+    when it disagrees: the detector for a field the state block misses. PUT/PUTLLC/PUTLLUC payloads are compared;
+    at the end, GPRs then all 256 KB of LS against the END record, with the first differing byte.
+  - **Harness fixes the gate forced (capture format v2):**
+    1. *State block.* v1 had none of `int_enable` (1 at every EDGE job start), `event_mask` (0x2), `srr0`, the MFC
+       staging/tag registers, the engine's `tag_completed`, the reservation, the parked lists, `host_depth`. A fresh
+       context with `event_mask = 0` never takes the PM's SN interrupts. v2 stores them; replay refuses v1.
+    2. *New events.* IRQ (srr0, event status/mask, hops since the previous event; replay re-raises those bits at that
+       hop, for an Lr a peer raises) and RCHCNT (`rchcnt SPU_RdEventStat` polls the reservation against guest memory).
+    3. *Job end.* All 200 v2 captures first diverged at the same spot: the PM's code after the job, at 0x2D18. The
+       capture had kept recording there. The job does return to its link 0x3368, but through the entry bracket's
+       `spu_drain_call`, never as a dispatch, so v1's "dispatch to link" rule never fired. The run went on through the
+       PM's tail (0x2F5C dispatch, completion GETLLAR/PUTLLC at 0x35E0, two SN interrupts, a poll, exit at 0x9C0).
+       That tail runs in two PM host frames above the bracket (`host_depth` 3 at job start). The replay does not
+       build those frames (it would need their return pcs), so a `bi $r0` that host-returned in the game dispatched in
+       the replay. Scope decision: the gate covers the job proper, not the PM's completion tail. The capture now closes when that
+       drain returns at the link at the bracket's depth (`spu_job_drain_return` in `spu_drain.c`), and the replay ends
+       at the same drain return.
+  - **Run cap_2** (same command as cap_1, `work/jobcap2`, v2): 200 jobs, all wid 16, overlay 225, entry 0xAD98, all
+    END "return to link" at 0x3368, t = 600.0-600.2 s, 104 MB. Events over all 200 jobs: GET 17, PUT 617, GETLLAR
+    417, PUTLLUC 217, RDCH 3204, POLL 200, PMCALL 1600, IRQ 0, RCHCNT 0. Every interrupt and `rchcnt` was in the PM's
+    tail. Per-function timing (the stage map) is not in the replay yet.
+  - **Gate: 200/200 identical** (`[replay] 200/200 jobs identical`, exit 0, no live-state notes). This covers one
+    path only: wid 16, overlay 225, END by return. Not seen by the replay yet: wid 17 jobs, other overlays (cap_1 had
+    220 and 205), jobs ending by halt or by the next job start. Not verified: the replay side of IRQ forcing and of
+    RCHCNT serving. Both are recorded (the tail captures have them), but cap_2 has none inside a job. A wider
+    re-capture (a longer window, `SPU_JOB_CAPTURE_WIDS`) should come before the harness certifies other jobs. Negative check on
+    corrupted copies: a flipped decrementer value, GET byte or start-LS byte and a changed recorded PUT byte or
+    end-LS byte each FAIL, naming the final r3, the PUT (event, ea, +offset) or the LS offset.
+  - **Replay time per job** (QPC around `spu_run_with_halt`, load and compare excluded): single run median
+    0.054-0.084 ms over three runs (min 0.031, max 0.70-1.85, the first jobs are cold). `SPU_JOB_REPLAY_REPEAT=20`:
+    median of medians 0.071 ms, min 0.028, max 0.270, p10/p90 0.045/0.155. That is well under the 0.21 ms per job
+    measured in game. The in-game figure includes the PM's own work around the job, other kernel threads competing,
+    and cold caches; the replay figure is the job proper, warm and alone. Use REPEAT medians, and compare A/B on the
+    same machine state.

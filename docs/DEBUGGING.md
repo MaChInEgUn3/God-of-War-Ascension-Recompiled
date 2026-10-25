@@ -187,7 +187,14 @@ Lessons that cost days; keep them.
   and LS and GPRs at the end. `SPU_JOB_CAPTURE_WIDS` (default `15,16,17`), `SPU_JOB_CAPTURE_N` (default 100, all
   threads), `SPU_JOB_CAPTURE_T0=<s>` (skip boot). One `[jobcap]` line per job. `analysis/jobcap_dump.py <file> [-v]`
   prints a file. Format: `runtime/spu/spu_channels.c` (toolkit), see `docs/EDGE_NATIVE.md`. Captures hold game data:
-  keep them under `work/`.
+  keep them under `work/`. Version 2 adds the context state block, interrupts taken and `rchcnt` values; replay
+  refuses version 1.
+* **SPU job replay**: `SPU_JOB_REPLAY=<dir|file>` makes the exe re-run those captures on the lifted code and exit,
+  before the ELF loads (no PPU, RSX or SPURS threads; about 2 s for 200 jobs). GETs, atomics, channel reads and polls
+  come from the transcript; PUTs and the final GPRs/LS are compared. One `[replay] job_... PASS|FAIL <ms>` line per
+  job (a FAIL names the event index, recorded vs issued, pc and recent hops, or the first differing byte), then
+  `[replay] N/M jobs identical`; exit code 0 only when all are. `SPU_JOB_REPLAY_REPEAT=<n>` runs each job n times and
+  reports the median: the timing tool for native EDGE stages. Toolkit `runtime/spu/spu_job_replay.c`.
 * **Targets sampled through guest memory**: with `ENG_PHASE_STATS` set, `[eng-via-guest]` lists each distinct way a
   draw samples a depth or colour target as a texture by storing it to guest memory first (z2guest/s2guest): the
   texture format, the target's format and size (first 32).

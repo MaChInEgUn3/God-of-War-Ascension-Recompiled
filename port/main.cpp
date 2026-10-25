@@ -603,6 +603,7 @@ static void harness_guest_caller(uint32_t opd, uint64_t a0, uint64_t a1,
 }
 
 extern "C" void gow_mlaa_hle_register(void);   /* gow_mlaa_hle.c */
+extern "C" int  spu_job_replay_run(const char* dir);   /* toolkit spu_job_replay.c */
 
 int main(int argc, char** argv)
 {
@@ -734,6 +735,13 @@ int main(int argc, char** argv)
     { extern void ps3_sampler_start(void); ps3_sampler_start(); } /* PS3_SAMPLE=<ms> */
 #ifdef _WIN32
     gow_mlaa_hle_register();   /* after the SPU ctors: replaces the lifted MLAA tasks */
+    /* SPU_JOB_REPLAY=<dir>: re-run captured SPU jobs on the lifted code and exit
+     * (toolkit runtime/spu/spu_job_replay.c). The SPU images, overlays and EDGE
+     * fragments are registered by now (static constructors); nothing of the
+     * guest is loaded and no PPU, RSX or SPURS thread starts. */
+    if (const char* jr = getenv("SPU_JOB_REPLAY")) {
+        if (*jr) return spu_job_replay_run(jr);
+    }
     if (getenv("GOW_SCAN")) CreateThread(NULL, 0, guest_scan_thread, NULL, 0, NULL);
     if (getenv("GOW_HEAPWALK")) CreateThread(NULL, 0, guest_heapwalk_thread, NULL, 0, NULL);
     if (getenv("GOW_PEEK")) CreateThread(NULL, 0, guest_peek_thread, NULL, 0, NULL);

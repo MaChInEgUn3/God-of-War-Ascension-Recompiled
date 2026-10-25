@@ -12,10 +12,16 @@ import sys
 from collections import Counter
 
 TYPES = {1: "GET", 2: "PUT", 3: "GETLLAR", 4: "PUTLLC", 5: "PUTLLUC",
-         6: "RDCH", 7: "POLL", 8: "PMCALL", 15: "END"}
+         6: "RDCH", 7: "POLL", 8: "PMCALL", 9: "IRQ", 10: "RCHCNT", 15: "END"}
 END_REASONS = {1: "return to link", 2: "halt", 3: "next job start"}
 HDR_FIELDS = ("version header_size ls_size gpr_count wid image_id resident_ovl "
               "resident_task spu_id policy_mode entry_pc link seq ms code_slots").split()
+# Version 2: spu_jobcap_state after the code slots (toolkit runtime/spu/spu_jobcap.h);
+# the leading scalar fields, in order.
+STATE_FIELDS = ("int_enable event_status event_mask srr0 decrementer status stop_code host_depth "
+                "mfc_lsa mfc_eah mfc_eal mfc_size mfc_tag mfc_tag_mask mfc_tag_status "
+                "mfc_tag_completed mfc_queue_count resv_ea resv_valid atomic_stat "
+                "list_stall_mask list_stall_stat irq_saved irq_resume_pc module_img_a00 steps").split()
 
 
 def main():
@@ -35,6 +41,10 @@ def main():
         lsa, size, src, img = struct.unpack_from("<3Ii", data, 68 + 16 * s)
         if img:
             print(f"  resident_code[{s}]: lsa=0x{lsa:05X} size=0x{size:X} src=0x{src:08X} image {img}")
+    if h["version"] >= 2:
+        st = dict(zip(STATE_FIELDS, struct.unpack_from(f"<{len(STATE_FIELDS)}I", data,
+                                                        68 + 16 * h["code_slots"])))
+        print("  state: " + " ".join(f"{k}=0x{v:X}" for k, v in st.items()))
     off = h["header_size"] + h["ls_size"] + 16 * h["gpr_count"]
     count, nbytes, ea_lo = Counter(), Counter(), {}
     end = None
@@ -57,6 +67,10 @@ def main():
                 desc = f"r3=0x{a:08X}"
             elif typ == 8:
                 desc = f"target=0x{a:05X} link=0x{b:05X}"
+            elif typ == 9:
+                desc = f"srr0=0x{a:05X} status=0x{b:X} mask=0x{c:X} after {d} hops"
+            elif typ == 10:
+                desc = f"ch={a} count={b} event_status=0x{c:X}"
             else:
                 desc = f"a=0x{a:X} b=0x{b:X} c=0x{c:X} d=0x{d:X}"
             print(f"  #{idx:5d} pc=0x{pc:05X} {name:8s} {desc}")
