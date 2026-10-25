@@ -70,6 +70,8 @@ Status: design, started 2026-10-24. Progress log at the end.
 | `A880` | 5.8% (replay sampler: 7.2% of job time) | per element, the cross product of two input quads scaled by the second's w and normalized (8 elements/iteration) in its loop at `loc_A950` | loop native in production (`GOW_EDGE_A880`, default): A880 ~1996 -> 375 us, jobs 28.34 -> 26.79 ms (-5.4%, replay), in game +5.6/+5.0% |
 | `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in production (`GOW_EDGE_D640`, default): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay), in game +2.9/+4.2% |
 | `F538` | 3.6% (replay sampler: 5.5% of job time) | per input quad, a 4x4 transform by four loop-invariant columns (8 quads/iteration, mostly in place) in its loop at `loc_F620` | loop native in production (`GOW_EDGE_F538`, default): F538 ~1349 -> 536 us, jobs 26.45 -> 25.63 ms (-3.1%, replay), in game +2.3/+3.3% |
+| `DCC0` | replay sampler: 4.4% of job time | a serial integer decode (cntb-driven variable-length steps through LS tables, plausibly index decompression: not verified) in its loops at `loc_E210` and `loc_E3C4` | probed, not staged: no float work and each iteration's addresses depend on the previous one's loads, so only a v1 applies (expected ~0.7% of job time); deferred |
+| `6AC8` | replay sampler: 3.7% of job time | per group of 8 vertices (gathered by index), a smoothstep-shaped falloff around each of 1-3 spheres, squared and weighted, accumulated into the output quads (meaning not verified) in its loop nest at `loc_6BE0`/`loc_6DE0` | loop nest native in a lab build (`GOW_EDGE_6AC8`, default lifted): 6AC8 ~920 -> ~370-460 us, jobs 26.03 -> 25.47 ms (-2.2%, replay); not in game yet |
 
 ## Progress log
 
@@ -759,3 +761,142 @@ Status: design, started 2026-10-24. Progress log at the end.
     4.209 vs 4.076 (+3.3%) game frames/s. The replay predicted -3.1% of job time (expected +3.2%).
   - **Default:** `GOW_EDGE_F538` unset = native packed v3 now, `=0` the lifted loop. Gates on the lab build of
     that tree (`build_runLabF5D`): unset and `=0` both `[replay] 400/400 jobs identical`.
+- 2026-10-25: DCC0 boundary probe and block map (lab lift `work/spu_recomp_d935.fnpb_dcc0.c`:
+  `gen_edge_native_lift.py`, then `spu_fnprobe_lift.py --no-reads --blocks` on DCC0 alone, which calls nothing:
+  its only call is the tail call to B600 at its end, after the probe window; exe `build_runLabDCP`;
+  `SPU_FN_PROBE=DCC0 SPU_JOB_REPLAY_REPEAT=20`, log `work/x53_fnpb_dcc0.log`; cap_3 still `[replay] 400/400 jobs
+  identical`).
+  - **Calls:** 400, one per job (entered from DCB0, whose `brsl r79` to the next instruction makes r79 a PIC
+    base). Two paths: 286 through the loop at `loc_DE6C` (count <= 8), 114 through `loc_DEF8`/`loc_DFF0`
+    (count > 8); `loc_E0C8`/`loc_E0CC` (count 0) never run. Then all 400: `E0E4` -> loop `E134` -> `E194` ->
+    loop `E210` -> loop `E30C` -> loop `E3C4` -> tail call B600. Iterations per call (median, range): DE6C 6
+    (3-83), DFF0 18 (5-33), E134 7 (2-82), E210 25 (2-222), E30C 6 (2-26), E3C4 35 (2-195). No callees and no
+    indirect branch inside; one contiguous output (`wr=114C0+1910` in the first call).
+  - **Block map** (counts x lifted statements, 2.59M executed; a block runs from its label to the next, so
+    E210 includes the ~10 statements after its back edge and E30C the ~30 setup statements of E3C4): `E3C4`
+    48.3%, `E210` 32.9%, `E30C` 5.0%, `DFF0` 4.2%, `E134` 3.7%, `DE6C` 3.2%, entry 1.7%, the rest under 0.6%
+    each. The region `E194` .. the tail call is 87% of the statements.
+  - **Time** (`[fnpt]`, per-call minimum): 1135.7 us over the 400 calls (min 0.30, median 2.15, mean 2.84, max
+    13.6 us) = 4.4% of the 25.744 ms summed per-job minimum of that run. The split between the loops is not
+    measured (a least-squares fit on the loop counts is degenerate: they all scale with the job).
+  - **What the loops compute** (a reading of the lift): integer work only (shufb, cntb, fsmb, rotqby, selb,
+    adds); no float op in DCC0. In `E3C4` the next iteration's four loads are at `mpyi(r12, 6)` + bases, with
+    r12 the sum of the two bytes of a cntb of a mask of the quad this iteration loaded (`r66` rotated by r27),
+    and the shuffle controls come from LS tables at 0xFC00/0xFD00 (r79 = 0x4000, + 0xBC00/0xBD00) indexed by
+    the same quad; in `E210` the next address adds 2 x (cntb of the loaded quad & 15). So each iteration's
+    addresses depend on the previous iteration's loads: a serial variable-length decode (plausibly EDGE index
+    decompression: not verified).
+  - **Decision:** not staged. The region is clean (no callee, no indirect branch), but the stage template
+    (8 lanes from two quads or from 8 elements per iteration, the float range check) has nothing to work on:
+    the iterations cannot be packed and there is no float op. Only a v1 applies; v1 alone gave ~15% on A880
+    (1987 -> 1693 us) and F538 (1349 -> 1149 us), i.e. ~0.17 ms, ~0.7% of job time here. A later DCC0 stage would
+    need its own design (v1 with direct byte-shuffle/popcount helpers). Next candidate: 6AC8.
+- 2026-10-25: 6AC8 boundary probe and block map (lab lift `work/spu_recomp_d935.fnpb_6ac8.c`: as for DCC0, on
+  6AC8 alone; exe `build_runLab6AP`; `SPU_FN_PROBE=6AC8 SPU_JOB_REPLAY_REPEAT=20`, log `work/x53_fnpb_6ac8.log`;
+  cap_3 still `[replay] 400/400 jobs identical`, sum of per-job minimum 25.260 ms).
+  - **Calls:** 118 over the 400 jobs, one per job. 117 take one path: entry block -> outer loop `loc_6BE0`
+    with the inner loop `loc_6DE0` in every outer iteration -> `loc_6F40` -> exit `loc_6F98` (return). The
+    entry block's skip to 6F98 (count not positive) and the outer body's skip of the inner loop (`r85 == 0`)
+    are never taken. 1 call (r9 = r10 at entry) takes `loc_6FC0`, which ends in a tail call to 5D90; it never
+    reaches the loops. No callee and no indirect branch inside the loop nest (5D90 is the only call in 6AC8).
+    `r4` = 0x29000 and `r8` = 0x11000 in all 118 calls.
+  - **Iterations:** outer 1867 in all (1-65 per call, median 8) = ceil(r7 / 8), 8 vertices per iteration;
+    inner 3614 (2-195, median 15) = r10 - r9 per outer iteration (the sphere count): 1 in 12 calls, 2 in 99, 3 in
+    6.
+  - **Block map** (counts x lifted statements, 592k executed): `6DE0` (88 statements) 53.7%, `6BE0` (123)
+    38.8%, `6F40` (19) 6.0%, entry 1.3%, exit 0.2%: the loop nest is 98.5%.
+  - **Time** (`[fnpt]`, per-call minimum): 922.8 us over the 118 calls (mean 7.8, median 4.1, max 42.5 us) =
+    3.65% of 25.260 ms; fit 0.195 us per outer + 0.147 us per inner iteration + 0.25 us (corr 0.999).
+  - **What the nest computes** (a reading of the lift; the dataflow is checked by the generator below, the
+    meaning still to verify): per outer iteration 8 vertices. Vertex k has the offset idx_k = word 3 of the
+    quad at r67 + 16k, the position P_k = LS[r48 + idx_k] and the output O_k = LS[r34 + idx_k]. The positions
+    are transposed by selb/shufb (masks r54 r56, controls r81-r83 from LS 0xF870/0xF880/0xF890: whole-word
+    picks in the one capture read) into X Y Z of vertices 0-3 (r44 r42 r38) and 4-7 (r43 r40 r37). For each
+    sphere j of r9 .. r10 - 1 (S_j = LS[r51 + 16j], V_j = LS[r50 + 16j]): D = |S_j.xyz - P|^2 (fs, fm, two fma),
+    d = D * rsqrt(D) (frsqest, fi, one Newton step: fm, fnms, fm, fma, fm), x = d * S_j.w, t = 1 - min(x, 1)
+    (fcgt, selb, fs), s = t^2 (3 - 2t) (fm, fnms, fm), w = s^2 * (r53 V_j).w, and each vertex's accumulator
+    (starting at r79: 0 or 0.5 per a flag) += w * r53 V_j (fma). Then out_k = O_k * r49 + acc_k (fma; each lane of r49
+    1.0 or 0, from flag bits in r12) is stored at r34 + idx_k, vertex 0 to 7 in order (read-modify-write by index: a duplicate
+    index means the later store wins). The inner loop is software pipelined: one iteration applies sphere j's
+    weight, finishes sphere j+1's distance and computes sphere j+2's squared distance, loading two spheres past
+    the last.
+- 2026-10-25: the 6AC8 loop nest native, in a lab build (`build_runLabDC6N`; `build_runLabDC6NP` with an
+  unrouted 6AC8 probe wrapper, no block counters: lift `work/spu_recomp_d935.fnp_6ac8.c`).
+  - **Pieces:** `port/gow_edge_native_6ac8.c` (an SPU source like the other five), behind `GOW_EDGE_6AC8` (read
+    once): unset/0 = lifted (the default for now), 1 = native packed v3 (`GOW_EDGE_6AC8_V2=1`: v2), 2 = native v1,
+    3 = check v3/v2, 4 = check v1 (all 128 GPRs and the whole LS at `loc_6F98`; `[edge-6ac8-check] N calls
+    checked, M differ`, every 4096 calls and at exit). `GOW_EDGE_6AC8_FAULT=<n>[,<k>]` (native run k, default the
+    first): 1 = one LS bit in the first quad the last outer iteration stores (vertex 0's), 2 = bit 0 of r33 after
+    the nest. `port/gen_edge_6ac8_body.py <lift> <out.h>` writes `gow_edge_6ac8_body.h` (`GOW_6A_REGS/LOAD/STORE`
+    and the blocks `GOW_6A_A/PRE/INNER/TAIL`) from 6AC8's own copy of the nest (the alternate-entry functions
+    6BE0, 6DE0, 6F40 and 6F98 stay lifted) and checks the lift's shape: the three tests and back edges where
+    expected, `loc_6F98` after the outer back edge, no other control flow, no jump into the nest from outside,
+    loads only in A and INNER and stores only in TAIL, the registers read before written exactly the loop
+    invariants (r29 r34 r35 r39 r41 r47-r54 r56 r64-r66 r77-r85) plus r67/r68, and, by evaluating each block
+    symbolically: A's gathers, transposes, the first two spheres' squared distances and distance and the eight
+    accumulators' start value, PRE's copies, INNER's whole carried state and TAIL's eight stores (address,
+    value, order). A changed fma operand, swapped fnms constants, a different selb mask in the transpose, a
+    changed outer step or an added store each make it fail (tried on mutated copies). `gen_edge_native_lift.py`
+    adds the sixth switch only where it is missing: in 6AC8 (or its `_impl`) before `loc_00006BE0:` (`goto
+    loc_00006F98`) and `check_end` after `loc_00006F98:` (also reached by the entry block's skip and from the
+    6FC0 path; check_end ignores those). The port's CMakeLists builds the source and header like F538's, so the
+    production exe carries the switch too (unset = lifted).
+  - **Versions** (every value kept is the same op on the same operands as in the lift):
+    - v1: the nest statement for statement in C locals (the generated macros), direct LS access.
+    - packed: one outer iteration at a time. The index and position loads and the transposes are the lift's
+      (the 4-lane selb/shufb helpers with the live masks and controls, so any control works); then X Y Z hold
+      vertices 0-3 in the low half and 4-7 in the high half. Per sphere, one 8-lane op per lifted lo/hi pair for
+      the distance and the weight, and the accumulators pair vertex k with k+4 under the sphere's scaled vector
+      in both halves (the weight lane splatted per half): 4 fma per sphere for the lift's 8. Only the spheres that
+      reach the stores are computed (the lift computes two more, loading them past the table; those values only
+      reach registers, and the last outer iteration is lifted anyway). Per outer iteration all loads come before
+      the stores and the stores keep the lift's order (vertex 0 to 7), so the LS sees the same stores (the packed
+      path loads a subset of the lift's addresses). The last outer iteration runs the lifted blocks from r67/r68
+      advanced, so all 58 registers the nest writes come out exactly. Entry checks, else v1: at least 2 outer
+      iterations, the splat controls r47/r41/r39/r35 = words 0/1/2/3, a sphere count of 1..4096 when the inner
+      loop runs.
+    - v3 (default packed) runs each sphere step speculatively with one range check and recomputes that step
+      with v2's ops if a lane fails (the other stages check once per iteration; here the step is the unit, as
+      the accumulators carry from step to step and the steps are most of the work). The ops on a step's outside
+      inputs (fs of the positions, fm of the sphere's vector) and the final fma with the output quads always run
+      checked (the per-lane rule with the 4-lane fallback), their results range-checked as inputs: cap_3's
+      positions and output quads carry non-plain lanes now and then (an earlier build that range-checked the
+      positions as inputs ran 777 of 1750 outer iterations on the checked ops). v2 checks every float op per
+      lane with the 4-lane fallback. A self-test at mode init compares the 8-lane frsqest/fi/fcgt and the
+      checked fm/fs/fnms/fma (zeros, exponent 0/255/254, cancelling and equal operands mixed in) with the 4-lane
+      helpers, then whole outer iterations (8 vertices, 0-3 spheres; the capture's transpose controls, other
+      whole-word picks or random bytes; speculative and checked) against v1, i.e. the lifted statements, on a
+      scratch context: `frsqest/fi/fcgt x8 0 of 160000 differ; checked fm/fs/fnms/fma x8 0 of 160000 differ
+      (85110 8-lane ops took the 4-lane fallback); whole outer iterations against v1 0 of 3940 differ (2434 of
+      6000 sphere steps kept speculative, 566 recomputed)`.
+    - Per cap_3 pass: 1750 of 1867 outer iterations and 3386 of 3614 sphere steps packed (the rest is the lifted
+      last iteration and 3 calls with one outer iteration, left to v1), 0 speculative steps recomputed, 967 8-lane
+      ops redone by the 4-lane helpers (in the checked input and output ops), 0 entries with other controls, 0
+      with non-plain constants.
+  - **Gates** (`build_runLabDC6N`, `SPU_JOB_REPLAY=work/jobcap3`, logs `work/x53g_*.log`): unset, `=0`, `=1`
+    (v3), `=1` with `GOW_EDGE_6AC8_V2=1` and `=2` (v1): each `[replay] 400/400 jobs identical`. Check mode
+    (logs `work/x53c_*.log`): v3, v2 and v1 each `[edge-6ac8-check] 117 calls checked, 0 differ; 1867 outer
+    iterations (8 vertices each), 3614 sphere steps`. Negative tests (logs `work/x53n_*.log`):
+    - 1 (LS): job gate `job_15_6.bin FAIL ... final LS differs first at 0x2C0DF: recorded DF, replay DE`,
+      `399/400`; check mode `call 0: LS differs in 1 bytes, first at 0x2C0DF (lifted DF native DE)`, `117 calls
+      checked, 1 differ`.
+    - 2 (r33): job gate 400/400; check mode `call 0: r33 lifted 3F004618 3EF04E6F 3F2D9D2D 410B82DF native
+      3F004619 ...`, `1 differ`. As before, that the registers come out exactly rests on check mode.
+  - **Timing** (pinned replay, REPEAT=50, sum of per-job minimum, ms; one exe, env alternated; logs
+    `work/x53t_*.log`): lifted 25.924 26.052 29.339 25.927 26.028 (median 26.03; 29.339 a single outlier), v3
+    25.466 25.491 26.632 25.316 25.345 (median 25.47, -2.2%); v2 25.549 25.882; v1 26.847 25.707.
+  - **The function alone** (`build_runLabDC6NP`, `SPU_FN_PROBE=6AC8`, REPEAT=20, sum of the 118 per-call
+    minimums, us; logs `work/x53p_*.log`): lifted 922.3 914.9 922.3, v3 372.1 391.6 460.6 (2.0-2.5x; the spread
+    is unexplained), v2 482.3, v1 757.5. The saving (~0.53 ms) matches the replay's (0.56 ms).
+  - **Not covered by any run:** the speculative recompute on real data (0 steps in cap_3; it runs v2's ops,
+    gated above, and the self-test recomputes 566 steps against v1), the inner-loop skip (`r85 == 0`: the inner
+    loop ran in all 117 calls; the self-test covers 0 spheres against v1), the fallbacks to v1 on controls or
+    count and the non-plain-constants path (0 entries each), the 6FC0 path (it never enters the nest), IRQ/RCHCNT
+    inside a job, the game itself (no in-game check-mode run or in-game A/B yet). Not verified: the meaning of
+    the nest (S, V, O and the flags), and that the transpose controls at LS 0xF870..0xF890 are always the ones
+    read from one capture (the packed path does not depend on them).
+- 2026-10-25: 6AC8 in game, check mode (x54: production exe with the other five stages native,
+  `GOW_EDGE_6AC8=3`, 1100 s, no PM profiling): `[edge-6ac8-check] 1355776 calls checked, 0 differ; 20558077
+  outer iterations (8 vertices each), 37802963 sphere steps`; on the way 1050 speculative sphere steps
+  recomputed, 11800663 8-lane ops redone by the 4-lane helpers, 32769 entries left to v1 (short). Check-mode
+  rdtsc ~1200 vs ~2709 ticks per outer iteration.
