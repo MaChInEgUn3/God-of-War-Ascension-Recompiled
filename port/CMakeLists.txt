@@ -186,20 +186,27 @@ if(PORT_ENABLE_SPU)
                 DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_e550_body.py"
                 COMMENT "Generating the E550 loop body from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native.c" "${EDGE_BODY}")
-            # 73E0's region at loc_79B0 (gow_edge_native_73e0.c, switch GOW_EDGE_73E0, default lifted)
+            # 73E0's region at loc_79B0 (gow_edge_native_73e0.c, switch GOW_EDGE_73E0, default native)
             set(EDGE_BODY73 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_73e0_body.h")
             add_custom_command(OUTPUT "${EDGE_BODY73}"
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_73e0_body.py" "${EDGE_LIFT}" "${EDGE_BODY73}"
                 DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_73e0_body.py"
                 COMMENT "Generating the 73E0 region from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_73e0.c" "${EDGE_BODY73}")
-            # D640's loop at loc_D92C and D250's at loc_D4DC (gow_edge_native_d640.c, switch GOW_EDGE_D640, default lifted)
+            # D640's loop at loc_D92C and D250's at loc_D4DC (gow_edge_native_d640.c, switch GOW_EDGE_D640, default native)
             set(EDGE_BODYD6 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_d640_body.h")
             add_custom_command(OUTPUT "${EDGE_BODYD6}"
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_d640_body.py" "${EDGE_LIFT}" "${EDGE_BODYD6}"
                 DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_d640_body.py"
                 COMMENT "Generating the D640/D250 loops from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_d640.c" "${EDGE_BODYD6}")
+            # A880's loop at loc_A950 (gow_edge_native_a880.c, switch GOW_EDGE_A880, default lifted)
+            set(EDGE_BODYA8 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_a880_body.h")
+            add_custom_command(OUTPUT "${EDGE_BODYA8}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_a880_body.py" "${EDGE_LIFT}" "${EDGE_BODYA8}"
+                DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_a880_body.py"
+                COMMENT "Generating the A880 loop from the d935 lift")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_a880.c" "${EDGE_BODYA8}")
         endif()
         # Generated beside the lift; each is present only once its generator
         # has been run, so each is included only if it is actually here.

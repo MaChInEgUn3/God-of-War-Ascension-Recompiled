@@ -33,6 +33,15 @@ an env variable.
    `gow_d4dc_exit: if (g_edge_d640 > 2) gow_edge_d640_d4dc_check_end(ctx);`. Only functions D640 and
    D250: the alternate-entry functions D8C8, D92C and D4DC keep their lifted copies.
    g_edge_d640: 0 the lifted loops, unset/1 native (packed), 2 native v1, 3/4 check.
+4. A880's loop at loc_0000A950 (exit loc_0000AD48), by GOW_EDGE_A880 (g_edge_a880, read once by
+   gow_edge_a880_mode). The loop is entered only by falling through from the A928 block; its back edge
+   jumps to the label. In A880 (or its _impl):
+         if (g_edge_a880) { if (g_edge_a880 <= 2) { gow_edge_a880_a950(ctx); goto loc_0000AD48; }
+                            gow_edge_a880_check_begin(ctx); }
+   before `loc_0000A950:` and `if (g_edge_a880 > 2) gow_edge_a880_check_end(ctx);` after
+   `loc_0000AD48:` (also reached by the skip in the A928 block when the count is not positive; check_end
+   ignores that). Only function A880: the alternate-entry functions A928, A950, AD48, AD4C and AD80 keep
+   their lifted copies. g_edge_a880: unset/0 the lifted loop, 1 native (packed), 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,
 untracked: it is the lift). Each switch is added only if the lift does not have it yet, so a lab lift made
@@ -49,13 +58,15 @@ lines = text.split(nl)
 want_e550 = "gow_edge_e550_ec08(" not in text
 want_73e0 = "gow_edge_73e0_79b0(" not in text
 want_d640 = "gow_edge_d640_d92c(" not in text
-if not want_e550 and not want_73e0 and not want_d640:
+want_a880 = "gow_edge_a880_a950(" not in text
+if not want_e550 and not want_73e0 and not want_d640 and not want_a880:
     open(dst, "w", newline="").write(text)
     sys.exit(print(f"{dst}: all switches are already there; copied"))
 hdr = re.compile(r"^void \w+_spu_func_([0-9A-F]{8})(_impl)?\(spu_context\* ctx\) \{\s*$")
 D4DC_BACK = "if (ctx->gpr[3]._u32[0] != 0) goto loc_0000D4DC;"
 out, cur = [], None
-n = {"EC08": 0, "EDE8": 0, "79B0": 0, "81C0": 0, "D92C": 0, "DB70": 0, "D4DC": 0, "D4DC_back": 0}
+n = {"EC08": 0, "EDE8": 0, "79B0": 0, "81C0": 0, "D92C": 0, "DB70": 0, "D4DC": 0, "D4DC_back": 0,
+     "A950": 0, "AD48": 0}
 for l in lines:
     m = hdr.match(l)
     if m:
@@ -80,7 +91,15 @@ for l in lines:
                 "        if (g_edge_d640) { if (g_edge_d640 <= 2) { gow_edge_d640_d4dc(ctx); goto gow_d4dc_exit; }"
                 " gow_edge_d640_d4dc_check_begin(ctx); }"]
         n["D4DC"] += 1
+    if want_a880 and cur == "0000A880" and re.match(r"^\s*loc_0000A950:", l):
+        out += ["        if (__builtin_expect(g_edge_a880 < 0, 0)) g_edge_a880 = gow_edge_a880_mode();",
+                "        if (g_edge_a880) { if (g_edge_a880 <= 2) { gow_edge_a880_a950(ctx); goto loc_0000AD48; }"
+                " gow_edge_a880_check_begin(ctx); }"]
+        n["A950"] += 1
     out.append(l)
+    if want_a880 and cur == "0000A880" and re.match(r"^\s*loc_0000AD48:", l):
+        out.append("        if (g_edge_a880 > 2) gow_edge_a880_check_end(ctx);")
+        n["AD48"] += 1
     if want_e550 and cur == "0000E550" and re.match(r"^\s*loc_0000EDE8:", l):
         out.append("        if (g_edge_native > 2) gow_edge_e550_check_end(ctx);")
         n["EDE8"] += 1
@@ -101,6 +120,8 @@ if want_73e0 and (n["79B0"] != 1 or n["81C0"] != 1):
 if want_d640 and any(n[k] != 1 for k in ("D92C", "DB70", "D4DC", "D4DC_back")):
     sys.exit("D640/D250 sites: " + ", ".join(f"{k} x{n[k]}" for k in ("D92C", "DB70", "D4DC", "D4DC_back")) +
              " (want 1 each)")
+if want_a880 and (n["A950"] != 1 or n["AD48"] != 1):
+    sys.exit(f"A880 labels: A950 x{n['A950']}, AD48 x{n['AD48']} (want 1 each)")
 decl = []
 if want_e550:
     decl += ["int gow_edge_native_mode(void);",
@@ -123,10 +144,17 @@ if want_d640:
              "void gow_edge_d640_d4dc_check_begin(spu_context* ctx);",
              "void gow_edge_d640_d4dc_check_end(spu_context* ctx);",
              "static int g_edge_d640 = -1;"]
+if want_a880:
+    decl += ["int gow_edge_a880_mode(void);",
+             "void gow_edge_a880_a950(spu_context* ctx);",
+             "void gow_edge_a880_check_begin(spu_context* ctx);",
+             "void gow_edge_a880_check_end(spu_context* ctx);",
+             "static int g_edge_a880 = -1;"]
 last_inc = max(i for i, l in enumerate(out[:200]) if l.startswith("#include"))
 out[last_inc + 1:last_inc + 1] = decl
 open(dst, "w", newline="").write(nl.join(out))
 print(f"{dst}: " + ", ".join(s for s, w in (("E550 loop at EC08 switchable by GOW_EDGE_NATIVE", want_e550),
                                           ("73E0 region at 79B0 switchable by GOW_EDGE_73E0", want_73e0),
                                           ("D640 loop at D92C and D250 loop at D4DC switchable by GOW_EDGE_D640",
-                                           want_d640)) if w))
+                                           want_d640),
+                                          ("A880 loop at A950 switchable by GOW_EDGE_A880", want_a880)) if w))

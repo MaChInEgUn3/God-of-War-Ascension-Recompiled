@@ -67,7 +67,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 |---|---|---|---|
 | `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in production (v3, default): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms, in game +8.0/+8.8% |
 | `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in production (v3, default): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%), in game +7.8/+7.9% |
-| `A880` | 5.8% | ? | |
+| `A880` | 5.8% (replay sampler: 7.2% of job time) | per element, the cross product of two input quads scaled by the second's w and normalized (8 elements/iteration) in its loop at `loc_A950` | loop native in a lab build (`GOW_EDGE_A880`, default lifted): A880 ~1996 -> 375 us, jobs 28.34 -> 26.79 ms (-5.4%, replay) |
 | `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in production (`GOW_EDGE_D640`, default): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay), in game +2.9/+4.2% |
 | `F538` | 3.6% | ? | |
 
@@ -550,3 +550,85 @@ Status: design, started 2026-10-24. Progress log at the end.
     `3E8388` 129.1 -> 123.3 ms, RSX walker drain 151.8 -> 143.9 ms per frame, against ~190 ms of EDGE work per
     frame (0.96 x 198): the walker is not co-bounding yet, ~25% headroom.
   - So the next EDGE stage is still worth its job-time share: A880 (7.2% of job time in the x38 ranking).
+- 2026-10-25: A880 boundary probe and block map (lab lift `work/spu_recomp_d935.fnpb_a880.c`:
+  `gen_edge_native_lift.py`, then `spu_fnprobe_lift.py --no-reads --blocks` on A880 counting A880 B648 B650 B660
+  5DE8; exe `build_runLabA8P`; cap_3 still 400/400; entry/exit states of all calls in `work/fnp_a880/`, game data).
+  - **Calls:** 409 over the 400 jobs, in 383 jobs (357 once, 26 twice; the second call of a job rewrites the
+    first one's output with the same bytes). `r3` = 0x107A0 in all. A880 reads three pointers from the
+    job-context block (B648/B650/B660: words 0-2 of LS[r3 + 0x60]); when either of words 1-2 is 0 it returns
+    at once by a tail call to B648 (241 calls, ~0 us). The other 168 take one path: A918 -> B648 (0) -> AD80 ->
+    5DE8 (the output pointer) -> A928 -> loop `loc_A950` -> AD48 -> return. `r4` = element count, 9-558
+    (median 205); the loop runs ceil(r4 / 8) times (2-70, median 26, 5287 in all) and writes all 8 elements of
+    the last iteration, so 43 calls write past `r4` by design. Callees inside the region: none; indirect
+    branches or calls: none (the only one in A880 is the early-exit tail call, outside the loop).
+  - **Block map** (counts x lifted statements, 1.33M executed): the loop `A950` (247 statements) 98.1%; the
+    entry block 1.0%; everything else under 0.3% each (5DE8 0.18%, B650/B660 0.09% each).
+  - **Time** (`[fnpt]`, REPEAT=20, per-call minimum): 2009 us over the 168 loop calls (mean 12.0, median 9.95,
+    max 26.4) = 7.2% of the 27.95 ms summed per-job minimum of that run; fit 0.371 us per A950 iteration +
+    0.28 us (corr 0.9997).
+  - **What the loop computes** (a reading of the lift and of the constants, identical in all 168 entries; to
+    verify): per iteration 8 elements; element k reads quad A_k from the stream at r81 (word 2 of the block)
+    and B_k from the one at r82 (word 1), and writes one quad to the output at r53 (+128 bytes per iteration
+    for all three). With the shuffle control r47 = LS[0x10400] & 31 (words 1 2 0 0: "yzx"), t = B * A.yzx,
+    c = t - A * B.yzx (fm, fnms: the cross product B x A, rotated), n = B.w * c.yzx with lane 3 cleared,
+    L = (n.x^2 + n.y^2) + n.z^2 (fm, then two fa through the LS shuffle constants at 0xF840/0xF850: rotate by
+    one and by two words), y = fi(L, frsqest(L)) and one Newton step r = (1 - L*y*y) * (y/2) + y (fm, fnms,
+    fm, fma); out = (L > 0x0DA2425F (fcgt) ? n * r : n) with lane 3 = 0. That is normalize(B x A * B.w),
+    plausibly a bitangent from normal and tangent (B.w the handedness). Inputs and output are separate buffers
+    in cap_3 (0x29xxx-0x3xxxx); no degenerate element in any iteration but the last ones (30 of 42296
+    elements have L <= eps, all in the overrun of the last iteration).
+- 2026-10-25: the A880 loop native, in a lab build (`build_runLabA8N`; `build_runLabA8NP` with an unrouted A880
+  probe wrapper, no block counters: lift `work/spu_recomp_d935.fnp_a880.c`).
+  - **Pieces:** `port/gow_edge_native_a880.c` (an SPU source like the other three), behind `GOW_EDGE_A880`
+    (read once): unset/0 = lifted, 1 = native packed v3 (`GOW_EDGE_A880_V2=1`: v2), 2 = native v1, 3 = check
+    v3/v2, 4 = check v1 (all 128 GPRs and the whole LS at `loc_AD48`; `[edge-a880-check] N calls checked, M
+    differ`, every 4096 calls and at exit). `GOW_EDGE_A880_FAULT=<n>[,<k>]` (native run k, default the first):
+    1 = one LS bit in the first quad the last iteration stores, 2 = bit 0 of r73 after the loop.
+    `port/gen_edge_a880_body.py <lift> <out.h>` writes `gow_edge_a880_body.h` (`GOW_A88_REGS/LOAD/STORE/BODY`)
+    from A880's own copy of the loop (the alternate-entry functions A928, A950, AD48, AD4C and AD80 stay lifted)
+    and checks the lift's shape: the back edge `if (r46 != 0) goto loc_A950` followed by `loc_AD48`, no other
+    control flow, the registers read before written exactly r47-r53 and r81-r83, and the operation counts the
+    packed path was written for. `gen_edge_native_lift.py` adds the fourth switch only where it is missing: in
+    A880 (or its `_impl`) before `loc_0000A950:` (`goto loc_0000AD48`) and `check_end` after `loc_0000AD48:`
+    (also reached by the skip in the A928 block when the count is not positive; not taken in cap_3). The port's
+    CMakeLists builds the source and header like D640's; the default is the lifted loop.
+  - **Versions** (every value kept is the same op on the same operands as in the lift):
+    - v1: the loop statement for statement in C locals (the generated macros), direct LS access.
+    - packed: one iteration at a time, the 8 elements in the 8 lanes (the 16 input quads transposed into
+      x/y/z/w vectors), computing only the lanes that reach memory: lanes 0-2 of the output, and lane 0 of the
+      two sums (lane 3 and the other sum lanes are dropped by the lift's masks and splats). The helpers work
+      lane by lane, so this is each lane's lifted result. Per iteration all loads come before the stores and
+      the stores keep the lift's order, so the LS sees the same accesses (no overlap analysis). The last
+      iteration runs the lifted body from the advanced pointers, so all 77 registers the loop writes (r80
+      included) come out exactly. Entry checks, else v1: r47 and the 0xF840/0xF850 constants as above, no
+      packed store reaching 0xF840/0xF850 (the lift reloads them every iteration), at least 2 iterations.
+    - v3 (default packed) runs an iteration speculatively with one range check (as the other stages) and
+      recomputes it with v2's ops before anything is stored if a lane fails; v2 checks every float op per lane
+      with the 4-lane fallback. A self-test at mode init compares the 8-lane frsqest/fi/fcgt and the checked
+      fm/fa/fnms/fma (zeros, exponent 0/255/254 and cancelling sums mixed in) with the 4-lane helpers: 0 of
+      160000 quadwords differ each, 54681 8-lane ops through the 4-lane fallback.
+    - Per cap_3 pass: 5119 of 5287 iterations packed (the rest is the lifted last iteration), 0 recomputed,
+      0 ops redone by the 4-lane helpers, 0 entries to v1.
+  - **Gates** (`build_runLabA8N`, `SPU_JOB_REPLAY=work/jobcap3`): unset, `=0`, `=1` (v3), `=1` with
+    `GOW_EDGE_A880_V2=1` and `=2` (v1): each `[replay] 400/400 jobs identical`. Check mode: v3, v2 and v1 each
+    `[edge-a880-check] 168 calls checked, 0 differ; 5287 iterations (8 elements each)`. Negative tests:
+    - 1 (LS): run 0 (job_17_2, which calls A880 twice on the same buffers) job gate 400/400, the second call
+      rewrites the byte; run 6 (`=1,6`, job_15_6, one call) `job_15_6.bin FAIL ... final LS differs first at
+      0x2C78F: recorded 00, replay 01`, `399/400`; check mode `call 0: LS differs in 1 bytes, first at 0x2B78F
+      (lifted 00 native 01)`, `168 calls checked, 1 differ`.
+    - 2 (r73): job gate 400/400; check mode `call 0: r73 lifted 3F7FFF28 ... native 3F7FFF29 ...`, `1 differ`.
+      As before, that the registers come out exactly rests on check mode.
+  - **Timing** (pinned replay, REPEAT=50, sum of per-job minimum, ms; one exe, env alternated): lifted 28.332
+    28.488 28.335 28.348 28.325 (median 28.34), v3 26.816 26.778 26.716 27.022 26.793 (median 26.79, -5.4%);
+    v2 26.859 27.096; v1 28.190 28.069.
+  - **The function alone** (`build_runLabA8NP`, `SPU_FN_PROBE=A880`, REPEAT=20, sum of the 409 per-call
+    minimums, us): lifted 1987 2012 1988, v3 375 377 374 (5.3x), v2 567, v1 1693. Check-mode rdtsc (cold LS
+    after the snapshot copies): ~400 vs ~1500 ticks per iteration.
+  - **Not covered by any run:** the speculative recompute on real data (0 in cap_3; v2's ops are what it runs,
+    gated above, and the fallback ops are covered by the self-test), the v1 fallbacks (one iteration, other
+    controls, stores reaching 0xF840), the skip path to AD48, IRQ/RCHCNT inside a job, the game itself (no
+    in-game check-mode run or in-game A/B yet: next, as for the other stages before their defaults flipped).
+- 2026-10-25: A880 in game, check mode (x44: production exe with E550, 73E0 and D640 native, `GOW_EDGE_A880=3`,
+  1100 s, no PM profiling): `[edge-a880-check] 1736704 calls checked, 0 differ; 55373180 iterations`; the paths
+  cap_3 never took ran too: 126 speculative iterations recomputed with v2's ops, 126 8-lane ops redone by the
+  4-lane helpers, 30 entries left to v1 (short). Check-mode rdtsc ~415 vs ~2035 ticks per iteration.
