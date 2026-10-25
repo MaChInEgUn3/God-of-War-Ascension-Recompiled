@@ -711,6 +711,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - 53% of the 1.00 code's 64-byte blocks appear unchanged, at dozens of different shifts. The binary was relinked,
     so every address the port uses would move.
   - 12 of the 33 embedded SPU job modules changed, among them `d935`, the main EDGE module.
+    `d935` itself barely changed (checked 2026-10-25, word by word over the module, same size and entry): 6 of its
+    12576 words differ, 4 in the module header and 2 in one function where the two instructions that zero r28 and
+    r32 swapped registers (same result). E550 and 73E0, the native stages, are byte-identical at the same
+    addresses, so the native code carries over to 1.12 as is.
   - Moving to 1.12 means a full PPU re-lift, those 12 modules and the EDGE fragments re-lifted, and every hardcoded
     address remapped (best done with a function-matching tool). That is several days. Parked as a milestone for
     before any release, since most players will have 1.12 installed.
