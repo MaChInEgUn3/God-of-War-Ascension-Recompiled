@@ -201,6 +201,13 @@ Lessons that cost days; keep them.
   run-time checks cost 1.1% level fps with the env unset), `SPU_JOB_CAPTURE` is ignored and `SPU_JOB_REPLAY` says
   so and exits. Lab exes are staged as `build_runLab`; production builds stay off. Toggle with
   `cmake -S work/port -B work/port/build_v017 -DPS3RECOMP_SPU_JOBLAB=ON|OFF` (only runtime files rebuild).
+* **Function boundary probe** (job lab): `analysis/spu_fnprobe_lift.py <lift.c> <out.c> <fn> [callees...]` wraps
+  one lifted function in `spu_fn_probe` (toolkit `runtime/spu/spu_fn_probe.c`) and routes its and the listed
+  callees' LS reads. Build it with `LAB_LIFT="<lift dir> <out.c>" sh work/buildlab.sh <dest>` (relative path for
+  out.c; the production lift goes back before the production rebuild). Then `SPU_JOB_REPLAY=<dir>
+  SPU_FN_PROBE=<fn>` prints `[fnp] <fn> <job> #<call> <us> us  r3..r10=...  r1=  wr=<ranges>  rd=<ranges>
+  gpr=<changed>` per call in each job's first run; `SPU_FN_PROBE_SAVE=<dir>[,<n>]` saves entry/exit GPRs+LS per
+  call (`fnp_*.bin`, game data).
 * **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
   p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the
   entry bracket's drain return), against the whole module run per job. The rest is the policy module's own work:

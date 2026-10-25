@@ -176,3 +176,15 @@ Status: design, started 2026-10-24. Progress log at the end.
     puts `build_v017` back to production.
   - **Next:** an E550 boundary probe in a lab lift: the arguments and LS ranges written per call, plus the
     function's own time. Its exit snapshots become the gate for a native E550.
+- 2026-10-25: E550 boundary probe (lab lift `work/spu_recomp_d935.fnp_e550.c`: E550 wrapped, reads of E550 and
+  its callees B600/B638/B648/B650/B660/BBC8 routed; replay of cap_3 still 400/400 identical).
+  - **Calls:** 166 over the 400 jobs. 151 jobs call it (136 once, 15 twice). `r3` is always 0x107A0, a
+    job-context block. `r4` is a buffer that E550 rewrites in place, exactly `r5 * 48` bytes in all 166 calls
+    (48 bytes = three quadwords per element; `r5` = 1..183, median 20). `r6` is a second input region. `r7` takes
+    1, 7, 0, 0x0103041F; `r8` is mostly 0.
+  - **Where the time goes:** not the `r4` elements. The time per call does not grow with `r5`: about 50-95 us
+    fixed by `r7` class. It tracks how much the call writes in LS 0x28000-0x30000 (buffers at 0x29000, 0x2B700,
+    0x2C100 and 0x2EB00; corr 0.77, ~4 us/KB) and its total writes (corr 0.82). Those buffers are the stage's real
+    output. Their layout is the next thing to decode. Probe times include the routed reads, so they read high.
+  - **Gate data:** `work/fnp_e550/` holds entry and exit GPRs+LS for all 166 calls (game data). A native E550 must
+    reproduce every exit state from its entry state.
