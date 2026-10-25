@@ -640,3 +640,13 @@ Status: design, started 2026-10-24. Progress log at the end.
     (see the D640 entry) is about 0.93 this time.
   - **Default:** `GOW_EDGE_A880` unset = native packed v3 now, `=0` the lifted loop. Gates on the lab build of
     that tree (`build_runLabA8D`): unset and `=0` both `[replay] 400/400 jobs identical`.
+- 2026-10-25: after four stages (x47: production exe, all four native, one instance, 1100 s, PM profiling on,
+  `PS3_FTRACE=600:20`), against x43 (three stages, same setup).
+  - EDGE w15-17 busy: 96% of wall in both: still bound by EDGE job throughput.
+  - ms/job (pm-prof median): 0.1183 -> 0.1122 (-5.2%), against the replay's -5.4%: A880 reached the game in
+    full. Single-instance tail 5.058 -> 5.283 game frames/s (198 -> 189 ms per frame; single runs carry about
+    +-12% scene noise).
+  - Main thread at the EDGE list wait (`3E8388`): 54.7% -> 52.3% of samples (108 -> 99 ms per frame).
+  - Timeline 600-620 s: 91 -> 98 frames, median 208.5 -> 200.0 ms; main blocked at `3E8388` 123.3 -> 98.2 ms,
+    RSX walker drain 143.9 -> 142.5 ms per frame against ~181 ms of EDGE work (0.96 x 189): ~21% headroom left
+    before the walker co-bounds.
