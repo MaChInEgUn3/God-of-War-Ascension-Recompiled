@@ -795,6 +795,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.66: the second native EDGE stage, +8% (2026-10-25).**
+  - The light-accumulation region of EDGE job function `73E0` (`loc_79B0`..`81C0`, 76% of 73E0, which is
+    ~19% of job time) as hand-written AVX2, 8 vertices per vector (`port/gow_edge_native_73e0.c`, v3).
+    Bit-exact: cap_3 replay 400/400, and an in-game check of 1146880 region runs against the lifted region
+    with 0 differences, fallbacks included (docs/EDGE_NATIVE.md).
+  - Swapped in-game A/B, same exe, on top of the E550 stage: +7.8% and +7.9% game frames/s (3.60 -> 3.88).
+    Default on; `GOW_EDGE_73E0=0` restores the lifted region.
 - **M0.65: the first native EDGE stage, +8-9% (2026-10-25).**
   - The skinning loop of EDGE job function `E550` (`loc_EC08`, 75% of E550, which is ~15% of job time) runs as
     hand-written AVX2 (`port/gow_edge_native.c`, v3): two vertices per 256-bit vector, SPU float rules checked

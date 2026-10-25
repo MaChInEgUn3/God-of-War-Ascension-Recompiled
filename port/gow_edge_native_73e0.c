@@ -10,8 +10,8 @@
  * Clean-room: written from our own lift of the module and our own captures.
  *
  * GOW_EDGE_73E0 (read once):
- *   0/unset  lifted region
- *   1        native v3 (both inner loops 8-wide, one lane check per iteration); with GOW_EDGE_73E0_V2=1:
+ *   0        lifted region
+ *   1/unset  native v3 (both inner loops 8-wide, one lane check per iteration); with GOW_EDGE_73E0_V2=1:
  *            v2 (8-wide, a lane check per float op)
  *   2        native v1 (the region statement for statement, registers in locals)
  *   3        check v3 (or v2 with GOW_EDGE_73E0_V2=1): run it on a copy of the state, then the lifted
@@ -855,8 +855,8 @@ int gow_edge_73e0_mode(void)
 {
     if (s73_mode < 0) {
         const char* e = getenv("GOW_EDGE_73E0");
-        int m = e && *e ? atoi(e) : 0;   /* default: lifted */
-        if (m < 0 || m > 4) m = 0;
+        int m = e && *e ? atoi(e) : 1;   /* default: native v3 */
+        if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_73E0_V2");
         s73_v2 = v && atoi(v) == 1;
         s73_mode = m;

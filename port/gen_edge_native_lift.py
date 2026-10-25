@@ -17,7 +17,7 @@ regions (port gow_edge_native.c, gow_edge_native_73e0.c), each picked at run tim
    before `loc_000079B0:` and `if (g_edge_73 > 2) gow_edge_73e0_check_end(ctx);` after `loc_000081C0:`
    (also reached by the skip at 7890; check_end ignores that). Only function 73E0's copy: the lift has a
    second copy of these blocks in function 75D8 (an alternate entry), which stays lifted.
-   g_edge_73 is read once (gow_edge_73e0_mode): unset/0 the lifted region, 1 native v3 (GOW_EDGE_73E0_V2=1:
+   g_edge_73 is read once (gow_edge_73e0_mode): 0 the lifted region, unset/1 native v3 (GOW_EDGE_73E0_V2=1:
    v2), 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,

@@ -66,7 +66,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | function | share of EDGE samples | stage | native status |
 |---|---|---|---|
 | `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in production (v3, default): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms, in game +8.0/+8.8% |
-| `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in lab (v3, `GOW_EDGE_73E0=1`; default lifted): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%); not run in game |
+| `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in production (v3, default): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%), in game +7.8/+7.9% |
 | `A880` | 5.8% | ? | |
 | `D640` | 3.6% | ? | |
 | `F538` | 3.6% | ? | |
@@ -419,3 +419,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   v2 (unexpected constants), 2213516 v3 iterations recomputed exactly, 2214949 loop-1 iterations on the checked
   ops without a try, 8295 8-lane ops redone by the 4-lane helpers; all exact. Region rdtsc: 733.6 vs 1817.3
   ticks per inner iteration (2.5x).
+- 2026-10-25: 73E0 native in game, then the default.
+  - **In-game A/B** (x36): the production exe (E550 native, its default) in two copies, `GOW_EDGE_73E0=1` vs
+    unset (then lifted), swapped pairs, no PM profiling: window 3.881 vs 3.600 (+7.8%) and 3.887 vs 3.602
+    (+7.9%) game frames/s. The replay predicted -9.5% of job time.
+  - **Default:** `GOW_EDGE_73E0` unset = native v3 now, `=0` the lifted region. Gates on the lab build of that
+    tree (`build_runLab73D`): unset and `=0` both `[replay] 400/400 jobs identical`.

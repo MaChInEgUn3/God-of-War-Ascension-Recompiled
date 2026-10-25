@@ -216,8 +216,8 @@ Lessons that cost days; keep them.
   the fallback counts; any `[edge-check] call N: ... differ` line is a mismatch, the first four `call N: r34 ...`
   lines are only the layout). `GOW_EDGE_FAULT=1|2` flips one
   LS bit or one r5 bit after the native loop, to show that the gates catch it.
-  73E0's region (`loc_79B0`..`81C0`, `port/gow_edge_native_73e0.c`) has its own switch `GOW_EDGE_73E0`: unset/0 =
-  lifted, 1 = native v3 (`GOW_EDGE_73E0_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-73e0-check] N calls checked, M
+  73E0's region (`loc_79B0`..`81C0`, `port/gow_edge_native_73e0.c`) has its own switch `GOW_EDGE_73E0`: 0 =
+  lifted, unset/1 = native v3 (`GOW_EDGE_73E0_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-73e0-check] N calls checked, M
   differ`, every 4096 calls and at exit); `GOW_EDGE_73E0_FAULT=1|2` flips one LS bit or one r60 bit.
 * **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
   p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the
