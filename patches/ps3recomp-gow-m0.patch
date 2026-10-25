@@ -10743,10 +10743,10 @@ index fc3cea1..2cd6b02 100644
 +}
 diff --git a/runtime/spu/spu_fn_probe.c b/runtime/spu/spu_fn_probe.c
 new file mode 100644
-index 0000000..8c6aa24
+index 0000000..5656501
 --- /dev/null
 +++ b/runtime/spu/spu_fn_probe.c
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,188 @@
 +/*
 + * SPU function boundary probe (job lab, used with SPU_JOB_REPLAY).
 + *
@@ -10757,7 +10757,11 @@ index 0000000..8c6aa24
 + * the function prints one line:
 + *     [fnp] <fn> <job> #<call> <us> us  r3..r10=<preferred words>  r1=<sp>
 + *           wr=<LS ranges written>  rd=<LS ranges read>  gpr=<registers changed>
-+ * Ranges are 16-byte lines, merged; "rd" only when reads are routed.
++ * Ranges are 16-byte lines, merged; "rd" only when reads are routed. With
++ * SPU_JOB_REPLAY_REPEAT > 1 the function is also timed in every run, and each
++ * job ends with [fnpt] <fn> <job> <min us of call 0> <call 1> ...: the per-call
++ * minimum, the figure to compare. A --blocks lift also prints, per call of run
++ * 0, [fnpb] <fn> <job> #<call> <block pc>:<count> ... (blocks entered).
 + *
 + *   SPU_FN_PROBE=<hex fn>           the function the lift wrapped (e.g. E550)
 + *   SPU_FN_PROBE_SAVE=<dir>[,<n>]   also write the first n calls (default 64) as
@@ -10791,6 +10795,9 @@ index 0000000..8c6aa24
 +static uint8_t s_fnp_rd[SPU_LS_SIZE / 16];
 +static int s_fnp_reads;
 +static LARGE_INTEGER s_fnp_t0;
++static double s_fnp_min[64];
++static unsigned s_fnp_ncalls;
++static uint32_t* s_fnp_blk; static const uint32_t* s_fnp_blk_pc; static unsigned s_fnp_nblk;
 +
 +static void fnp_init(void)
 +{
@@ -10810,9 +10817,33 @@ index 0000000..8c6aa24
 +}
 +
 +/* The replay names the job and run before each run (spu_job_replay.c). */
++/* The replay names the job and run before each run (spu_job_replay.c), and
++ * NULL once at the end. A new job first flushes the last one's minimums. */
 +void spu_fn_probe_job(const char* name, int run)
 +{
++    if (s_fnp_on > 0 && (run == 0 || !name) && s_fnp_ncalls) {
++        char b[1024]; size_t p = 0;
++        for (unsigned k = 0; k < s_fnp_ncalls && k < 64 && p + 16 < sizeof b; k++)
++            p += (size_t)snprintf(b + p, sizeof b - p, " %.2f", s_fnp_min[k]);
++        fprintf(stderr, "[fnpt] %05X %s%s\n", s_fnp_fn, s_fnp_job, b);
++        s_fnp_ncalls = 0;
++    }
++    if (!name) return;
 +    s_fnp_job = name; s_fnp_run = run; s_fnp_call = 0; s_fnp_open = 0;
++}
++
++/* A --blocks lab lift hands over its counter table on every call. */
++void spu_fn_probe_blocks(uint32_t* cnt, const uint32_t* pc, unsigned n)
++{
++    s_fnp_blk = cnt; s_fnp_blk_pc = pc; s_fnp_nblk = n;
++}
++
++static void fnp_time(double us)
++{
++    if (s_fnp_call < 64) {
++        if (s_fnp_run == 0 || us < s_fnp_min[s_fnp_call]) s_fnp_min[s_fnp_call] = us;
++        if (s_fnp_call + 1 > s_fnp_ncalls) s_fnp_ncalls = s_fnp_call + 1;
++    }
 +}
 +
 +static int fnp_ranges(char* out, size_t n, const uint8_t* mark)
@@ -10831,9 +10862,18 @@ index 0000000..8c6aa24
 +void spu_fn_probe(spu_context* ctx, uint32_t fn, int phase)
 +{
 +    if (s_fnp_on < 0) fnp_init();
-+    if (!s_fnp_on || !g_spu_jobrep_on || s_fnp_run != 0 || fn != s_fnp_fn) return;
++    if (!s_fnp_on || !g_spu_jobrep_on || fn != s_fnp_fn) return;
++    if (s_fnp_run != 0) {           /* timing only */
++        if (phase == 0) { if (!s_fnp_open++) QueryPerformanceCounter(&s_fnp_t0); return; }
++        if (!s_fnp_open || --s_fnp_open) return;
++        LARGE_INTEGER t1, f; QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&f);
++        fnp_time((double)(t1.QuadPart - s_fnp_t0.QuadPart) * 1e6 / (double)f.QuadPart);
++        s_fnp_call++;
++        return;
++    }
 +    if (phase == 0) {
 +        if (s_fnp_open++) return;   /* nested: only the outermost call */
++        if (s_fnp_blk) memset(s_fnp_blk, 0, s_fnp_nblk * sizeof *s_fnp_blk);
 +        memcpy(s_fnp_gpr, ctx->gpr, sizeof s_fnp_gpr);
 +        memcpy(s_fnp_ls, ctx->ls, SPU_LS_SIZE);
 +        memset(s_fnp_rd, 0, sizeof s_fnp_rd);
@@ -10844,6 +10884,13 @@ index 0000000..8c6aa24
 +    if (!s_fnp_open || --s_fnp_open) return;
 +    LARGE_INTEGER t1, f; QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&f);
 +    const double us = (double)(t1.QuadPart - s_fnp_t0.QuadPart) * 1e6 / (double)f.QuadPart;
++    fnp_time(us);
++    if (s_fnp_blk) {
++        static char bs[8192]; size_t bp = 0;
++        for (unsigned k = 0; k < s_fnp_nblk && bp + 24 < sizeof bs; k++)
++            if (s_fnp_blk[k]) bp += (size_t)snprintf(bs + bp, sizeof bs - bp, " %05X:%u", s_fnp_blk_pc[k], s_fnp_blk[k]);
++        fprintf(stderr, "[fnpb] %05X %s #%u%s\n", fn, s_fnp_job, s_fnp_call, bp ? bs : " -");
++    }
 +    static uint8_t wr[SPU_LS_SIZE / 16];
 +    for (uint32_t i = 0; i < SPU_LS_SIZE / 16; i++)
 +        wr[i] = memcmp(ctx->ls + i * 16, s_fnp_ls + i * 16, 16) != 0;
@@ -10884,6 +10931,7 @@ index 0000000..8c6aa24
 +}
 +#else
 +void spu_fn_probe_job(const char* name, int run) { (void)name; (void)run; }
++void spu_fn_probe_blocks(uint32_t* cnt, const uint32_t* pc, unsigned n) { (void)cnt; (void)pc; (void)n; }
 +void spu_fn_probe(spu_context* ctx, uint32_t fn, int phase) { (void)ctx; (void)fn; (void)phase; }
 +u128 spu_fn_probe_read(const spu_context* ctx, uint32_t lsa) { return spu_ls_read128(ctx, lsa); }
 +#endif
@@ -11987,10 +12035,10 @@ index 90a2f77..99154c2 100644
 +}
 diff --git a/runtime/spu/spu_job_replay.c b/runtime/spu/spu_job_replay.c
 new file mode 100644
-index 0000000..d269981
+index 0000000..a63a062
 --- /dev/null
 +++ b/runtime/spu/spu_job_replay.c
-@@ -0,0 +1,684 @@
+@@ -0,0 +1,685 @@
 +/*
 + * SPU job replay: SPU_JOB_REPLAY=<dir> (docs/EDGE_NATIVE.md, "Replay").
 + *
@@ -12619,6 +12667,7 @@ index 0000000..d269981
 +                    ok ? "PASS" : "FAIL", med, h->entry_pc, h->resident_ovl, ok ? "" : "  ", why);
 +        free(buf);
 +    }
++    spu_fn_probe_job(NULL, 0);   /* flush the last job's [fnpt] */
 +    if (timed) {
 +        qsort(job_ms, timed, sizeof *job_ms, jr_cmp_double);
 +        double sum = 0; for (size_t k = 0; k < timed; ++k) sum += job_ms[k];

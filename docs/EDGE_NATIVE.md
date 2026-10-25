@@ -188,3 +188,18 @@ Status: design, started 2026-10-24. Progress log at the end.
     output. Their layout is the next thing to decode. Probe times include the routed reads, so they read high.
   - **Gate data:** `work/fnp_e550/` holds entry and exit GPRs+LS for all 166 calls (game data). A native E550 must
     reproduce every exit state from its entry state.
+- 2026-10-25: E550 re-timed without read routing, and its hot loop.
+  - **Unrouted** (`spu_fnprobe_lift.py --no-reads --blocks`, REPEAT=20, `[fnpt]` per-call minimum): 166 calls,
+    5556 us in total, 33.5 us mean. That is ~15.5% of the 35.8 ms summed per-job minimum of all 400 jobs (the
+    wrapper alone costs nothing: 35.8 vs 36.2-37.0 ms).
+  - **Block map** (`[fnpb]`, counts x lifted lines): the loop at `loc_EC08` (125 lifted statements) is 75.4% of
+    E550's executed work. Then `F104` 9.2%, `BD54` (in callee BBC8) 8.9%, `E804` (the r5-times loop over the r4
+    elements) 3.5%. Per-call time is linear in executed lines (corr 0.998, ~1.2 us per 1000 lines), with no fixed
+    cost to speak of: the earlier "50-95 us fixed" was the routed reads.
+  - **The loop** (to verify): matrix-palette skinning, 2 vertices per iteration (r48 -= 2). Byte bone indices x48
+    pick 3-row matrices at bases r34/r35/r37; weights are `cuflt` of bytes x r91; the four matrices are blended with
+    fm/fma; 96 bytes per iteration go to r49 and 32 to r86. Software-pipelined: the next iteration's weights are
+    shuffled in this one.
+  - **Float helpers:** with `SPU_FP_NATIVE` each fm/fma is the native op under round-toward-zero plus validity
+    masks. The exact per-lane fallback is rare (`spu__x8_fma_fix` 0.3% of replay samples). A native loop can reuse
+    the same helpers and stay bit-exact.
