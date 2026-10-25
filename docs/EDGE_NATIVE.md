@@ -13,7 +13,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   Native host code for the same stages avoids all of that and can use 8-wide SIMD.
 - Ceiling: the RSX walker drains for ~163 ms per frame. Native EDGE alone cannot take the frame below that: about
   1.7x game frames, ~12 presents/s. After that, the walker's known levers come next: the via-guest readbacks
-  (catalogued in STATUS M0.62).
+  (catalogued in STATUS M0.62). (2026-10-25: superseded by measurement. The drain per frame falls as EDGE gets
+  faster, and after six stages the frame is still EDGE-bound at ~11.8 presents/s, with the walker's own CPU
+  time ~103 ms per frame: see the x56 entry.)
 
 ## Rules
 
@@ -916,4 +918,6 @@ Status: design, started 2026-10-24. Progress log at the end.
     wait (`3E8388`): 52.3% -> 49.2% of samples (99 -> 83 ms per frame).
   - Timeline 600-620 s: 98 -> 125 frames, median 200.0 -> 168.3 ms; main blocked at `3E8388` 98.2 -> 77.0 ms,
     RSX walker drain 142.5 -> 115.4 ms per frame against ~160 ms of EDGE work (0.95 x 168). The walker's
-    drain per frame fell too, so its share did not close in: EDGE is still the longer one by ~28%.
+    drain per frame fell too, so its share did not close in: EDGE is still the longer one by ~28%. The drain
+    includes the walker's GPU waits (`ftrace_report.py` paints those spans inside the drain): sync submit 9.9 +
+    batch slot 2.7 ms, so the walker's own CPU time is ~103 ms per frame and EDGE is longer by ~55%.
