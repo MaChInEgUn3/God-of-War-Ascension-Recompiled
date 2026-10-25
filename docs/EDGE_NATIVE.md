@@ -906,3 +906,14 @@ Status: design, started 2026-10-24. Progress log at the end.
     4.331 vs 4.172 (+3.8%) game frames/s. The replay predicted -2.2% of job time (expected +2.2%).
   - **Default:** `GOW_EDGE_6AC8` unset = native packed v3 now, `=0` the lifted loop nest. Gates on the lab build
     of that tree (`build_runLab6AD`): unset and `=0` both `[replay] 400/400 jobs identical`.
+- 2026-10-25: after six stages (x56: production exe, all six native, one instance, 1100 s, PM profiling on,
+  `PS3_FTRACE=600:20`), against x47 (four stages, same setup).
+  - EDGE w15-17 busy: 96% -> 95% of wall: still bound by EDGE job throughput.
+  - ms/job (pm-prof median): 0.1122 -> 0.0995 (-11.3%), against -5.3% from the replay (F538 -3.1%, 6AC8
+    -2.2%). More than predicted; not explained (one run each, scene noise about +-12%, and the job mix per
+    window is not fixed).
+  - Single-instance tail 5.283 -> 5.948 game frames/s (189 -> 168 ms per frame). Main thread at the EDGE list
+    wait (`3E8388`): 52.3% -> 49.2% of samples (99 -> 83 ms per frame).
+  - Timeline 600-620 s: 98 -> 125 frames, median 200.0 -> 168.3 ms; main blocked at `3E8388` 98.2 -> 77.0 ms,
+    RSX walker drain 142.5 -> 115.4 ms per frame against ~160 ms of EDGE work (0.95 x 168). The walker's
+    drain per frame fell too, so its share did not close in: EDGE is still the longer one by ~28%.
