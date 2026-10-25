@@ -331,7 +331,7 @@ Status: design, started 2026-10-24. Progress log at the end.
     `83E8` 1.6%. No calls inside the region.
 - 2026-10-25: the 73E0 region (`loc_79B0` to `loc_81C0`) native, in a lab build (`build_runLab73EN`).
   - **Pieces:** `port/gow_edge_native_73e0.c` (an SPU source like `gow_edge_native.c`), behind `GOW_EDGE_73E0`
-    (read once): unset/0 = lifted, 1 = native v3 (`GOW_EDGE_73E0_V2=1`: v2), 2 = native v1, 3 = check v3/v2,
+    (read once): unset/0 = lifted (now 0 = lifted, unset = native: see below), 1 = native v3 (`GOW_EDGE_73E0_V2=1`: v2), 2 = native v1, 3 = check v3/v2,
     4 = check v1. `port/gen_edge_73e0_body.py <lift> <out.h>` writes `gow_edge_73e0_body.h` (`GOW_73_REGS/LOAD/
     STORE` and the segments `S79B0 S79B0T B7BB4 S7DC0 S7DC0T B7ED8 S8058`) from 73E0's copy of the blocks into the
     build tree; it checks that the lift has exactly the expected branches and labels and fails otherwise.
@@ -411,7 +411,7 @@ Status: design, started 2026-10-24. Progress log at the end.
     tables and checked the constants at every inner-loop entry ran loop 1 at 472-529 ticks per iteration.
   - **Production:** the port's CMakeLists builds the switch and the native source into every exe; the default is
     the lifted region. Flipping the default (`GOW_EDGE_73E0` unset = native) is left for an in-game A/B and an
-    in-game check-mode run, as E550 had. Not covered by any run: the overlap fallback, the v2 fallback, the
+    in-game check-mode run, as E550 had (both done, now the default: see the entries below). Not covered by any run: the overlap fallback, the v2 fallback, the
     lifted-loop fallbacks, r116 = 0 with r107 > 0, and IRQ/RCHCNT inside a job (cap_3 has none).
 - 2026-10-25: 73E0 in-game check (x35, production exe, `GOW_EDGE_73E0=3`, one 1100 s level run): `1146880 calls
   checked, 0 differ; 17445388 outer iterations (8 vertices each), 134513874 inner iterations per loop; region
