@@ -74,6 +74,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | `F538` | 3.6% (replay sampler: 5.5% of job time) | per input quad, a 4x4 transform by four loop-invariant columns (8 quads/iteration, mostly in place) in its loop at `loc_F620` | loop native in production (`GOW_EDGE_F538`, default): F538 ~1349 -> 536 us, jobs 26.45 -> 25.63 ms (-3.1%, replay), in game +2.3/+3.3% |
 | `DCC0` | replay sampler: 4.4% of job time | a serial integer decode (cntb-driven variable-length steps through LS tables, plausibly index decompression: not verified) in its loops at `loc_E210` and `loc_E3C4` | probed, not staged: no float work and each iteration's addresses depend on the previous one's loads, so only a v1 applies (expected ~0.7% of job time); deferred |
 | `6AC8` | replay sampler: 3.7% of job time | per group of 8 vertices (gathered by index), a smoothstep-shaped falloff around each of 1-3 spheres, squared and weighted, accumulated into the output quads (meaning not verified) in its loop nest at `loc_6BE0`/`loc_6DE0` | loop nest native in production (`GOW_EDGE_6AC8`, default): 6AC8 ~920 -> ~370-460 us, jobs 26.03 -> 25.47 ms (-2.2%, replay), in game +2.7%/+3.8% |
+| `11430` of overlay fragment `7228c0_11150` (its own lift) | replay sampler (x57): 2.9% of job time | per pair of 12-byte records, three big-endian u16 fields each, decoded as fixed point ((u16 + bias) / 2^16..2^19 per component; w = 1.0), 2 vertices/iteration, in its loop at `loc_11460` (meaning not verified) | loop native in a lab build (`GOW_EDGE_O11430`, default lifted; production carries the switch): 11430 ~590 -> ~143 us, jobs 25.07 -> 24.59 ms (-1.9%, replay, 10 pairs) |
 
 ## Progress log
 
@@ -921,3 +922,152 @@ Status: design, started 2026-10-24. Progress log at the end.
     drain per frame fell too, so its share did not close in: EDGE is still the longer one by ~28%. The drain
     includes the walker's GPU waits (`ftrace_report.py` paints those spans inside the drain): sync submit 9.9 +
     batch slot 2.7 ms, so the walker's own CPU time is ~103 ms per frame and EDGE is longer by ~55%.
+- 2026-10-25: first stage in an overlay fragment: `11430` of `edgefrag_7228c0_11150`, boundary probe and block map
+  (lab lift `work/spu_recomp_ef7228.fnpb_11430.c`: `spu_fnprobe_lift.py --no-reads --blocks` on the fragment's
+  lift, 11430 alone, which calls nothing; exe `build_runLabO1P` through `LAB_LIFT=edgefrag_7228c0_11150 ...`,
+  which works for a fragment dir unchanged; `SPU_FN_PROBE=11430 SPU_JOB_REPLAY_REPEAT=20`, log
+  `work/x58_fnpb_11430.log`; cap_3 still `[replay] 400/400 jobs identical`, sum of per-job minimum 27.257 ms).
+  - **Why this one:** the x57 replay sampler (`work/x57samp_groups.txt`) puts
+    `edgefrag_7228c0_11150_spu_func_00011430` at 2.92% of the job window, the largest single fragment symbol.
+    The other lifts with a function at 0x11430 that the sampler sees are cold: `edgefrag_723300_11280` 0.42%,
+    `edgefrag_723300_11220` 0.36%, `edgefrag_7298f0_11370` 0.15%. They are not copies: 108 other fragment
+    lifts (and one job module) have a function at 0x11430, none with this body (other overlays, or other entries of this overlay where
+    0x11430 starts other code), and only this lift has `loc_00011460`. So only this lift gets the switch.
+  - **Calls:** 140 over the 400 jobs, one per job. 11430 is reached by falling through the fragment's entry
+    chain 11150 -> 112B0 -> 112E0 -> 11430 (trampoline hops, no call) and ends with the fragment's `SPU_RET`.
+    All 140 take its only path: the entry block (9 statements) -> loop `loc_11460` -> `r3 = 0`, return. No
+    callee and no indirect branch anywhere in 11430; the loop's only control flow is its back edge
+    `if (r19 != 0) goto loc_00011460`. The alternate-entry function 11460 (a copy of the loop) stays lifted.
+  - **Iterations:** 14060 in all (12-268 per call, median 40; 40 in 55 calls) = -r19 / 32, two records per
+    iteration. Every call writes exactly 32 bytes per iteration, contiguous, ending at r36: `wr=29000+<32n>` in
+    all 140 calls.
+  - **Block map** (counts x lifted statements, 0.75M executed): the loop (53 statements and the back edge)
+    99.8%, the entry block 0.2%.
+  - **Time** (`[fnpt]`, per-call minimum): 632.8 us over the 140 calls (min 0.5, median 2.75, mean 4.52, max
+    14.0 us) = 2.3% of 27.257 ms (the sampler's 2.9% is another run and an average over all repeats, against
+    a per-call minimum here: not reconciled further); fit 0.043 us per iteration + 0.20 us (corr 0.974).
+  - **What the loop computes** (a reading of the lift; the dataflow is checked by the generator below, the
+    meaning still to verify): a stream of 24-byte record pairs at r27 (r27 += 24), each record 12 bytes. Per
+    record a window is picked from the pair's 32 bytes (`shufb(r13, r2, r25)` = bytes 0-11, `r39` = bytes
+    12-23, word 3 0xFFFFFFFF), shifted right four ways (rotqmbi by r24/r26/r23, then rotqmbybi by
+    r24/r26/r23/r28: 16, 32, 48 and 80 bits in all 140 calls) and merged by word (selb with r32 = fsmbi(0x0F0F),
+    then r37 = fsmbi(0x00FF)): words 0-2 = the big-endian u16 at bytes 0, 2, 4 (bytes 6-11 untouched here).
+    Then per word y = (field & r33) + r31 (r33 = 0xFFFF x3, 0; r31 a per-component bias, 33 distinct),
+    out = fa(csflt(rotma(y, r17), 155), cuflt(shl(y, r34), 123)), i.e. the integer and fraction parts of y as
+    fixed point with k fraction bits (k = r34 = -r17 = 16..19 per component; 16/16/16 in 98 calls, 19/18/18 in
+    15, five more variants), and word 3 replaced by r35 = (0, 0, 0, 1.0) from LS 0x11620 (selb with r38).
+    Stored at r36 + r18 (the first record) and r29 + r18 (r29 = r36 + 16), r18 = r19 += 32 until 0; the
+    output starts at 0x29000 in all 140 calls, the stream lies in 0x11790-0x149E0. So: a quantized-position
+    decode, 2 vertices per iteration (plausibly EDGE vertex decompression: not verified). Software pipelined
+    two records deep: iteration i stores pair i, extracts pair i + 1 (from r13:r2) and loads pair i + 2
+    (three aligned quads at r27, put together with r67 = r41 + splat(r27 & 15)); the stores come before the
+    loads. Inputs from `SPU_FN_PROBE_SAVE` (entry/exit states of all 140 calls in `work/fnp_11430/`, game data).
+  - **Stop rule:** the loop is integer-dominated (6 of its 53 statements are float: 2 csflt, 2 cuflt, 2 fa),
+    but unlike DCC0 it is not a serial decode: the next record's address is r27 + 24 whatever the data, the
+    two records of an iteration are independent, and the shift counts and controls are loop invariants. So the
+    two records pack into one 8-lane vector; the gain comes from collapsing the constant-control shuffles and
+    shifts into byte gathers and from 8-lane conversions, not from the float path. Staged; `12250` of
+    `edgefrag_71c310_11db0` (2.35%) was not probed.
+- 2026-10-25: the 11430 loop native, in a lab build (`build_runLabO1N`; `build_runLabO1NP` with an unrouted
+  11430 probe wrapper, no block counters: lab lift `work/spu_recomp_ef7228.fnp_11430.c`).
+  - **Plumbing (new: a fragment lift):** the fragments are separate lifts, globbed with every other image
+    (`spu/*/spu_recomp.c`) into the SPU sources, so `gen_edge_native_lift.py` (the d935 module's switches) does
+    not reach them. The port's CMakeLists builds `spu/edgefrag_7228c0_11150/spu_recomp.c` through
+    `port/gen_edge_frag_lift.py <lift> <out>` into the build tree (`<build>/edgefrag_7228c0_11150_native.c`;
+    a custom command that reruns when the lift or the script changes), drops the original from the sources and
+    compiles the copy instead. The original lift is only read, never written; the copy includes the lift's own
+    `spu_recomp.h` by its absolute path (it no longer sits beside it), and the glob does not see it. The script
+    adds the switch only in `edgefrag_7228c0_11150_spu_func_00011430` (or its `_impl`): before
+    `loc_00011460:`
+    `if (g_edge_o11430) { if (g_edge_o11430 <= 2) { gow_edge_o11430_11460(ctx); goto gow_11460_exit; }
+    gow_edge_o11430_check_begin(ctx); }`, and after the back edge the label `gow_11460_exit:` with `check_end`
+    (then 11430's `r3 = 0` and return). It refuses any other lift (it looks for that function by name), fails
+    unless it finds each site once, and copies a lift that already has the switch unchanged apart from the
+    include, so `buildlab.sh` with `LAB_LIFT=edgefrag_7228c0_11150 <lab lift>` works as for d935: a probe lift
+    gets the switch at build time (that is `build_runLabO1NP`). The other lifts with a function at 0x11430 stay
+    as they are. `port/gen_edge_o11430_body.py <lift> <out.h>` writes `gow_edge_o11430_body.h`
+    (`GOW_O1430_REGS/LOAD/STORE/BODY`) into the build tree from 11430's own copy of the loop and checks the
+    lift's shape: the back edge followed by `r3 = il(0)` or the switch's exit label, no other control flow, both
+    stores before the first load, the registers read before written exactly r2 r5 r9 r13 r17-r19 r23-r29 and
+    r31-r41, and, by evaluating the body symbolically, the two stores (address, value, order) and the carried
+    r9 r5 r13 r2 r27 r19 r18 as read above. A changed cuflt scale, rotqmbybi count register, selb mask, r27
+    step, fa operand order, r35 operand or andbi mask, an added store, an added carried register or an added
+    branch each make it fail (tried on mutated copies). The production exe carries the switch, unset = lifted.
+  - **Pieces:** `port/gow_edge_native_o11430.c` (an SPU source like the six d935 stages), behind
+    `GOW_EDGE_O11430` (read once): unset/0 = lifted (the default), 1 = native packed v3
+    (`GOW_EDGE_O11430_V2=1`: v2), 2 = native v1, 3 = check v3/v2, 4 = check v1 (all 128 GPRs and the whole LS
+    at `gow_11460_exit`; `[edge-o11430-check] N calls checked, M differ`, every 4096 calls and at exit).
+    `GOW_EDGE_O11430_FAULT=<n>[,<k>]` (native run k, default the first): 1 = bit 0 of byte 3 of the first
+    quad the last iteration stores (the LSB of its x), 3 = bit 0 of byte 1 of that quad (x's mantissa bit
+    16), 2 = bit 0 of r9 after the loop.
+  - **Versions** (every float value is the same op on the same operands as in the lift; the integer work is
+    exact by construction and compared with the lift's ops in the self-test):
+    - v1: the loop statement for statement in C locals (the generated macros), direct LS access.
+    - packed: one iteration at a time, the two records in one 8-lane vector (r9's in the low half, r5's in
+      the high). The extraction is rebuilt at entry from the live registers: word w of a window shifted right
+      by 8B + b bits is (cur >> b) | (prev << (32 - b)), cur = window bytes 4w - B .. 4w - B + 3 and prev the
+      four before (zero before the window), and each window byte is looked up through its shufb control
+      (special selectors included) in the pair's 32 bytes. So per iteration two byte gathers of two pshufb
+      each and the two per-lane shifts give both records' fields, for any controls and counts. The decode is
+      and, add, sllv (shl), srav (rotma), the two conversions and fa, 8 lanes at a time; csflt is the native
+      conversion and cuflt converts the two 16-bit halves and adds them (one rounding), both exact under the
+      MXCSR's round toward zero, as the SPU truncates. The pair's bytes come from an unaligned load at the
+      address the lift loads them from, at the point where it loads them, so each iteration stores before it
+      loads, as in the lift (in place included, no overlap analysis). The last iteration runs the lifted body
+      from the carried registers (r9 r5, r13:r2 rebuilt with the lift's own shufb ops, r27 r19 r18), so all
+      49 registers the loop writes come out exactly. Entry checks, else v1 (each counted): 2 .. 8192
+      iterations (r19 a negative multiple of 32), r41 the identity control and r40 = 0x03 bytes (then r13:r2
+      are the 32 bytes at r27), r32 = fsmbi(0x0F0F) and r37 = fsmbi(0x00FF) (then word w is the w-th shift),
+      the record stream inside the LS without wrapping.
+    - v3 (packed default) runs the decode speculatively with one range check per iteration and recomputes it
+      with v2's ops before anything is stored if a lane fails; v2 runs fa checked per lane with the 4-lane
+      fallback. fa is the iteration's only float op with a lane rule, and its inputs are the two conversions
+      (ordinary or zero), so on real data the check never fails and v2 costs about the same. A self-test at
+      mode init: `extraction 0 of 80000 quads differ; decode 0 of 80000 quads differ (20000 8-lane decodes
+      kept speculative); checked fa 0 of 40000 quads differ (17287 8-lane ops took the 4-lane fallback);
+      speculative fa on the same operands 2321 kept (0 quads differ), 17679 rejected by the range check; whole
+      loop runs against v1 0 of 1200 differ (13656 iterations kept speculative, 4432 recomputed)`. Extraction
+      and decode are compared with the lift's helper ops, with cap_3's invariants or random controls, counts,
+      masks and constants; the whole runs are on a scratch context (2-61 iterations, the output apart from or
+      over the records not yet loaded, all GPRs and the whole LS compared), and their recomputes are forced on
+      odd iterations, since a decode never fails the check (a self-test flag the packed loop reads once per
+      iteration, 0 outside the self-test; unlike the d935 stages).
+    - Per cap_3 pass: 13920 of 14060 iterations packed (the rest is the lifted last iteration of each call),
+      0 speculative iterations recomputed, 0 8-lane ops redone by the 4-lane helper, 0 entries left to v1
+      (short, other controls, outside the LS).
+  - **Gates** (`build_runLabO1N`, `SPU_JOB_REPLAY=work/jobcap3`, logs `work/x58g_*.log`): unset, `=0`, `=1`
+    (v3), `=1` with `GOW_EDGE_O11430_V2=1` and `=2` (v1): each `[replay] 400/400 jobs identical`. Check mode
+    (logs `work/x58c_*.log`): v3, v2 and v1 each `[edge-o11430-check] 140 calls checked, 0 differ; 14060
+    iterations (2 vertices each)`. Negative tests (logs `work/x58n_*.log`):
+    - 1 (LS, the LSB of the last record's x): job gate `[replay] 400/400 jobs identical`: the job does not keep
+      that byte, or anything that depends on it, to its end (what reads or rewrites the buffer at 0x29000
+      after the fragment is not traced); check mode `call 0: LS differs in 1 bytes, first at 0x29BE3 (lifted 00
+      native 01)`, `140 calls checked, 1 differ`.
+    - 3 (LS, mantissa bit 16 of the same x): job gate `job_15_14.bin FAIL ... final LS differs first at
+      0x1277A: recorded 68, replay 60`, `399/400` (the change reaches what the job leaves behind); check mode
+      `call 0: LS differs in 1 bytes, first at 0x29BE1 (lifted 00 native 01)`, `1 differ`.
+    - 2 (r9): job gate 400/400; check mode `call 0: r9 lifted 00008715 87150A00 0A0000FF 0A0000FF native
+      00008714 ...`, `1 differ`. So the job gate is weak here twice over, for the exit registers as before and
+      for low output bits; that the output and the registers come out exactly rests on check mode.
+  - **Timing** (pinned replay, REPEAT=50, sum of per-job minimum, ms; one exe, env alternated). This session
+    ran with a busy desktop (explorer.exe at ~1.5 cores throughout), so the spread is wider than in the
+    earlier stages' runs. First set (logs `work/x58t_*.log`): lifted 25.156 25.972 25.754 25.399 25.677
+    (median 25.68), v3 25.177 26.077 24.589 24.972 24.821 (median 24.97); v2 30.674 24.659 (30.674 an
+    outlier), v1 25.719 25.175. Second set, 10 pairs (logs `work/x58t2_*.log`): lifted 25.039 26.938 25.121
+    24.993 25.837 25.007 25.089 25.571 25.059 25.054 (median 25.07, min 24.99), v3 24.634 24.575 24.590 24.589
+    24.755 24.568 24.561 25.016 24.531 24.582 (median 24.59, min 24.53): -0.49 ms, -1.9%.
+  - **The function alone** (`build_runLabO1NP`, `SPU_FN_PROBE=11430`, REPEAT=20, sum of the 140 per-call
+    minimums, us; logs `work/x58p_*.log`): lifted 578.9 594.3 601.8, v3 141.4 142.7 146.2 (4.1x), v2 148.8, v1
+    453.9. The saving (~0.45 ms) matches the replay's second set (0.49 ms). Check-mode rdtsc (cold LS after
+    the snapshot copies): ~58-69 vs ~158-185 ticks per iteration in the v3 check runs.
+  - **Not covered by any run:** the v1 fallbacks (short or implausible counts, other controls or masks, a
+    stream that wraps the LS: 0 entries each in cap_3), a speculative recompute on real data (0 in cap_3; the
+    self-test forces them), IRQ/RCHCNT inside a job, the game itself (no in-game check-mode run or in-game A/B
+    yet, so the default stays lifted). Not verified: the meaning of the records (positions; bytes 6-11 of each
+    record are not read here), why fault 1 leaves the job's end state unchanged, whether the alternate entry
+    11460 is ever dispatched (it stays lifted either way), and the sampler's 2.9% against the probe's 2.3%.
+- 2026-10-25: O11430 in game, check mode (x60: production exe with the six d935 stages native,
+  `GOW_EDGE_O11430=3`, 1100 s, no PM profiling): `[edge-o11430-check] 1286144 calls checked, 0 differ;
+  133613540 iterations (2 vertices each)`; 0 speculative recomputes, 0 entries left to v1 in game too.
+  Check-mode rdtsc ~63 vs ~244 ticks per iteration. No in-game A/B yet: at -1.9% of job time it sits at the
+  paired A/B's noise floor; it is measured with the lanes work instead.

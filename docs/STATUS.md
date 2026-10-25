@@ -860,6 +860,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
        kernel threads.
     3. Correctness first: no `[pm-hang]`, no texture garbage, every EDGE list completes.
   - The soak's present rate is ~7.1 presents/s (flips ~3.7/s, which is what "game frames/s" counts here).
+  - **Re-assessed 2026-10-25: the blocker above was our runtime, not the game.** The allocator line's EA is
+    `0x83257480 + 0x80 + 0x80*spuNum` (spuNum from kernel LS `0x1C8`); `0x83257500` is spuNum 0's line, and every
+    EDGE run here got spuNum 0 (`spu_run_policy_module(..., 0)` on the default single-lane path). A guest peek
+    (x59, `GOW_PEEK` on the five lines) shows the game initialized the lines for spuNum 1-3 with their own
+    disjoint rings and labels (main rings `0x83517880`, `0x837D7880`, `0x83A97880`, labels `0xC90`/`0xCA0`/`0xCB0`,
+    second rings `0x819C6300`/`0x81A26300`/`0x81A86300`), untouched during play. Lanes that run with distinct
+    spuNums use separate lines and rings: no lost updates, and each ring keeps one producer. The `SPURS_MAXCONT`
+    path already gives lanes 1..N-1 spuNums 1..N-1; its measured slowness was a host thread per lane per dispatch
+    plus `SPURS_PM_RERUN_US` being skipped when maxcont > 1. Job outputs are found by the offsets each job writes
+    into its own command segment, so completion order between lanes is free (read-only study of the d935 lift
+    and cap_3). Still open: spuNum must be unique across all concurrent EDGE contexts, not only within one wid;
+    and whether the GETLLAR/PUTLLC reservation is safe across host threads (its "real lock-line semantics" code
+    predates the 2026-07-23 LBP note about two threads racing on a jobIndex CAS).
   - Same method on ucrtbase (3.4% of EDGE samples): 97% was `getenv`'s environment walk. The sampler now unwinds such
     samples to their exe caller; all of them came from `spu_run_with_halt`, which read `SPU_ARGWATCH` after every
     module run. It is read once now. The A/B was neutral within noise (runZg vs runZe: -3.2% / +0.4%, EDGE ms/job

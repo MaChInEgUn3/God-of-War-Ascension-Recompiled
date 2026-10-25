@@ -232,6 +232,11 @@ Lessons that cost days; keep them.
   6AC8's loop nest (outer `loc_6BE0`, inner `loc_6DE0`, `port/gow_edge_native_6ac8.c`) has `GOW_EDGE_6AC8`: 0 =
   lifted, unset/1 = native v3 (`GOW_EDGE_6AC8_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-6ac8-check] N calls checked, M
   differ`); `GOW_EDGE_6AC8_FAULT=<n>[,<k>]` flips one LS bit (1) or bit 0 of r33 (2) in native run k.
+  Overlay fragment `edgefrag_7228c0_11150`, function 11430's loop (`loc_11460`, `port/gow_edge_native_o11430.c`,
+  hooked at build time by `port/gen_edge_frag_lift.py`) has `GOW_EDGE_O11430`: unset/0 = lifted, 1 = native v3
+  (`GOW_EDGE_O11430_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-o11430-check] N calls checked, M differ`);
+  `GOW_EDGE_O11430_FAULT=<n>[,<k>]`: 1 the LSB of an output x (only check mode sees it), 3 x's mantissa bit 16,
+  2 bit 0 of r9.
 * **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
   p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the
   entry bracket's drain return), against the whole module run per job. The rest is the policy module's own work:
