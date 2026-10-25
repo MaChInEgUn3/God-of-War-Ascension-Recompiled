@@ -278,8 +278,15 @@ if(SPU_SOURCES)
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
         COMPILE_DEFINITIONS "${_spu_defs}")
     if(NOT MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # clang-cl ignores a bare -ffp-contract=off ("unknown argument ignored")
+        # and contracts a*b+c within a statement by default.
+        if(CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+            set(_spu_nocontract "/clang:-ffp-contract=off")
+        else()
+            set(_spu_nocontract "-ffp-contract=off")
+        endif()
         set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS
-            "-O2;${SPU_HOST_ARCH};-ffp-contract=off")
+            "-O2;${SPU_HOST_ARCH};${_spu_nocontract}")
     endif()
 endif()
 

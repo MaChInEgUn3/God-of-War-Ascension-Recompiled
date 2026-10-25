@@ -282,7 +282,7 @@ Status: design, started 2026-10-24. Progress log at the end.
   - **Seen on the way, not changed:** clang-cl ignores `-ffp-contract=off` (`unknown argument ignored`, 150 times
     in `buildv017.log`), so the SPU sources build with clang's default contraction. The SPU helpers use intrinsics
     and the gates pass; whether any scalar fallback expression is contracted is not verified. The clang-cl
-    spelling is `/clang:-ffp-contract=off`.
+    spelling is `/clang:-ffp-contract=off` (fixed: see below).
 - 2026-10-25: E550 native in game, then in production (default).
   - **In-game A/B** (x31): a production exe (job lab off) built with the switched lift, `GOW_EDGE_NATIVE=1` vs
     unset (then lifted), two copies of the same exe, swapped pairs, no PM profiling: window 3.572 vs 3.309
@@ -301,3 +301,10 @@ Status: design, started 2026-10-24. Progress log at the end.
     loop is 323 vs 851 ticks per iteration (2.6x), close to the replay's 2.7x.
   - Not covered by any run: the odd-count (v1) and unexpected-control (v2) entries; both are the lifted
     body or v2's checked ops, so correct by construction.
+- 2026-10-25: `-ffp-contract=off` now reaches the SPU sources. clang-cl ignored the bare flag, so lifted SPU
+  code (built with FMA, `-march=x86-64-v3`) was compiled with clang's default contraction of `a*b+c` inside a
+  statement. The port passes `/clang:-ffp-contract=off` under clang-cl now. The exe changes; cap_3 replay is
+  still 400/400 (native default and `=0`), so contraction never changed these jobs' results, and the replay
+  time is neutral (sum of per-job minimum, alternated: before 32.556 33.472 32.583 32.793, after 32.734 33.469
+  32.680 32.633 ms). The 150 remaining `unknown argument` warnings are toolkit runtime files, built with
+  `-msse4.1` (no FMA), where nothing can contract. PPU lifted code has no `-march` either.
