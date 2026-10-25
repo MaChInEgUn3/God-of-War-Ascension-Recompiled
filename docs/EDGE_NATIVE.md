@@ -537,6 +537,8 @@ Status: design, started 2026-10-24. Progress log at the end.
     host are contention-bound, and the paired run absorbs a growing share of each saving (paired over single
     native rate: 3.88/4.565 = 85% after 73E0, 4.0/5.06 = 79% after D640). The paired swapped A/B stays the
     gate for a default flip (its pairs agree within ~1.5%); a stage is sized by single-instance ms/job.
+    Later: A880's paired ratio came back at about 0.93 (x45), so the ratio is not a trend (0.91, 0.75, 0.50,
+    0.93). D640's paired shortfall is unexplained rather than part of a decay; the sizing rule stands.
   - **Default:** `GOW_EDGE_D640` unset = native packed v3 now, `=0` the lifted loops. Gates on the lab build of
     that tree (`build_runLabD6D`): unset and `=0` both `[replay] 400/400 jobs identical`.
 - 2026-10-25: where the frame goes after three stages (x43: production exe, all three native, one instance,
