@@ -68,7 +68,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in production (v3, default): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms, in game +8.0/+8.8% |
 | `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in production (v3, default): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%), in game +7.8/+7.9% |
 | `A880` | 5.8% | ? | |
-| `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in a lab build (`GOW_EDGE_D640`, default lifted): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay); not yet in game |
+| `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in production (`GOW_EDGE_D640`, default): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay), in game +2.9/+4.2% |
 | `F538` | 3.6% | ? | |
 
 ## Progress log
@@ -442,7 +442,7 @@ Status: design, started 2026-10-24. Progress log at the end.
     iteration + 0.28 us (corr 0.997), D250 = 0.126 us per D4DC iteration + 0.33 us (corr 0.994).
 - 2026-10-25: both loops native, in a lab build (`build_runLabD6N`; `build_runLabD6NP` with the probe lift).
   - **Pieces:** `port/gow_edge_native_d640.c` (an SPU source like the other two), behind `GOW_EDGE_D640` (read
-    once, at whichever loop runs first): unset/0 = lifted, 1 = native packed v3 (`GOW_EDGE_D640_V2=1`: v2),
+    once, at whichever loop runs first): unset/0 = lifted (now 0 = lifted, unset = native: see below), 1 = native packed v3 (`GOW_EDGE_D640_V2=1`: v2),
     2 = native v1, 3 = check v3/v2, 4 = check v1 (all 128 GPRs and the whole LS at each loop's exit;
     `[edge-d640-check] D92C: ... D4DC: ...`, every 4096 calls per loop and at exit). `GOW_EDGE_D640_FAULT` (first
     native run of that loop): 1 = one LS bit in the first quad the last D92C iteration stores, 2 = bit 0 of r5
@@ -527,3 +527,11 @@ Status: design, started 2026-10-24. Progress log at the end.
   87562062 / 60394794 iterations, 0 entries to v1, 1270774 / 1029149 speculative pairs recomputed exactly, 4142436
   8-lane ops redone by the 4-lane helpers; all exact. Check-mode rdtsc 314 vs 724 (D92C) and 309 vs 685 (D4DC)
   ticks per iteration.
+- 2026-10-25: D640 native in game, then the default.
+  - **In-game A/B** (x41): the production exe (E550 and 73E0 native, their defaults) in two copies,
+    `GOW_EDGE_D640=1` vs `=0`, swapped pairs, no PM profiling: window 3.989 vs 3.876 (+2.9%) and 4.057 vs 3.893
+    (+4.2%) game frames/s. The replay predicted -6.7% of job time: in game this stage returns about half of
+    that, where E550 and 73E0 returned 0.83-1x. Not explained yet; one candidate is the RSX walker starting to
+    share the bound (x38 put it at 152 ms per frame against ~218 ms of EDGE work, before this stage).
+  - **Default:** `GOW_EDGE_D640` unset = native packed v3 now, `=0` the lifted loops. Gates on the lab build of
+    that tree (`build_runLabD6D`): unset and `=0` both `[replay] 400/400 jobs identical`.

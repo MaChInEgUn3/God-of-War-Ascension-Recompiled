@@ -32,7 +32,7 @@ an env variable.
    back edge `if (ctx->gpr[3]._u32[0] != 0) goto loc_0000D4DC;` the label
    `gow_d4dc_exit: if (g_edge_d640 > 2) gow_edge_d640_d4dc_check_end(ctx);`. Only functions D640 and
    D250: the alternate-entry functions D8C8, D92C and D4DC keep their lifted copies.
-   g_edge_d640: unset/0 the lifted loops, 1 native (packed), 2 native v1, 3/4 check.
+   g_edge_d640: 0 the lifted loops, unset/1 native (packed), 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,
 untracked: it is the lift). Each switch is added only if the lift does not have it yet, so a lab lift made

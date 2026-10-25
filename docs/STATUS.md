@@ -799,6 +799,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.67: the third native EDGE stage, +3-4% (2026-10-25).**
+  - The vertex transform loop of EDGE job function `D250` (`loc_D4DC`) and the triangle culling loop of its
+    caller `D640` (`loc_D92C`, index compaction), ~10% of job time together, as hand-written AVX2, two
+    iterations per vector (`port/gow_edge_native_d640.c`). Bit-exact: cap_3 replay 400/400, and an in-game
+    check of 917504 runs of each loop against the lifted loops with 0 differences (docs/EDGE_NATIVE.md).
+  - Swapped in-game A/B, same exe, on top of the first two stages: +2.9% and +4.2% game frames/s (3.88 ->
+    4.02), half of what the replay predicted. Default on; `GOW_EDGE_D640=0` restores the lifted loops.
 - **M0.66: the second native EDGE stage, +8% (2026-10-25).**
   - The light-accumulation region of EDGE job function `73E0` (`loc_79B0`..`81C0`, 76% of 73E0, which is
     ~19% of job time) as hand-written AVX2, 8 vertices per vector (`port/gow_edge_native_73e0.c`, v3).
