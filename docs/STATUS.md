@@ -799,6 +799,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.69: the fifth native EDGE stage, +2-3% (2026-10-25).**
+  - The loop of EDGE job function `F538` (`loc_F620`, ~5% of job time: a 4x4 matrix transform of each input
+    quad, mostly in place) as hand-written AVX2, two quads per vector (`port/gow_edge_native_f538.c`).
+    Bit-exact: cap_3 replay 400/400, and an in-game check of 2392064 calls against the lifted loop with 0
+    differences, recompute and fallback paths included (docs/EDGE_NATIVE.md).
+  - Swapped in-game A/B (two instances), same exe, on top of the first four stages: +2.3% and +3.3% game
+    frames/s (4.10 -> 4.21). Default on; `GOW_EDGE_F538=0` restores the lifted loop.
 - **M0.68: the fourth native EDGE stage, +5-6% (2026-10-25).**
   - The loop of EDGE job function `A880` (`loc_A950`, ~7% of job time: per element normalize(B x A * B.w),
     plausibly a bitangent) as hand-written AVX2, 8 elements per vector (`port/gow_edge_native_a880.c`).

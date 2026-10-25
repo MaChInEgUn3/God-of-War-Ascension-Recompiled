@@ -49,7 +49,7 @@ gow_edge_native_f538.c), each picked at run time by an env variable.
                             gow_edge_f538_check_begin(ctx); }
    before `loc_0000F620:` and, after the back edge `if (ctx->gpr[37]._u32[0] != 0) goto loc_0000F620;`,
    the label `gow_f620_exit: if (g_edge_f538 > 2) gow_edge_f538_check_end(ctx);`. Only function F538: the
-   alternate-entry function F620 keeps its lifted copy. g_edge_f538: unset/0 the lifted loop, 1 native
+   alternate-entry function F620 keeps its lifted copy. g_edge_f538: 0 the lifted loop, unset/1 native
    (packed), 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,

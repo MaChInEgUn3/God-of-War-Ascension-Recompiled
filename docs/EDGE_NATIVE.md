@@ -69,7 +69,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in production (v3, default): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%), in game +7.8/+7.9% |
 | `A880` | 5.8% (replay sampler: 7.2% of job time) | per element, the cross product of two input quads scaled by the second's w and normalized (8 elements/iteration) in its loop at `loc_A950` | loop native in production (`GOW_EDGE_A880`, default): A880 ~1996 -> 375 us, jobs 28.34 -> 26.79 ms (-5.4%, replay), in game +5.6/+5.0% |
 | `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in production (`GOW_EDGE_D640`, default): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay), in game +2.9/+4.2% |
-| `F538` | 3.6% (replay sampler: 5.5% of job time) | per input quad, a 4x4 transform by four loop-invariant columns (8 quads/iteration, mostly in place) in its loop at `loc_F620` | loop native in a lab build (`GOW_EDGE_F538`, default lifted): F538 ~1349 -> 536 us, jobs 26.45 -> 25.63 ms (-3.1%, replay); no in-game run yet |
+| `F538` | 3.6% (replay sampler: 5.5% of job time) | per input quad, a 4x4 transform by four loop-invariant columns (8 quads/iteration, mostly in place) in its loop at `loc_F620` | loop native in production (`GOW_EDGE_F538`, default): F538 ~1349 -> 536 us, jobs 26.45 -> 25.63 ms (-3.1%, replay), in game +2.3/+3.3% |
 
 ## Progress log
 
@@ -696,7 +696,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 - 2026-10-25: the F538 loop native, in a lab build (`build_runLabF5N`; `build_runLabF5NP` with an unrouted F538
   probe wrapper, no block counters: lift `work/spu_recomp_d935.fnp_f538.c`).
   - **Pieces:** `port/gow_edge_native_f538.c` (an SPU source like the other four), behind `GOW_EDGE_F538`
-    (read once): unset/0 = lifted (the default for now), 1 = native packed v3 (`GOW_EDGE_F538_V2=1`: v2), 2 =
+    (read once): unset/0 = lifted (the default then; now 0 = lifted, unset = native: see below), 1 = native packed v3 (`GOW_EDGE_F538_V2=1`: v2), 2 =
     native v1, 3 = check v3/v2, 4 = check v1 (all 128 GPRs and the whole LS at the loop exit;
     `[edge-f538-check] N calls checked, M differ`, every 4096 calls and at exit). `GOW_EDGE_F538_FAULT=<n>[,<k>]`
     (native run k, default the first): 1 = one LS bit in the first quad the last iteration stores, 2 = bit 0 of
@@ -753,3 +753,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   `GOW_EDGE_F538=3`, 1100 s, no PM profiling): `[edge-f538-check] 2392064 calls checked, 0 differ; 67385792
   iterations`; 213444 speculative iterations recomputed with v2's ops and 1150789 8-lane ops redone by the
   4-lane helpers on the way, 0 entries left to v1. Check-mode rdtsc ~280 vs ~653 ticks per iteration.
+- 2026-10-25: F538 native in game, then the default.
+  - **In-game A/B** (x51): the production exe (E550, 73E0, D640 and A880 native, their defaults) in two copies,
+    `GOW_EDGE_F538=1` vs unset (then lifted), swapped pairs, no PM profiling: window 4.213 vs 4.120 (+2.3%) and
+    4.209 vs 4.076 (+3.3%) game frames/s. The replay predicted -3.1% of job time (expected +3.2%).
+  - **Default:** `GOW_EDGE_F538` unset = native packed v3 now, `=0` the lifted loop. Gates on the lab build of
+    that tree (`build_runLabF5D`): unset and `=0` both `[replay] 400/400 jobs identical`.
