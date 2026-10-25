@@ -10,8 +10,8 @@
  * Clean-room: written from our own lift of the module and our own captures.
  *
  * GOW_EDGE_6AC8 (read once):
- *   0/unset  lifted loop nest (the default for now)
- *   1        native, packed (two quads per vector, one range check per sphere step: "v3"); with
+ *   0        lifted loop nest
+ *   1/unset  native, packed (two quads per vector, one range check per sphere step: "v3"); with
  *            GOW_EDGE_6AC8_V2=1 every iteration runs the checked ops instead ("v2": the per-lane rule and
  *            the 4-lane fallback on every float op)
  *   2        native v1 (the loop nest statement for statement, registers in locals)
@@ -611,8 +611,8 @@ int gow_edge_6ac8_mode(void)
 {
     if (s6a_mode < 0) {
         const char* e = getenv("GOW_EDGE_6AC8");
-        int m = e && *e ? atoi(e) : 0;   /* default: the lifted loop nest */
-        if (m < 0 || m > 4) m = 0;
+        int m = e && *e ? atoi(e) : 1;   /* default: native packed v3 */
+        if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_6AC8_V2");
         s6a_v2 = v && atoi(v) == 1;
         s6a_mode = m;

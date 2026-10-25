@@ -214,7 +214,7 @@ if(PORT_ENABLE_SPU)
                 DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_f538_body.py"
                 COMMENT "Generating the F538 loop from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_f538.c" "${EDGE_BODYF5}")
-            # 6AC8's loop nest at loc_6BE0/6DE0 (gow_edge_native_6ac8.c, switch GOW_EDGE_6AC8, default lifted)
+            # 6AC8's loop nest at loc_6BE0/6DE0 (gow_edge_native_6ac8.c, switch GOW_EDGE_6AC8, default native)
             set(EDGE_BODY6A "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_6ac8_body.h")
             add_custom_command(OUTPUT "${EDGE_BODY6A}"
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_6ac8_body.py" "${EDGE_LIFT}" "${EDGE_BODY6A}"

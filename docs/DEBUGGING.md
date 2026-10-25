@@ -229,8 +229,8 @@ Lessons that cost days; keep them.
   F538's loop (`loc_F620`, `port/gow_edge_native_f538.c`) has `GOW_EDGE_F538`: 0 = lifted, unset/1 = native v3
   (`GOW_EDGE_F538_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-f538-check] N calls checked, M differ`);
   `GOW_EDGE_F538_FAULT=<n>[,<k>]` flips one LS bit (1) or bit 0 of r20 (2) in native run k (default the first).
-  6AC8's loop nest (outer `loc_6BE0`, inner `loc_6DE0`, `port/gow_edge_native_6ac8.c`) has `GOW_EDGE_6AC8`: unset/0 =
-  lifted, 1 = native v3 (`GOW_EDGE_6AC8_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-6ac8-check] N calls checked, M
+  6AC8's loop nest (outer `loc_6BE0`, inner `loc_6DE0`, `port/gow_edge_native_6ac8.c`) has `GOW_EDGE_6AC8`: 0 =
+  lifted, unset/1 = native v3 (`GOW_EDGE_6AC8_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-6ac8-check] N calls checked, M
   differ`); `GOW_EDGE_6AC8_FAULT=<n>[,<k>]` flips one LS bit (1) or bit 0 of r33 (2) in native run k.
 * **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
   p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the

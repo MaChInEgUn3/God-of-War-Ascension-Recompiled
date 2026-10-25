@@ -71,7 +71,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in production (`GOW_EDGE_D640`, default): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay), in game +2.9/+4.2% |
 | `F538` | 3.6% (replay sampler: 5.5% of job time) | per input quad, a 4x4 transform by four loop-invariant columns (8 quads/iteration, mostly in place) in its loop at `loc_F620` | loop native in production (`GOW_EDGE_F538`, default): F538 ~1349 -> 536 us, jobs 26.45 -> 25.63 ms (-3.1%, replay), in game +2.3/+3.3% |
 | `DCC0` | replay sampler: 4.4% of job time | a serial integer decode (cntb-driven variable-length steps through LS tables, plausibly index decompression: not verified) in its loops at `loc_E210` and `loc_E3C4` | probed, not staged: no float work and each iteration's addresses depend on the previous one's loads, so only a v1 applies (expected ~0.7% of job time); deferred |
-| `6AC8` | replay sampler: 3.7% of job time | per group of 8 vertices (gathered by index), a smoothstep-shaped falloff around each of 1-3 spheres, squared and weighted, accumulated into the output quads (meaning not verified) in its loop nest at `loc_6BE0`/`loc_6DE0` | loop nest native in a lab build (`GOW_EDGE_6AC8`, default lifted): 6AC8 ~920 -> ~370-460 us, jobs 26.03 -> 25.47 ms (-2.2%, replay); not in game yet |
+| `6AC8` | replay sampler: 3.7% of job time | per group of 8 vertices (gathered by index), a smoothstep-shaped falloff around each of 1-3 spheres, squared and weighted, accumulated into the output quads (meaning not verified) in its loop nest at `loc_6BE0`/`loc_6DE0` | loop nest native in production (`GOW_EDGE_6AC8`, default): 6AC8 ~920 -> ~370-460 us, jobs 26.03 -> 25.47 ms (-2.2%, replay), in game +2.7%/+3.8% |
 
 ## Progress log
 
@@ -823,7 +823,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 - 2026-10-25: the 6AC8 loop nest native, in a lab build (`build_runLabDC6N`; `build_runLabDC6NP` with an
   unrouted 6AC8 probe wrapper, no block counters: lift `work/spu_recomp_d935.fnp_6ac8.c`).
   - **Pieces:** `port/gow_edge_native_6ac8.c` (an SPU source like the other five), behind `GOW_EDGE_6AC8` (read
-    once): unset/0 = lifted (the default for now), 1 = native packed v3 (`GOW_EDGE_6AC8_V2=1`: v2), 2 = native v1,
+    once): unset/0 = lifted (the default then; now 0 = lifted, unset = native: see below), 1 = native packed v3 (`GOW_EDGE_6AC8_V2=1`: v2), 2 = native v1,
     3 = check v3/v2, 4 = check v1 (all 128 GPRs and the whole LS at `loc_6F98`; `[edge-6ac8-check] N calls
     checked, M differ`, every 4096 calls and at exit). `GOW_EDGE_6AC8_FAULT=<n>[,<k>]` (native run k, default the
     first): 1 = one LS bit in the first quad the last outer iteration stores (vertex 0's), 2 = bit 0 of r33 after
@@ -900,3 +900,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   outer iterations (8 vertices each), 37802963 sphere steps`; on the way 1050 speculative sphere steps
   recomputed, 11800663 8-lane ops redone by the 4-lane helpers, 32769 entries left to v1 (short). Check-mode
   rdtsc ~1200 vs ~2709 ticks per outer iteration.
+- 2026-10-25: 6AC8 native in game, then the default.
+  - **In-game A/B** (x55): the production exe (the other five stages native, their defaults) in two copies,
+    `GOW_EDGE_6AC8=1` vs unset (then lifted), swapped pairs, no PM profiling: window 4.278 vs 4.165 (+2.7%) and
+    4.331 vs 4.172 (+3.8%) game frames/s. The replay predicted -2.2% of job time (expected +2.2%).
+  - **Default:** `GOW_EDGE_6AC8` unset = native packed v3 now, `=0` the lifted loop nest. Gates on the lab build
+    of that tree (`build_runLab6AD`): unset and `=0` both `[replay] 400/400 jobs identical`.

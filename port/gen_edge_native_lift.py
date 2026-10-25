@@ -59,7 +59,7 @@ gow_edge_native_f538.c, gow_edge_native_6ac8.c), each picked at run time by an e
    before `loc_00006BE0:` and `if (g_edge_6ac8 > 2) gow_edge_6ac8_check_end(ctx);` after `loc_00006F98:`
    (also reached by the skip in the entry block when the count is not positive and from the 6FC0 path;
    check_end ignores those). Only function 6AC8: the alternate-entry functions 6BE0, 6DE0, 6F40 and 6F98
-   keep their lifted copies. g_edge_6ac8: unset/0 the lifted loop nest (the default for now), 1 native
+   keep their lifted copies. g_edge_6ac8: 0 the lifted loop nest, unset/1 native
    (packed), 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,
