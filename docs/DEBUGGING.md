@@ -195,7 +195,8 @@ Lessons that cost days; keep them.
   come from the transcript; PUTs and the final GPRs/LS are compared. One `[replay] job_... PASS|FAIL <ms>` line per
   job (a FAIL names the event index, recorded vs issued, pc and recent hops, or the first differing byte), then
   `[replay] N/M jobs identical`; exit code 0 only when all are. `SPU_JOB_REPLAY_REPEAT=<n>` runs each job n times and
-  reports the median: the timing tool for native EDGE stages. Toolkit `runtime/spu/spu_job_replay.c`.
+  reports the median: the timing tool for native EDGE stages. Toolkit `runtime/spu/spu_job_replay.c`. The exe still
+  takes the ELF path as its argument (it prints its usage and exits with 2 without it), though the ELF never loads.
 * **Job lab build**: capture, replay and the job timer exist only in an exe configured with
   `-DPS3RECOMP_SPU_JOBLAB=ON` (toolkit CMake option, default off). Without it the hooks compile to nothing (their
   run-time checks cost 1.1% level fps with the env unset), `SPU_JOB_CAPTURE` is ignored and `SPU_JOB_REPLAY` says
@@ -208,7 +209,11 @@ Lessons that cost days; keep them.
   SPU_FN_PROBE=<fn>` prints `[fnp] <fn> <job> #<call> <us> us  r3..r10=...  r1=  wr=<ranges>  rd=<ranges>
   gpr=<changed>` per call in each job's first run; `SPU_FN_PROBE_SAVE=<dir>[,<n>]` saves entry/exit GPRs+LS per
   call (`fnp_*.bin`, game data).
-* **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
+* **Native EDGE loops** (`port/gow_edge_native.c`, docs/EDGE_NATIVE.md): only a lab lift made by
+  `analysis/edge_native_lift.py` calls them. `GOW_EDGE_NATIVE`, read once: unset = lifted, 1 = native v3
+  (`GOW_EDGE_V2=1`: v2), 2 = native v1, 3 = check v3/v2 and 4 = check v1 (run native on a copy, then lifted, and
+  compare all GPRs and LS at loc EDE8: `[edge-check] N calls checked, M differ`). `GOW_EDGE_FAULT=1|2` flips one
+  LS bit or one r5 bit after the native loop, to show that the gates catch it.* **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
   p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the
   entry bracket's drain return), against the whole module run per job. The rest is the policy module's own work:
   kernel entry and selection, job fetch and staging, completion, interrupts, exit. Read a row only where
