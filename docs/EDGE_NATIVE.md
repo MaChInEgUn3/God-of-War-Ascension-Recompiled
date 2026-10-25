@@ -65,7 +65,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 
 | function | share of EDGE samples | stage | native status |
 |---|---|---|---|
-| `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in lab (v3, 400/400): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms |
+| `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in production (v3, default): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms, in game +8.0/+8.8% |
 | `73E0` | 11.8% | ? | |
 | `A880` | 5.8% | ? | |
 | `D640` | 3.6% | ? | |
@@ -204,11 +204,11 @@ Status: design, started 2026-10-24. Progress log at the end.
     masks. The exact per-lane fallback is rare (`spu__x8_fma_fix` 0.3% of replay samples). A native loop can reuse
     the same helpers and stay bit-exact.
 - 2026-10-25: the E550 loop at `loc_EC08` native, in a lab lift (first native stage).
-  - **Pieces:** `port/gow_edge_native.c` (an SPU source: same flags and defines as the lift; compiled into
-    production too, where nothing calls it, and only when the d935 lift is present). The lifted loop body it
+  - **Pieces:** `port/gow_edge_native.c` (an SPU source: same flags and defines as the lift; built only when
+    the d935 lift is present). Since the in-game A/B below it is in production: see the entry after this one. The lifted loop body it
     reuses is game code, so the repo has none of it: `port/gen_edge_e550_body.py <lift> <out.h>` writes
     `gow_edge_e550_body.h` (`GOW_E550_REGS/LOAD_INPUTS/STORE_OUTPUTS/BODY`) from the d935 lift into the build
-    tree, and CMake reruns it when the lift changes. `analysis/edge_native_lift.py <lift> <out>` inserts, just before
+    tree, and CMake reruns it when the lift changes. `port/gen_edge_native_lift.py <lift> <out>` (then `analysis/edge_native_lift.py`) inserts, just before
     `loc_0000EC08:` in E550 (so once per loop entry, not per iteration),
     `if (g_edge_native) { if (g_edge_native <= 2) { gow_edge_e550_ec08(ctx); goto loc_0000EDE8; } check_begin }`,
     and a `check_end` after `loc_0000EDE8:`. `g_edge_native` is `GOW_EDGE_NATIVE`, read once: unset = lifted,
@@ -283,3 +283,21 @@ Status: design, started 2026-10-24. Progress log at the end.
     in `buildv017.log`), so the SPU sources build with clang's default contraction. The SPU helpers use intrinsics
     and the gates pass; whether any scalar fallback expression is contracted is not verified. The clang-cl
     spelling is `/clang:-ffp-contract=off`.
+- 2026-10-25: E550 native in game, then in production (default).
+  - **In-game A/B** (x31): a production exe (job lab off) built with the switched lift, `GOW_EDGE_NATIVE=1` vs
+    unset (then lifted), two copies of the same exe, swapped pairs, no PM profiling: window 3.572 vs 3.309
+    (+8.0%) and 3.576 vs 3.287 (+8.8%) game frames/s. The replay predicted -8.4% of job time, so the per-job
+    minimum sum of the pinned replay tracks in-game speed: the next stages can be sized on the replay.
+  - **Production:** the port's CMakeLists.txt builds the d935 lift through `port/gen_edge_native_lift.py`
+    (output `spu_recomp_edge.c` beside the lift, untracked; the original drops out of the sources) and
+    generates `gow_edge_e550_body.h` into the build tree. `GOW_EDGE_NATIVE` unset = native v3, 0 = lifted,
+    2/3/4 as before. The script copies a lift that already has the switch unchanged, so lab lifts made with it
+    still swap in. Gates on the lab build of that tree (`build_runLabEN3`): unset and `=0` both
+    `[replay] 400/400 jobs identical`.
+  - **In-game check** (x33, production exe, `GOW_EDGE_NATIVE=3`, one 1100 s level run): `2252800 calls
+    checked, 0 differ; 106540596 iterations`; loop constants equal in every call; rows at r37/+16/+32 and
+    r86 = r50 - 32 in all 2252800; fallbacks 0 to v1, 0 to v2; 149665 iterations recomputed exactly (0.14%).
+    The check reports every 4096 calls now (a killed run never reaches atexit). In the check's rdtsc the
+    loop is 323 vs 851 ticks per iteration (2.6x), close to the replay's 2.7x.
+  - Not covered by any run: the odd-count (v1) and unexpected-control (v2) entries; both are the lifted
+    body or v2's checked ops, so correct by construction.

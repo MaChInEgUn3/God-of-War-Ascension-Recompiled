@@ -166,11 +166,20 @@ if(PORT_ENABLE_SPU)
         list(APPEND SPU_SOURCES ${SPU_LIFTED}
              "${PS3RECOMP_DIR}/runtime/spu/spu_dispatch_mt.c"
              "${CMAKE_CURRENT_SOURCE_DIR}/gow_mlaa_hle.c")   # HLE of the MLAA taskset
-        # Native EDGE loops, called only by a lab lift. Their lifted-body macros are
-        # game code: generated from the d935 lift into the build tree, never committed.
+        # Native EDGE loops (gow_edge_native.c, docs/EDGE_NATIVE.md). The d935 lift is
+        # built through gen_edge_native_lift.py, which adds the GOW_EDGE_NATIVE switch
+        # (default native); the native file's lifted-body macros are game code,
+        # generated from the lift into the build tree. Neither is committed.
         set(EDGE_LIFT "${SPU_DIR}/jobmod_d93503647dd8_e6d98/spu_recomp.c")
         if(EXISTS "${EDGE_LIFT}")
             find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            set(EDGE_SWITCHED "${SPU_DIR}/jobmod_d93503647dd8_e6d98/spu_recomp_edge.c")   # beside the lift, for its includes
+            add_custom_command(OUTPUT "${EDGE_SWITCHED}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_native_lift.py" "${EDGE_LIFT}" "${EDGE_SWITCHED}"
+                DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_native_lift.py"
+                COMMENT "Adding the native EDGE switch to the d935 lift")
+            list(REMOVE_ITEM SPU_SOURCES "${EDGE_LIFT}")
+            list(APPEND SPU_SOURCES "${EDGE_SWITCHED}")
             set(EDGE_BODY "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_e550_body.h")
             add_custom_command(OUTPUT "${EDGE_BODY}"
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_e550_body.py" "${EDGE_LIFT}" "${EDGE_BODY}"

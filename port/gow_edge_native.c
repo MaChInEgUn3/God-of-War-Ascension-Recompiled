@@ -216,12 +216,13 @@ static inline v8 gow_fma8(v8 a, v8 b, v8 c)   /* a*b + c */
  * All iterations but the last run below on packed state; the last one runs the lifted body
  * (GOW_E550_BODY) from that state, so the 57 registers the loop writes end exactly as in
  * the lifted loop. Every float op is the same op on the same operands as in the lift. */
+static long s_fb_v1, s_fb_v2;   /* loop entries sent to v1 (odd or < 4 count) / to v2 (unexpected controls); racy lab statistics */
 static void gow_e550_ec08_v2(spu_context* ctx)
 {
     u128* const g = ctx->gpr;
     const uint32_t n0 = g[48]._u32[0];
     /* the loop runs n0/2 times; an odd or zero count wraps (as on the SPU) -- leave that to v1 */
-    if (n0 < 4 || (n0 & 1)) { gow_e550_ec08_v1(ctx); return; }
+    if (n0 < 4 || (n0 & 1)) { s_fb_v1++; gow_e550_ec08_v1(ctx); return; }
     uint8_t* const ls = ctx->ls;
     const uint32_t niter = n0 / 2;
 
@@ -454,12 +455,12 @@ static void gow_e550_ec08_v3(spu_context* ctx)
 {
     u128* const g = ctx->gpr;
     const uint32_t n0 = g[48]._u32[0];
-    if (n0 < 4 || (n0 & 1)) { gow_e550_ec08_v1(ctx); return; }
+    if (n0 < 4 || (n0 & 1)) { s_fb_v1++; gow_e550_ec08_v1(ctx); return; }
     if (!gow_ctl_words(g[36], 0) || !gow_ctl_words(g[81], 0) || !gow_ctl_words(g[82], 0) ||
         !gow_ctl_words(g[93], 0) || !gow_ctl_words(g[94], 0) || !gow_ctl_words(g[95], 0) ||
         !gow_ctl_words(g[69], 1) || !gow_ctl_words(g[70], 1) || !gow_wordmask(g[84]) ||
         !gow_plain4(g[97]) || !gow_plain4(g[91]) || !gow_ctl_small(g[77]) || !gow_ctl_small(g[102]))
-        { gow_e550_ec08_v2(ctx); return; }
+        { s_fb_v2++; gow_e550_ec08_v2(ctx); return; }
     uint8_t* const ls = ctx->ls;
     const uint32_t niter = n0 / 2;
 
@@ -611,13 +612,14 @@ int gow_edge_native_mode(void)
 {
     if (s_edge_mode < 0) {
         const char* e = getenv("GOW_EDGE_NATIVE");
-        int m = e ? atoi(e) : 0;
-        if (m < 0 || m > 4) m = 0;
+        int m = e && *e ? atoi(e) : 1;   /* default: native v3 */
+        if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_V2");
         s_edge_v2 = v && atoi(v) == 1;
         s_edge_mode = m;
-        if (m) fprintf(stderr, "[edge-native] GOW_EDGE_NATIVE=%d (%s %s)\n", m, m <= 2 ? "native" : "check",
-                       (m == 2 || m == 4) ? "v1" : s_edge_v2 ? "v2" : "v3");
+        if (!m) fprintf(stderr, "[edge-native] GOW_EDGE_NATIVE=0 (lifted loop)\n");
+        else fprintf(stderr, "[edge-native] GOW_EDGE_NATIVE=%d (%s %s)\n", m, m <= 2 ? "native" : "check",
+                     (m == 2 || m == 4) ? "v1" : s_edge_v2 ? "v2" : "v3");
     }
     return s_edge_mode;
 }
@@ -670,6 +672,8 @@ static void gow_check_report(void)
             s_chk_calls, s_chk_bad, s_chk_iters, s_chk_const_diff);
     fprintf(stderr, "[edge-check] r35 = r37 + 16 and r34 = r37 + 32 in %ld of %ld calls; r86 = r50 - 32 in %ld\n",
             s_chk_rows48, s_chk_calls, s_chk_inplace);
+    fprintf(stderr, "[edge-check] fallbacks: %ld loop entries to v1 (odd or < 4 count), %ld to v2 (unexpected controls)\n",
+            s_fb_v1, s_fb_v2);
     fprintf(stderr, "[edge-check] v3 iterations recomputed exactly: %ld; 8-lane ops redone by the 4-lane helpers: %ld; "
                     "tsc: native %.1f M, lifted %.1f M (%.1f vs %.1f per iteration)\n",
             s_v3_redo, s_fp_slow, s_cyc_nat / 1e6, s_cyc_lift / 1e6,
@@ -747,4 +751,5 @@ void gow_edge_e550_check_end(spu_context* ctx)
         s_chk_bad++;
         fprintf(stderr, "[edge-check] call %ld: %d GPRs and %ld LS bytes differ\n", call, bad, nls);
     }
+    if ((call & 4095) == 4095) gow_check_report();   /* a game run ends by kill: atexit never runs */
 }

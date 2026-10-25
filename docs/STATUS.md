@@ -1,4 +1,4 @@
-# Status (updated 2026-10-16)
+# Status (updated 2026-10-25)
 
 ## Works
 * Loader, lifter, compile and link of the whole PPU; boot through CRT, FIOS, PSARC mounting, DCDS, savedata.
@@ -795,6 +795,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.65: the first native EDGE stage, +8-9% (2026-10-25).**
+  - The skinning loop of EDGE job function `E550` (`loc_EC08`, 75% of E550, which is ~15% of job time) runs as
+    hand-written AVX2 (`port/gow_edge_native.c`, v3): two vertices per 256-bit vector, SPU float rules checked
+    once per iteration, with an exact recompute when a lane fails. Bit-exact: cap_3 replay 400/400, and an
+    in-game check of 2252800 loop runs against the lifted loop with 0 differences (docs/EDGE_NATIVE.md).
+  - Swapped in-game A/B, same exe: +8.0% and +8.8% game frames/s. Default on; `GOW_EDGE_NATIVE=0` restores the
+    lifted loop.
+  - The loop body the native code reuses is game code: it is generated from the lift at build time, not
+    committed.
 - **Parallel EDGE lanes (beyond hardware) -- assessed, not started (2026-10-24).**
   - The game registers every workload, EDGE included, with contention min 1 max 1 (now printed at registration):
     on the console each EDGE workload runs on one SPU at a time. Our `SPURS_MAXCONT` lanes run one after another in

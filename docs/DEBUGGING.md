@@ -209,10 +209,12 @@ Lessons that cost days; keep them.
   SPU_FN_PROBE=<fn>` prints `[fnp] <fn> <job> #<call> <us> us  r3..r10=...  r1=  wr=<ranges>  rd=<ranges>
   gpr=<changed>` per call in each job's first run; `SPU_FN_PROBE_SAVE=<dir>[,<n>]` saves entry/exit GPRs+LS per
   call (`fnp_*.bin`, game data).
-* **Native EDGE loops** (`port/gow_edge_native.c`, docs/EDGE_NATIVE.md): only a lab lift made by
-  `analysis/edge_native_lift.py` calls them. `GOW_EDGE_NATIVE`, read once: unset = lifted, 1 = native v3
+* **Native EDGE loops** (`port/gow_edge_native.c`, docs/EDGE_NATIVE.md): the d935 lift is built through
+  `port/gen_edge_native_lift.py`, which adds the switch. `GOW_EDGE_NATIVE`, read once: unset or 1 = native v3, 0 = lifted
   (`GOW_EDGE_V2=1`: v2), 2 = native v1, 3 = check v3/v2 and 4 = check v1 (run native on a copy, then lifted, and
-  compare all GPRs and LS at loc EDE8: `[edge-check] N calls checked, M differ`). `GOW_EDGE_FAULT=1|2` flips one
+  compare all GPRs and LS at loc EDE8: `[edge-check] N calls checked, M differ`, every 4096 calls and at exit, plus
+  the fallback counts; any `[edge-check] call N: ... differ` line is a mismatch, the first four `call N: r34 ...`
+  lines are only the layout). `GOW_EDGE_FAULT=1|2` flips one
   LS bit or one r5 bit after the native loop, to show that the gates catch it.* **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
   p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the
   entry bracket's drain return), against the whole module run per job. The rest is the policy module's own work:

@@ -1,5 +1,5 @@
-"""edge_native_lift.py <spu_recomp.c> <out.c>: a lab lift of the EDGE job module (d935) whose E550 loop at
-loc_0000EC08 can run natively (port gow_edge_native.c), chosen at run time by GOW_EDGE_NATIVE.
+"""gen_edge_native_lift.py <spu_recomp.c> <out.c>: the EDGE job module (d935) lift with its E550 loop at
+loc_0000EC08 switchable to the native one (port gow_edge_native.c) at run time by GOW_EDGE_NATIVE.
 
 In jobmod_d93503647dd8_e6d98_spu_func_0000E550 (or its _impl, so it composes with spu_fnprobe_lift.py in either
 order):
@@ -9,8 +9,10 @@ order):
                            gow_edge_e550_check_begin(ctx); }
 - just after `loc_0000EDE8:`: in the check modes (3, 4), gow_edge_e550_check_end(ctx) compares the lifted
   loop's result with the native one (EDE8 is also reached from the EA7C loop; check_end ignores that).
-g_edge_native is read once from the env (gow_edge_native_mode). Unset/0: the lifted loop, so one lab exe A/Bs
-itself. Lab builds only (work/buildlab.sh with LAB_LIFT); the production lift never calls the native file.
+g_edge_native is read once from the env (gow_edge_native_mode): unset/1 native v3, 0 the lifted loop, so one exe
+A/Bs itself. The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the
+lift, untracked: it is the lift). A lift that already has the switch is copied unchanged, so a lab lift made
+with it can be swapped in (work/buildlab.sh LAB_LIFT).
 """
 import re
 import sys
@@ -19,6 +21,9 @@ src, dst = sys.argv[1], sys.argv[2]
 text = open(src, newline="").read()
 nl = "\r\n" if "\r\n" in text else "\n"
 lines = text.split(nl)
+if "gow_edge_native_mode" in text:
+    open(dst, "w", newline="").write(text)
+    sys.exit(print(f"{dst}: the switch is already there; copied"))
 hdr = re.compile(r"^void \w+_spu_func_([0-9A-F]{8})(_impl)?\(spu_context\* ctx\) \{\s*$")
 out, cur, n_ec08, n_ede8 = [], None, 0, 0
 for l in lines:
