@@ -69,7 +69,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in production (v3, default): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%), in game +7.8/+7.9% |
 | `A880` | 5.8% (replay sampler: 7.2% of job time) | per element, the cross product of two input quads scaled by the second's w and normalized (8 elements/iteration) in its loop at `loc_A950` | loop native in production (`GOW_EDGE_A880`, default): A880 ~1996 -> 375 us, jobs 28.34 -> 26.79 ms (-5.4%, replay), in game +5.6/+5.0% |
 | `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in production (`GOW_EDGE_D640`, default): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay), in game +2.9/+4.2% |
-| `F538` | 3.6% | ? | |
+| `F538` | 3.6% (replay sampler: 5.5% of job time) | per input quad, a 4x4 transform by four loop-invariant columns (8 quads/iteration, mostly in place) in its loop at `loc_F620` | loop native in a lab build (`GOW_EDGE_F538`, default lifted): F538 ~1349 -> 536 us, jobs 26.45 -> 25.63 ms (-3.1%, replay); no in-game run yet |
 
 ## Progress log
 
@@ -663,3 +663,93 @@ Status: design, started 2026-10-24. Progress log at the end.
   - **Stop condition:** with ~181 ms of EDGE work per frame against a 142.5 ms RSX walker drain (x47), EDGE
     stages pay in full only while EDGE stays the longer one. F538 and DCC0 together would take EDGE to about
     165 ms; after that, re-measure the walker before another d935 stage.
+- 2026-10-25: F538 boundary probe and block map (lab lift `work/spu_recomp_d935.fnpb_f538.c`:
+  `gen_edge_native_lift.py`, then `spu_fnprobe_lift.py --no-reads --blocks` on F538 alone, which calls nothing;
+  exe `build_runLabF5P`; `SPU_FN_PROBE=F538 SPU_JOB_REPLAY_REPEAT=20`, log `work/x49_fnpb_f538.log`; cap_3 still
+  `[replay] 400/400 jobs identical`).
+  - **Calls:** 461 over the 400 jobs, in 249 jobs (146 once, 5 twice, 87 three times, 11 four times). The
+    lift calls it directly from five sites in 53B0 (copies in its alternate entries 5838, 5A78, 5C50); which of
+    them cap_3 takes is not recorded. All 461 take one path: the entry block (the early return when r3 = 0 is
+    never taken) -> loop `loc_F620` -> return. No callees and no indirect
+    branch anywhere in F538; the loop's only control flow is its back edge `if (r37 != 0) goto loc_F620`. `r3` =
+    quad count (44 distinct values, 0x50 in 160 calls, 0x38 in 116); the loop runs ceil(r3 / 8) + 1 times in all
+    461 calls (3-73, median 11, 12164 in all): the extra iteration drains the pipeline. `r4` = input, `r5` =
+    output (0x29000 in 249 calls); r4 = r5 (in place) in 450 of 461. `r6` = four matrix quads (0x10480 in 249
+    calls, the stack 0x3F4F0 in 201, 0x104C0 in 11). 33 calls leave the LS unchanged (`wr=-`; output equal to the
+    input, plausibly an identity matrix: not verified).
+  - **Block map** (counts x lifted statements, 1.02M executed): the loop `F620` (82 statements) 97.4%, the entry
+    block (57) 2.6%.
+  - **Time** (`[fnpt]`, per-call minimum): 1340.6 us over the 461 calls (mean 2.91, median 1.2, max 7.9 us) =
+    5.1% of the 26.12 ms summed per-job minimum of that run; fit 0.107 us per iteration + 0.08 us (corr 0.998).
+  - **What the loop computes** (a reading of the lift; checked symbolically by the generator below, the
+    meaning still to verify): per iteration 8 input quads v at r38 + 16k (r38 += 128). With four loop-invariant
+    columns M0..M3 = r35 r36 r33 r34 (built in the entry block from the quads at r6 by selb/shufb with the LS
+    controls at 0xFE70, 0xFF80, 0xFF60; not decoded), per quad: p1 = fm(v, M0), p2 = fma(rot_4 v, M1, p1), p3 =
+    fma(rot_8 v, M2, p2), out = fma(rot_12 v, M3, p3), rot_n = rotqbyi by n bytes, so lane l = v[l]*M0[l] +
+    v[l+1]*M1[l] + v[l+2]*M2[l] + v[l+3]*M3[l] (indices mod 4): a 4x4 matrix stored by diagonals, as E550's
+    palette. Software pipelined: quads 0 and 1 are finished in the iteration that loads them (r20 r21), quads 2-7
+    carry p3 (r9 r43 r41 r50 r49 r48) and rot_12 v (r53 r52 r51 r57 r56 r55) to the next iteration. Each iteration
+    first loads its 8 quads, then stores the previous iteration's 8 results at r58 r54 r47 r46 r45 r44 r42 r40 +
+    r39 (r39 += r32, r32 = 0 in the first iteration and 128 after it: the first iteration stores the prologue's
+    zeros, the second overwrites them). The last iteration loads one group past the input. All four lanes of
+    every result reach memory.
+- 2026-10-25: the F538 loop native, in a lab build (`build_runLabF5N`; `build_runLabF5NP` with an unrouted F538
+  probe wrapper, no block counters: lift `work/spu_recomp_d935.fnp_f538.c`).
+  - **Pieces:** `port/gow_edge_native_f538.c` (an SPU source like the other four), behind `GOW_EDGE_F538`
+    (read once): unset/0 = lifted (the default for now), 1 = native packed v3 (`GOW_EDGE_F538_V2=1`: v2), 2 =
+    native v1, 3 = check v3/v2, 4 = check v1 (all 128 GPRs and the whole LS at the loop exit;
+    `[edge-f538-check] N calls checked, M differ`, every 4096 calls and at exit). `GOW_EDGE_F538_FAULT=<n>[,<k>]`
+    (native run k, default the first): 1 = one LS bit in the first quad the last iteration stores, 2 = bit 0 of
+    r20 after the loop. `port/gen_edge_f538_body.py <lift> <out.h>` writes `gow_edge_f538_body.h`
+    (`GOW_F53_REGS/LOAD/STORE/BODY`) from F538's own copy of the loop (the alternate-entry function F620 stays
+    lifted) and checks the lift's shape: the back edge followed by the return (or the switch's exit label), no
+    other control flow, the registers read before written exactly r9 r20 r21 r32-r58, every load before the
+    first store, and, by evaluating the body symbolically, the eight stores (address, value, order) and the
+    carried registers above. A changed fma operand or loop decrement makes it fail (tried on mutated copies).
+    `gen_edge_native_lift.py` adds the fifth switch only where it is missing: in F538 (or its `_impl`) before
+    `loc_0000F620:` (`goto gow_f620_exit`) and, after the back edge, the new label `gow_f620_exit:` with
+    `check_end` (then F538's return). The port's CMakeLists builds the source and header like A880's.
+  - **Versions** (every value is the same op on the same operands as in the lift):
+    - v1: the loop statement for statement in C locals (the generated macros), direct LS access.
+    - packed: one iteration at a time, two quads per vector (0|1, 2|3, 4|5, 6|7), the columns broadcast to
+      both halves, rot_4/8/12 as one in-lane dword shuffle, 16 8-lane fm/fma per iteration, the lift's pipeline
+      kept (the deferred fma of quads 2-7 runs at the top of the next iteration from the carried p3 and rot_12
+      v). Per iteration all loads come before the stores and the stores keep the lift's order, so the LS sees
+      the same accesses (in place included, no overlap analysis). The last iteration runs the lifted body from
+      the carried registers, so all 65 registers the loop writes come out exactly. Fewer than 2 iterations (or
+      more than 2048): v1.
+    - v3 (default packed) runs an iteration speculatively with one range check (as the other stages; the
+      carried registers and the loaded quads are range-checked as inputs, the columns once per entry, else the
+      entry runs v2's ops) and recomputes it with v2's ops before anything is stored if a lane fails; v2 checks
+      every fm/fma per lane with the 4-lane fallback. A self-test at mode init compares the checked 8-lane
+      fm/fma (zeros, exponent 0/255/254 and cancelling sums mixed in) and the three rotations with
+      `spu_fm`/`spu_fma`/`spu_rotqbyi`, then whole iterations (speculative when kept, and checked) with the
+      helpers applied quad by quad: `checked fm/fma and rotqbyi 4/8/12 x8 0 of 200000 differ (62934 8-lane ops
+      took the 4-lane fallback); whole iterations 0 of 5004 differ (1004 speculative kept)`.
+    - Per cap_3 pass: 11703 of 12164 iterations packed (the rest is the lifted last iteration), 29 speculative
+      iterations recomputed with v2's ops, 132 8-lane ops redone by the 4-lane helpers, 0 entries to v1, 0
+      entries with non-plain columns. Unlike A880, cap_3 exercises the recompute and the fallback.
+  - **Gates** (`build_runLabF5N`, `SPU_JOB_REPLAY=work/jobcap3`, logs `work/x49g_*.log`): unset, `=0`, `=1`
+    (v3), `=1` with `GOW_EDGE_F538_V2=1` and `=2` (v1): each `[replay] 400/400 jobs identical`. Check mode (logs
+    `work/x49c_*.log`): v3, v2 and v1 each `[edge-f538-check] 461 calls checked, 0 differ; 12164 iterations (8
+    quads each)`. Negative tests (logs `work/x49n_*.log`):
+    - 1 (LS): job gate `job_16_1.bin FAIL ... final LS differs first at 0x2B08F: recorded 00, replay 01`,
+      `399/400`; check mode `call 0: LS differs in 1 bytes, first at 0x2B08F (lifted 00 native 01)`, `461 calls
+      checked, 1 differ`. (Run 0 is job_16_1's only call, so no later call rewrites the byte.)
+    - 2 (r20): job gate 400/400; check mode `call 0: r20 lifted 41680004 42214000 C2024018 3F800000 native
+      41680005 ...`, `1 differ`. As before, that the registers come out exactly rests on check mode.
+  - **Timing** (pinned replay, REPEAT=50, sum of per-job minimum, ms; one exe, env alternated; logs
+    `work/x49t_*.log`): lifted 26.436 27.828 26.454 26.435 26.617 (median 26.45), v3 25.596 25.642 25.569 25.631
+    26.755 (median 25.63, -3.1%; 27.828 and 26.755 are single outliers); v2 26.103 26.012; v1 26.275 26.280.
+  - **The function alone** (`build_runLabF5NP`, `SPU_FN_PROBE=F538`, REPEAT=20, sum of the 461 per-call
+    minimums, us; logs `work/x49p_*.log`): lifted 1349.8 1346.2 1350.4, v3 537.0 535.1 536.4 (2.5x), v2 916.6,
+    v1 1149.2. The saving (~0.81 ms) matches the replay's (0.82 ms). Check-mode rdtsc (cold LS after the
+    snapshot copies): ~300 vs ~580 ticks per iteration.
+  - **Not covered by any run:** the v1 fallbacks (fewer than 2 iterations, more than 2048), entries with
+    non-plain columns, the early return (r3 = 0; it does not reach the switch), IRQ/RCHCNT inside a job, the
+    game itself (no in-game check-mode run or in-game A/B yet: next, as for the other stages before their
+    defaults flipped). The meaning of the columns (the entry block's shuffles) is not verified.
+- 2026-10-25: F538 in game, check mode (x50: production exe with E550, 73E0, D640 and A880 native,
+  `GOW_EDGE_F538=3`, 1100 s, no PM profiling): `[edge-f538-check] 2392064 calls checked, 0 differ; 67385792
+  iterations`; 213444 speculative iterations recomputed with v2's ops and 1150789 8-lane ops redone by the
+  4-lane helpers on the way, 0 entries left to v1. Check-mode rdtsc ~280 vs ~653 ticks per iteration.

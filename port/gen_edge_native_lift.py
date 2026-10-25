@@ -1,6 +1,6 @@
 """gen_edge_native_lift.py <spu_recomp.c> <out.c>: the EDGE job module (d935) lift with its native-switchable
-regions (port gow_edge_native.c, gow_edge_native_73e0.c, gow_edge_native_d640.c), each picked at run time by
-an env variable.
+regions (port gow_edge_native.c, gow_edge_native_73e0.c, gow_edge_native_d640.c, gow_edge_native_a880.c,
+gow_edge_native_f538.c), each picked at run time by an env variable.
 
 1. E550's loop at loc_0000EC08, by GOW_EDGE_NATIVE. In jobmod_d93503647dd8_e6d98_spu_func_0000E550 (or its
    _impl, so it composes with spu_fnprobe_lift.py in either order):
@@ -42,6 +42,15 @@ an env variable.
    `loc_0000AD48:` (also reached by the skip in the A928 block when the count is not positive; check_end
    ignores that). Only function A880: the alternate-entry functions A928, A950, AD48, AD4C and AD80 keep
    their lifted copies. g_edge_a880: 0 the lifted loop, unset/1 native (packed), 2 native v1, 3/4 check.
+5. F538's loop at loc_0000F620 (exit: the fall-through after its back edge, F538's return), by GOW_EDGE_F538
+   (g_edge_f538, read once by gow_edge_f538_mode). The loop is entered only by falling through from F538's
+   entry block; its back edge jumps to the label. In F538 (or its _impl):
+         if (g_edge_f538) { if (g_edge_f538 <= 2) { gow_edge_f538_f620(ctx); goto gow_f620_exit; }
+                            gow_edge_f538_check_begin(ctx); }
+   before `loc_0000F620:` and, after the back edge `if (ctx->gpr[37]._u32[0] != 0) goto loc_0000F620;`,
+   the label `gow_f620_exit: if (g_edge_f538 > 2) gow_edge_f538_check_end(ctx);`. Only function F538: the
+   alternate-entry function F620 keeps its lifted copy. g_edge_f538: unset/0 the lifted loop, 1 native
+   (packed), 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,
 untracked: it is the lift). Each switch is added only if the lift does not have it yet, so a lab lift made
@@ -59,14 +68,16 @@ want_e550 = "gow_edge_e550_ec08(" not in text
 want_73e0 = "gow_edge_73e0_79b0(" not in text
 want_d640 = "gow_edge_d640_d92c(" not in text
 want_a880 = "gow_edge_a880_a950(" not in text
-if not want_e550 and not want_73e0 and not want_d640 and not want_a880:
+want_f538 = "gow_edge_f538_f620(" not in text
+if not want_e550 and not want_73e0 and not want_d640 and not want_a880 and not want_f538:
     open(dst, "w", newline="").write(text)
     sys.exit(print(f"{dst}: all switches are already there; copied"))
 hdr = re.compile(r"^void \w+_spu_func_([0-9A-F]{8})(_impl)?\(spu_context\* ctx\) \{\s*$")
 D4DC_BACK = "if (ctx->gpr[3]._u32[0] != 0) goto loc_0000D4DC;"
+F620_BACK = "if (ctx->gpr[37]._u32[0] != 0) goto loc_0000F620;"
 out, cur = [], None
 n = {"EC08": 0, "EDE8": 0, "79B0": 0, "81C0": 0, "D92C": 0, "DB70": 0, "D4DC": 0, "D4DC_back": 0,
-     "A950": 0, "AD48": 0}
+     "A950": 0, "AD48": 0, "F620": 0, "F620_back": 0}
 for l in lines:
     m = hdr.match(l)
     if m:
@@ -96,6 +107,11 @@ for l in lines:
                 "        if (g_edge_a880) { if (g_edge_a880 <= 2) { gow_edge_a880_a950(ctx); goto loc_0000AD48; }"
                 " gow_edge_a880_check_begin(ctx); }"]
         n["A950"] += 1
+    if want_f538 and cur == "0000F538" and re.match(r"^\s*loc_0000F620:", l):
+        out += ["        if (__builtin_expect(g_edge_f538 < 0, 0)) g_edge_f538 = gow_edge_f538_mode();",
+                "        if (g_edge_f538) { if (g_edge_f538 <= 2) { gow_edge_f538_f620(ctx); goto gow_f620_exit; }"
+                " gow_edge_f538_check_begin(ctx); }"]
+        n["F620"] += 1
     out.append(l)
     if want_a880 and cur == "0000A880" and re.match(r"^\s*loc_0000AD48:", l):
         out.append("        if (g_edge_a880 > 2) gow_edge_a880_check_end(ctx);")
@@ -113,6 +129,10 @@ for l in lines:
         out.append("gow_d4dc_exit:")
         out.append("        if (g_edge_d640 > 2) gow_edge_d640_d4dc_check_end(ctx);")
         n["D4DC_back"] += 1
+    if want_f538 and cur == "0000F538" and l.strip() == F620_BACK:
+        out.append("gow_f620_exit:")
+        out.append("        if (g_edge_f538 > 2) gow_edge_f538_check_end(ctx);")
+        n["F620_back"] += 1
 if want_e550 and (n["EC08"] != 1 or n["EDE8"] != 1):
     sys.exit(f"E550 labels: EC08 x{n['EC08']}, EDE8 x{n['EDE8']} (want 1 each)")
 if want_73e0 and (n["79B0"] != 1 or n["81C0"] != 1):
@@ -122,6 +142,8 @@ if want_d640 and any(n[k] != 1 for k in ("D92C", "DB70", "D4DC", "D4DC_back")):
              " (want 1 each)")
 if want_a880 and (n["A950"] != 1 or n["AD48"] != 1):
     sys.exit(f"A880 labels: A950 x{n['A950']}, AD48 x{n['AD48']} (want 1 each)")
+if want_f538 and (n["F620"] != 1 or n["F620_back"] != 1):
+    sys.exit(f"F538 sites: F620 x{n['F620']}, back edge x{n['F620_back']} (want 1 each)")
 decl = []
 if want_e550:
     decl += ["int gow_edge_native_mode(void);",
@@ -150,6 +172,12 @@ if want_a880:
              "void gow_edge_a880_check_begin(spu_context* ctx);",
              "void gow_edge_a880_check_end(spu_context* ctx);",
              "static int g_edge_a880 = -1;"]
+if want_f538:
+    decl += ["int gow_edge_f538_mode(void);",
+             "void gow_edge_f538_f620(spu_context* ctx);",
+             "void gow_edge_f538_check_begin(spu_context* ctx);",
+             "void gow_edge_f538_check_end(spu_context* ctx);",
+             "static int g_edge_f538 = -1;"]
 last_inc = max(i for i, l in enumerate(out[:200]) if l.startswith("#include"))
 out[last_inc + 1:last_inc + 1] = decl
 open(dst, "w", newline="").write(nl.join(out))
@@ -157,4 +185,5 @@ print(f"{dst}: " + ", ".join(s for s, w in (("E550 loop at EC08 switchable by GO
                                           ("73E0 region at 79B0 switchable by GOW_EDGE_73E0", want_73e0),
                                           ("D640 loop at D92C and D250 loop at D4DC switchable by GOW_EDGE_D640",
                                            want_d640),
-                                          ("A880 loop at A950 switchable by GOW_EDGE_A880", want_a880)) if w))
+                                          ("A880 loop at A950 switchable by GOW_EDGE_A880", want_a880),
+                                          ("F538 loop at F620 switchable by GOW_EDGE_F538", want_f538)) if w))
