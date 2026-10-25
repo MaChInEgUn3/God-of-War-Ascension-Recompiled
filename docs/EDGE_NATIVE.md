@@ -68,7 +68,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 | `E550` | 13.4% | skinning (4 bones/vertex, 2 vertices/iteration) in its loop at `loc_EC08` | loop native in production (v3, default): E550 5.59 -> 2.59 ms, jobs 35.8 -> 32.8 ms, in game +8.0/+8.8% |
 | `73E0` | 11.8% | per-vertex light accumulation (8-vertex groups x r83 lights, two passes) in the region `loc_79B0`..`81C0` | region native in production (v3, default): 73E0 6.11 -> 3.03 ms, jobs 33.3 -> 30.1 ms (-9.5%), in game +7.8/+7.9% |
 | `A880` | 5.8% | ? | |
-| `D640` | 3.6% | ? | |
+| `D640` (+ callee `D250`) | 3.6% (+ `D250`; replay sampler: ~10% of job time together) | triangle culling with index compaction (4 triangles/iteration) in the loop at `loc_D92C`; `D250`'s loop at `loc_D4DC` transforms the vertices to screen space with outcodes (4 vertices/iteration) | both loops native in a lab build (`GOW_EDGE_D640`, default lifted): D640 incl. D250 3110 -> 1189 us, jobs 29.61 -> 27.62 ms (-6.7%, replay); not yet in game |
 | `F538` | 3.6% | ? | |
 
 ## Progress log
@@ -425,3 +425,105 @@ Status: design, started 2026-10-24. Progress log at the end.
     (+7.9%) game frames/s. The replay predicted -9.5% of job time.
   - **Default:** `GOW_EDGE_73E0` unset = native v3 now, `=0` the lifted region. Gates on the lab build of that
     tree (`build_runLab73D`): unset and `=0` both `[replay] 400/400 jobs identical`.
+- 2026-10-25: D640 + D250 boundary probe and block map (lab lift `work/spu_recomp_d935.fnpb_d640.c`:
+  `gen_edge_native_lift.py`, then `spu_fnprobe_lift.py --no-reads --blocks` on D640 counting D640 D250 B600, then
+  a plain `spu_fnprobe_lift.py --no-reads` wrapper on D250 so it can be timed on its own (the probe filters by
+  function); exe `build_runLabD6P`; cap_3 still 400/400).
+  - **Calls:** 140 over the 400 jobs, one per calling job. All 140 take one path: D640 -> D678 -> D6A0 -> direct
+    call of D250 (the indirect call at 0xD6B0, through word 1 of LS[r3 + 0x180], is never taken) -> D6C0 ->
+    D81C/D820/D824 (r7 = 2) -> D8C8 -> loop `loc_D92C` -> DB70 (call B600) -> return. `r3` = 0x107A0, `r4` = 2,
+    `r6` = 0x9640 in all 140; `r9` 87 distinct values (0x129xx-0x13xxx).
+  - **Block map** (counts x lifted statements, 2.82M executed): D640's loop `D92C` (144 statements) 70.7%
+    (13828 iterations, 4-390 per call), D250's loop `D4DC` (79) 27.5% (9812 iterations, 6-242 per call), D250's
+    head 0.8%, everything else under 0.5% each. Both loops are straight-line bodies with only the back edge: no
+    calls, no indirect branches.
+  - **Time** (`[fnpt]`, REPEAT=20): D640 including D250 3071 us over 140 calls (10.4% of the 29.5 ms summed
+    per-job minimum), D250 alone 1280 us. Linear in the loop iterations: D640's own time = 0.127 us per D92C
+    iteration + 0.28 us (corr 0.997), D250 = 0.126 us per D4DC iteration + 0.33 us (corr 0.994).
+- 2026-10-25: both loops native, in a lab build (`build_runLabD6N`; `build_runLabD6NP` with the probe lift).
+  - **Pieces:** `port/gow_edge_native_d640.c` (an SPU source like the other two), behind `GOW_EDGE_D640` (read
+    once, at whichever loop runs first): unset/0 = lifted, 1 = native packed v3 (`GOW_EDGE_D640_V2=1`: v2),
+    2 = native v1, 3 = check v3/v2, 4 = check v1 (all 128 GPRs and the whole LS at each loop's exit;
+    `[edge-d640-check] D92C: ... D4DC: ...`, every 4096 calls per loop and at exit). `GOW_EDGE_D640_FAULT` (first
+    native run of that loop): 1 = one LS bit in the first quad the last D92C iteration stores, 2 = bit 0 of r5
+    after D92C, 3 = one LS bit in the first quad the last D4DC iteration stores, 4 = bit 0 of r24 after D4DC.
+    `port/gen_edge_d640_body.py <lift> <out.h>` writes `gow_edge_d640_body.h` (`GOW_D6A_*` for D92C with
+    BODY/TAIL around the exit test, `GOW_D6B_*` for D4DC) from D640's and D250's own copies (the alternate-entry
+    functions D8C8, D92C and D4DC stay lifted) and checks the lift's shape. `gen_edge_native_lift.py` adds the
+    third switch only where it is missing: in D640 (or its `_impl`) before `loc_0000D92C:` (`goto loc_0000DB70`)
+    and `check_end` after `loc_0000DB70:` (also reached by the skip in the D6C0 block when r7 is not 1, 2 or
+    3; not taken in cap_3), in D250 before `loc_0000D4DC:` (`goto gow_d4dc_exit`) and, after the back edge
+    `if (r3 != 0) goto loc_0000D4DC;`, the new label `gow_d4dc_exit:` with `check_end`. The port's CMakeLists
+    builds the source and header like 73E0's; the default is the lifted loops.
+  - **What the loops compute** (a reading of the lift; to verify):
+    - D4DC (in D250): per iteration one 64-byte record of 4 vertices (quads at r39/r33/r32/r29 + r23, r23 += 64
+      up to 0), transposed to x, y, z, times a 3x4 matrix (12 fma) into clip space X, Y, Z, W; then 1/W (frest,
+      fi, fnms, fma), the quotients with W's sign folded back (xor), a viewport scale and offset (fma) and
+      W > 0; then six bound tests (fcgt) packed into outcodes (shufb, gbh) and stored with the screen values as
+      four quads at r66/r37/r35/r34 + r21 (r21 += r31, r31 rotating by shufb r69). Pipelined three deep:
+      iteration k transforms record k (A), divides record k-1 (B), tests and stores record k-2 (C).
+    - D92C (in D640): triangle culling with index compaction, 4 triangles (24 bytes of halfword indices) per
+      iteration, pipelined four deep: S1 loads the next group's index quads; S2 aligns the previous group's
+      indices (shufb by r48, which alternates by xor r68 because 24-byte groups sit at alternating quad
+      offsets), gathers 12 vertex quads at r29 + 16 x index, transposes them into the vertices' x and y, the
+      edges (4 fs) and the AND / OR of the vertices' outcode words; S3 forms the signed area (fm, fms), its sign
+      flipped by r63 and tested > 0, snaps the six coordinates (fma(x, r39, r38), cflts) and compares them for
+      degenerate triangles, applies the outcode tests and makes a 4-bit cull mask (gb), plus the tail mask r66
+      on the second-to-last iteration; S4 compacts the kept triangles' indices through LS shuffle tables indexed
+      by that mask and the output alignment, merges the first quad with what LS holds and stores three quads at
+      the output position r33 (+6 bytes per kept triangle; past r65 the stores go to stack scratch); r46 counts
+      the kept triangles. The first two iterations' S4 are masked off (r31). The written ranges (in place,
+      0x12xxx-0x13xxx, matching `r9`) suggest the index buffer is compacted in place.
+  - **Versions** (every float result is the same op on the same operands):
+    - v1: each loop statement for statement in C locals (the generated macros), direct LS access.
+    - packed: pairs of iterations, the last one or two iterations through the lifted body from the pairs'
+      state so every register the loop writes comes out exactly. D4DC: a pair (k, k+1) runs A on records
+      (k, k+1), B on (k-1, k) and C on (k-2, k-1), 8 lanes each (a stage's low half takes the previous pair's
+      high half). It loads record k+1 before iteration k's stores, so it runs only if the input records and the
+      output quads (bounded from r31's words when r69 moves whole words) do not overlap; else v1. D92C: per
+      iteration S4, S1, the gather addresses and the gathers run serially in the lift's order (LS reads and
+      writes unchanged); S2's compute for (j, j+1) and S3 for (j+1, j+2) run 8 lanes wide, lane for lane, after
+      both iterations' S4. The one fnms in S3 is mask arithmetic on 0 / all-ones lanes (not plain floats: the
+      helpers take their exact per-lane path for it); it is a 4-entry table of the helper's own results for
+      those operands, built once per entry (r55 must be 0 or all ones per lane, else v1). Loop-invariant shufb
+      controls are pshufb (built once per distinct control); D92C's table-loaded controls use spu_shufb's rule
+      without the byte swaps.
+    - v3 (default packed) runs a pair speculatively with one range check (min/max of every float input from
+      outside the pair and every op result, as E550/73E0 v3) and recomputes it with v2's ops before anything
+      of it is used if a lane fails; the invariants feeding float ops are checked once per entry. v2 checks
+      every float op per lane with the 4-lane fallback.
+    - Per cap_3 pass: 13596 of 13828 D92C and 9532 of 9812 D4DC iterations packed (the rest is the lifted tail);
+      156 D92C and 153 D4DC pairs recomputed exactly; 580 8-lane ops redone by the 4-lane helpers; 0 entries to
+      v1 or to the checked ops.
+  - **Gates** (`build_runLabD6N`, `SPU_JOB_REPLAY=work/jobcap3`): unset, `=0`, `=1` (v3), `=1` with
+    `GOW_EDGE_D640_V2=1` and `=2` (v1): each `[replay] 400/400 jobs identical`. Check mode: v3, v2 and v1 each
+    `[edge-d640-check] D92C: 140 calls checked, 0 differ; 13828 iterations` and `D4DC: 140 calls checked, 0 differ;
+    9812 iterations`. Negative tests (`GOW_EDGE_D640_FAULT`):
+    - 1 (LS, D92C): job gate `job_17_5.bin FAIL ... final LS differs first at 0x1294F: recorded 00, replay 01`,
+      `399/400`; check mode `D92C call 0: LS differs in 1 bytes, first at 0x1294F (lifted 00 native 01)`,
+      `D92C: 140 calls checked, 1 differ`.
+    - 2 (r5, D92C): job gate 400/400; check mode `D92C call 0: r5 lifted 00000004 ... native 00000005 ...`,
+      `1 differ`.
+    - 3 (LS, D4DC): job gate `job_17_5.bin FAIL ... final LS differs first at 0x38FCF: recorded 00, replay 01`,
+      `399/400`; check mode `D4DC call 0: LS differs in 1 bytes, first at 0x38FCF (lifted 00 native 01)`,
+      `D4DC: 140 calls checked, 1 differ`.
+    - 4 (r24, D4DC): job gate 400/400; check mode `D4DC call 0: r24 lifted 410C0C81 ... native 410C0C80 ...`,
+      `1 differ`. As before, the job gate does not see register-only faults (both registers are overwritten
+      before every job end on cap_3's paths); that the registers come out exactly rests on check mode.
+  - **Timing** (pinned replay, REPEAT=50, sum of per-job minimum, ms; one exe, env alternated): lifted 29.614
+    29.747 29.486 29.460 29.720 (median 29.61), v3 29.459 27.624 27.544 30.380 27.567 (median 27.62, -6.7%; 29.459
+    and 30.380 are outliers, five earlier v3 runs of the same code before the V2 flag: 28.10 27.84 27.82 28.04
+    28.03); v2 27.926 27.971; v1 28.929 28.880.
+  - **The function alone** (`build_runLabD6NP`, `SPU_FN_PROBE`, REPEAT=20, sum of the 140 per-call minimums, us):
+    D640 including D250: lifted 3163 3108 3110, v3 1189 1188 1293 (2.6x), v1 2514; D250: lifted 1273 1258 1257,
+    v3 454 456 468 (2.8x), v1 915. Check-mode rdtsc per iteration varies 1.5x between runs on this machine
+    (lifted D92C 532-672); within a run v3 is about 1.8x (D92C) and 1.5-2x (D4DC).
+  - **Not covered by any run:** the skip path to DB70 (r7 not 1, 2 or 3), the v1 fallbacks (fewer than 3
+    iterations, D4DC overlap, r55 not a mask), entries with non-plain invariants, IRQ/RCHCNT inside a job, the
+    game itself (no in-game A/B or in-game check-mode run yet: next, as E550 and 73E0 had before their defaults
+    flipped).
+- 2026-10-25: D640 in-game check (x40, production exe, `GOW_EDGE_D640=3`, one 1100 s level run): D92C `917504
+  calls checked, 0 differ; 89077101 iterations`, D4DC `917504 calls checked, 0 differ; 62229802 iterations`. Packed
+  87562062 / 60394794 iterations, 0 entries to v1, 1270774 / 1029149 speculative pairs recomputed exactly, 4142436
+  8-lane ops redone by the 4-lane helpers; all exact. Check-mode rdtsc 314 vs 724 (D92C) and 309 vs 685 (D4DC)
+  ticks per iteration.

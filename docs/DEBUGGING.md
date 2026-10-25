@@ -219,6 +219,10 @@ Lessons that cost days; keep them.
   73E0's region (`loc_79B0`..`81C0`, `port/gow_edge_native_73e0.c`) has its own switch `GOW_EDGE_73E0`: 0 =
   lifted, unset/1 = native v3 (`GOW_EDGE_73E0_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-73e0-check] N calls checked, M
   differ`, every 4096 calls and at exit); `GOW_EDGE_73E0_FAULT=1|2` flips one LS bit or one r60 bit.
+  D640's two loops (`loc_D92C` triangle culling in D640, `loc_D4DC` vertex transform in D250,
+  `port/gow_edge_native_d640.c`) share `GOW_EDGE_D640`: unset/0 = lifted, 1 = native v3 (`GOW_EDGE_D640_V2=1`: v2),
+  2 = v1, 3/4 = check (`[edge-d640-check] D92C: N calls checked, M differ` and the same for D4DC);
+  `GOW_EDGE_D640_FAULT=1..4` flips an LS bit (1 D92C, 3 D4DC) or a register bit (2 r5 in D92C, 4 r24 in D4DC).
 * **Job proper vs module run**: in a lab build, `SPURS_PM_PROF` adds `[pm-jobt] w<wid>: jobs= timed= proper=<us>/job
   p50<= p90<= module=<us>/job proper/module=<pct>%`: wall time from each job start to its return to the link (the
   entry bracket's drain return), against the whole module run per job. The rest is the policy module's own work:
