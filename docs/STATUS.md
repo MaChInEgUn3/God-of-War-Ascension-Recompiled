@@ -799,6 +799,29 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.73: depth read as A8R8G8B8 built on the GPU: exact, but no frame-rate change (2026-10-26).**
+  - The largest `z2guest` case is the 1280x720 D24S8 zeta at `0x011B0000`, sampled twice per frame as a linear
+    A8R8G8B8 texture (the deferred passes rebuild positions from it). The walker stored it to guest memory (a GPU
+    wait, a CPU conversion, an upload) each time. No CPU or SPU reads those bytes: an SPU GET watch over the
+    region and a PPU read watch on the zeta saw none.
+  - Toolkit `RSX_Z2ARGB=1` builds the texture on the GPU instead. A compute shader packs the depth and stencil
+    aspects into the texels the guest word decodes to, and the result is cached until the depth changes.
+    `RSX_Z2ARGB=2` also does the store and compares: 0 differences over ~17k compares in a 12-minute run (x78chk).
+    The first version differed only where depth was 1.0, because the NVIDIA driver reassociated the shader's
+    rounding (0x1000000 instead of 0xFFFFFF). The math is now `precise`.
+  - `ENG_PHASE_STATS` (x79z against x76prof): z2guest falls from ~75 to ~0.5 ms per second of play, and texture
+    resolve from ~230 to ~150 ms per second. In the frame trace, the sync GPU wait goes from 7.3-8.5 to 5.3-5.5 ms
+    per frame.
+  - Game frames/s over 600-960 s: 10.40 on against 10.48 and 10.35 off (x78). The second "on" run is discarded
+    because it overlapped my own trace analysis (9.46, with a 3-minute dip that matches the analysis).
+  - The frame trace explains the null result. The SPU rows are solid while the RSX row has idle gaps, and the
+    walker is busy ~70% of the time with or without the change. The frame is SPU-bound, so the walker time saved
+    only waits longer.
+  - With it on, 8-11 frames over 150 ms appear at 613-618 s, in all three traces, against 0-1 off. In those
+    frames the RSX row is a GPU wait. The new path itself takes at most 4 ms a call and created 2 textures in
+    the whole run, so the cause is not yet known.
+  - Off by default (the port does not set it). Next: the SPU side, the runtime's own dispatch cost (~20-29% of
+    SPU time).
 - **M0.72: a fifth SPURS kernel thread, +4-11% (2026-10-26).**
   - With three EDGE lanes the four kernel threads were ~100% busy (x71: SPUs 99-103% in the trace), and the
     main thread's two SPU waits were the frame's slack: the EDGE list (`3E8388`, ~7 ms per frame) and
