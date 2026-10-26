@@ -848,6 +848,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     field left out, as the v015 sources were lifted without it). x68 against x65 (one run each, same setup):
     frame median 112.8 -> 106.1 ms; main thread busy (frame - blocked) ~95 -> ~88 ms; walker CPU (drain - GPU
     waits) 101.1 -> 95.8 ms; 600-1080 s 9.06 -> 9.27 game frames/s, 14.25 -> 14.40 presents/s; no hang.
+  - **Walker per-draw work** (toolkit `rsx: cheaper per-draw walker work`; switches in DEBUGGING.md, all default
+    on). Baseline per 10 s (`ENG_PHASE_STATS`/`VK_DRAW_PROF`): ~170k draws; per draw fetch ~9 us, pipeline
+    ~5.5, textures ~15, backend ~10.5. Causes found: the vertex remap probed a hash table sized for the largest
+    draw ever seen; the guest readback counted non-zero pixels for the pass dump even with no dump running;
+    the pipeline key re-hashed the vertex program byte by byte every draw; the texture content hash was one
+    serial multiply chain. Fixed without caching anything across guest writes (no write tracking exists).
+    x69 (on) against x69off (all four off), same exe, one run each: walker CPU (drain - GPU waits) 88.5 vs
+    96.2 ms per frame (x68 baseline 95.7); main thread busy 89.8 vs 86.5; frame median 105.3 vs 105.0 ms. The
+    frame did not move: it is now bound by the main PPU thread (~87-90 ms busy). Frame dumps unchanged; no
+    hang. Still on the walker: depth/colour stored to guest memory and re-decoded as textures (~18 ms per
+    frame with GPU waits), FIFO decode (~16% of walker samples), `rsx_vertex_fetch_many` (6.4%).
 - **M0.70: the sixth native EDGE stage, +2.7%/+3.8% (2026-10-25).**
   - The loop nest of EDGE job function `6AC8` (`loc_6BE0`/`loc_6DE0`, ~3.7% of job time: a smooth falloff
     around up to three spheres per group of 8 gathered vertices, accumulated and stored by index) as AVX2

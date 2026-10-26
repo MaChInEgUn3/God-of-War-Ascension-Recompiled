@@ -168,6 +168,13 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **Walker fast paths, off for A/B** (toolkit, all default on, each read once): `RSX_REMAP_FAST=0` dedups a draw's
+  vertex references through the old hash table (every draw hashed, probing a table sized for the largest draw seen)
+  instead of the direct table / per-draw table; `RSX_VP_HASH_CACHE=0` re-hashes the vertex program byte by byte for
+  the pipeline key on every draw instead of remembering the hash by content; `RSX_GUEST_READ_FAST=0` makes a surface
+  readback into guest memory count non-zero pixels for the pass dump again even when no dump runs, and convert rows
+  in place before copying; `RSX_TEXHASH_LANES=0` uses the single-chain texture content hash. All four give the same
+  frames; setting all four to 0 is the previous walker.
 * **Profile one SPURS workload**: `PS3_SAMPLE_WIDS=<w>[,<w>...]` (with `PS3_SAMPLE` / `PS3_SAMPLE_HOST`) keeps
   only samples of SPURS kernel threads that are running one of those workloads at that moment. Workloads share kernel
   threads, so without it the audio workload (wid 8) and the EDGE ones (15-17) land in the same buckets.
