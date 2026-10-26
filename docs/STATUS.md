@@ -799,6 +799,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.75: the GPU depth path pays with six kernel threads, +4% (2026-10-26).**
+  - With the sixth kernel thread the main thread waits on the walker again, so `RSX_Z2ARGB=1` (M0.73) was
+    measured again and is now the port default.
+  - Game frames/s over 600-960 s, one instance at a time: on 11.06 (x81) and 10.75 (x82), off 10.33 and
+    10.31 (x82, run first and third). The walker's sync GPU wait drops from 7-10 to 4.5-5.6 ms per frame, and
+    drain from 85-98 to 77-86. Frames over 150 ms in the trace window are no more frequent with it on.
+  - Four more runs were slow in stretches (per-minute rates down to 7-8) and are discarded. For two of them the
+    CPU log shows other work on the host at those times: a WMI query of my own (x81n_2) and another session's
+    long `grep` (x82z_2). For x81n_1 and x81z_2 the CPU log was not running.
+  - `RSX_Z2ARGB=0` goes back.
 - **M0.74: a sixth SPURS kernel thread, +1-2% (2026-10-26).**
   - SPU 4 was the last SPU without a kernel thread; HighestPrio6 and General6 have nonzero priority there. The
     port now sets `SPURS_KERN_SPUS=0,1,2,3,4,5` (was `0,1,2,3,5`).

@@ -253,7 +253,7 @@ Lessons that cost days; keep them.
 * **Targets sampled through guest memory**: with `ENG_PHASE_STATS` set, `[eng-via-guest]` lists each distinct way a
   draw samples a depth or colour target as a texture by storing it to guest memory first (z2guest/s2guest): the
   texture format, the target's format and size (first 32).
-* **Depth read as A8R8G8B8 on the GPU**: `RSX_Z2ARGB=1` builds a D24S8 depth target sampled as linear A8R8G8B8
+* **Depth read as A8R8G8B8 on the GPU**: `RSX_Z2ARGB=1` (GoW:A port default) builds a D24S8 depth target sampled as linear A8R8G8B8
   on the GPU instead of storing it to guest memory. It prints `[z2argb] 60s:` with conversions, textures created,
   failures and backend time. `RSX_Z2ARGB=2` also does the store and compares the texels (`[z2argb-check] 60s: N
   compared, M with differences`). Leave it off when something on the CPU, SPU or RSX reads those guest bytes

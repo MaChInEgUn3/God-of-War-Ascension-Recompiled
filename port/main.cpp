@@ -702,6 +702,14 @@ int main(int argc, char** argv)
      * lists run back to back on four kernel threads (below) it pays: tail 1.590/
      * 1.523/1.525/1.512 vs 1.502/1.435/1.456/1.415 (swapped 2+2), no hang. */
     if (!getenv("VK_ASYNC")) _putenv_s("VK_ASYNC", "1");
+    /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
+     * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
+     * guest memory, converted and uploaded again; nothing on the CPU or SPU reads
+     * those bytes. Exact (RSX_Z2ARGB=2: 0 differences over ~17k compares). With five
+     * kernel threads it was null (SPU-bound); with six the walker is the bound:
+     * 600-960 s 11.06 / 10.75 vs 10.33 / 10.31 game frames/s (x81, x82); the walker's
+     * sync GPU wait 7-10 -> 4.5-5.6 ms per frame. RSX_Z2ARGB=0 goes back. */
+    if (!getenv("RSX_Z2ARGB")) _putenv_s("RSX_Z2ARGB", "1");
     /* SPURS_PM_ARG_BE=1: hand the wwsjob PM its 64-bit workload argument as the
      * hardware does (high half in word 0). With the low half in word 0 the PM
      * wrote status rows into BatchJobList's list 1 and the level stopped on
