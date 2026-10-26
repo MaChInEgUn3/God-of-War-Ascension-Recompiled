@@ -1,9 +1,10 @@
 # God of War: Ascension — static recompilation (PS3)
 
 > **Status: research / early bring-up. Not playable.** The game boots, plays its intro movies, shows the main menu
-> with text and music, and reaches the first level with the Vulkan backend, at about 1.5 game frames per second.
-> Some long runs still corrupt guest memory around the same point of the level; the current hunt is in
-> [docs/STATUS.md](docs/STATUS.md). Generic fixes go upstream to ps3recomp as small PRs.
+> with text and music, and runs the first level with the Vulkan backend at about 9 game frames per second (about
+> 16 presented frames per second) on a 6-core CPU with an RTX 3080, with no hangs in 18-minute runs. Where the time
+> goes and what is being worked on is in [docs/STATUS.md](docs/STATUS.md). Generic fixes go upstream to ps3recomp
+> as small PRs. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ![Kratos chained in the first level, rendered by the recompiled game on Vulkan](docs/screenshots/level.jpg)
 

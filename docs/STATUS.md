@@ -875,9 +875,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       RenJobSet (11) 4%, BatchJobList (7) 4%. The next lever is SPU compute (General6 first), not the kernel.
     - 2 EDGE lanes instead of 3 (x70): 8.71 / 8.87 against 9.30 / 9.37 game frames/s (EDGE wait 15 against
       7 ms per frame). 3 stays the default.
-    - Noise: in both batches the fourth run of six was ~18% slower on every thread at once (EDGE ms/job
-      0.122 against 0.108, walker drain 125-128 against 85-98 ms), whatever its settings. In x70 that run's
-      settings could not have mattered: before the fix, the yield never fired.
+    - Noise: a few minutes roughly every two hours run ~15-20% slower on every thread at once (EDGE ms/job
+      0.122 against 0.108, walker drain 125-128 against 85-98 ms), whatever the settings: seen near 02:45,
+      04:40 and 07:05 in x70, x71 and x73 (the 30 s heartbeats of x73w_2 drop from ~9.3 to 7.5-8.4 game
+      frames/s between 840 and 1050 s only). Likely a periodic host task; a run that overlaps one is flagged
+      from its heartbeats, not discarded.
   - **What the HighestPrio6 list waits on** (x71 baseline trace, x72 host samples per workload with
     `PS3_SAMPLE_WIDS`). Per frame, the last span of RenJobSet wid 11 ends a median 0.9 ms before HighestPrio6
     starts and it does not run again until the next frame; General6 (wid 3) ends 2 ms before but keeps running
