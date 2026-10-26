@@ -155,7 +155,7 @@ index 204a005..1f5c7bc 100644
      u32 fmt_ea = (u32)(uintptr_t)format, dst = (u32)(uintptr_t)outBuff;
      if (handle >= MAX_VDEC || !s_vdec[handle].in_use || !fmt_ea)
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516..c480b74 100644
+index 19a8516..953a1a0 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -13,6 +13,7 @@
@@ -942,7 +942,7 @@ index 19a8516..c480b74 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,184 +1935,485 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,184 +1935,516 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1115,7 +1115,9 @@ index 19a8516..c480b74 100644
  }
  
 -static s32 spurs_scheduler_stop(struct SpursInst* si, u32 ea)
-+u32 spurs_poll_select(u32 ea, u32 wid)
++/* A workload this kernel thread's SPU ranks above wid that is ready (or signaled)
++ * and unclaimed, else wid. */
++static u32 spurs_higher_ready(struct SpursInst* si, u32 ea, u32 wid, int spu)
  {
 -    AcquireSRWLockExclusive(&si->lock);
 -    if (si->ea != ea || !si->kernel_live) { ReleaseSRWLockExclusive(&si->lock); return CELL_SPURS_CORE_ERROR_STAT; }
@@ -1128,10 +1130,6 @@ index 19a8516..c480b74 100644
 -    for (u32 sn = 0; sn < si->nspus; sn++) {
 -        HANDLE h = si->slots[sn].thread;
 -        if (h) { WaitForSingleObject(h, INFINITE); CloseHandle(h); si->slots[sn].thread = NULL; }
-+    struct SpursInst* si = spurs_inst_find(ea);
-+    const int spu = t_kern_spu;
-+    if (!si || wid >= SPURS_MAXW || spu < 0 || spu >= CELL_SPURS_MAX_SPU) return 0x20;
-+    if (*(vm_base + ea + spurs_off_ready(wid)) == 0) return 0x20;
 +    const u32 own = s_workloads[wid].priority[spu] ? s_workloads[wid].priority[spu] : 16u;
 +    const u32 enabled = vm_read32(ea + SPURS_WKL_ENABLED);
 +    const u32 nw = si->is2 ? SPURS_MAXW : 16u;
@@ -1152,13 +1150,28 @@ index 19a8516..c480b74 100644
  }
  
 -static void spurs_scheduler_forget(u32 wid)
++u32 spurs_poll_select(u32 ea, u32 wid)
+ {
+-    memset(&s_wkl_pm[wid], 0, sizeof(s_wkl_pm[wid]));
++    struct SpursInst* si = spurs_inst_find(ea);
++    const int spu = t_kern_spu;
++    if (!si || wid >= SPURS_MAXW || spu < 0 || spu >= CELL_SPURS_MAX_SPU) return 0x20;
++    if (*(vm_base + ea + spurs_off_ready(wid)) == 0) return 0x20;
++    return spurs_higher_ready(si, ea, wid, spu);
+ }
+ 
+-static void spurs_scheduler_retire(u32 ea)
 +/* SPURS_LANES="<wid>[,<wid>...]=<n>[;...]": let up to n kernel threads run that workload's
 + * policy module at once, each as the SPU it plays (spuNum = that SPU), as the real kernel
 + * does for a workload whose maxContention allows it. Beyond the registered contention: a
 + * title that registered max 1 never had two SPUs in the module on hardware. Default off. */
 +static int spurs_lanes_for(u32 wid)
  {
--    memset(&s_wkl_pm[wid], 0, sizeof(s_wkl_pm[wid]));
+-    AcquireSRWLockExclusive(&s_workload_registry_lock);
+-    for (u32 wid = 0; wid < CELL_SPURS_MAX_WORKLOAD; wid++)
+-        if (s_workloads[wid].in_use && s_workloads[wid].spurs_ea == ea) {
+-            memset(&s_workloads[wid], 0, sizeof(s_workloads[wid]));
+-            spurs_scheduler_forget(wid);
 +    static int s_init; static u8 s_n[SPURS_MAXW];
 +    if (!s_init) {
 +        for (const char* e = getenv("SPURS_LANES"); e && *e; ) {
@@ -1174,20 +1187,15 @@ index 19a8516..c480b74 100644
 +            for (int i = 0; i < nw; i++) s_n[ws[i]] = (u8)(n > 0 ? n : 0);
 +            while (*e && *e != ';') e++;
 +            if (*e == ';') e++;
-+        }
+         }
+-    ReleaseSRWLockExclusive(&s_workload_registry_lock);
 +        s_init = 1;
 +    }
 +    return wid < SPURS_MAXW ? s_n[wid] : 0;
- }
- 
--static void spurs_scheduler_retire(u32 ea)
++}
++
 +static DWORD WINAPI spurs_kernel_thread(LPVOID p)
- {
--    AcquireSRWLockExclusive(&s_workload_registry_lock);
--    for (u32 wid = 0; wid < CELL_SPURS_MAX_WORKLOAD; wid++)
--        if (s_workloads[wid].in_use && s_workloads[wid].spurs_ea == ea) {
--            memset(&s_workloads[wid], 0, sizeof(s_workloads[wid]));
--            spurs_scheduler_forget(wid);
++{
 +#ifdef _WIN32
 +    { ULONG g = 256 * 1024; SetThreadStackGuarantee(&g); }  /* let SO reach the reporter */
 +#endif
@@ -1231,8 +1239,7 @@ index 19a8516..c480b74 100644
 +                if (ft_p1 - ft_p0 >= ps3_ft_min_ns())
 +                    ps3_ft_span(PS3_FT_SPU_WAIT, (uint32_t)spurs_ft_kidx(), 0x51EEu, 0, ft_p0, ft_p1);
 +            }
-         }
--    ReleaseSRWLockExclusive(&s_workload_registry_lock);
++        }
 +        pass_found_work = 0;
 +        u32 ea = si->ea;
 +        if (!ea || s_pm_off) continue;
@@ -1538,6 +1545,30 @@ index 19a8516..c480b74 100644
 +            const int did = g_spurs_pm_polls != 0 || g_spu_job_entries != jobs_before;
 +            rr_found |= did;
 +            if (!did || s_rerun <= 0 || maxcont > 1) break;
++            /* SPURS_RERUN_YIELD=1: end the rerun as soon as a workload this SPU ranks
++             * higher is ready and unclaimed, as the real kernel's selection would at
++             * the module's next poll. Otherwise a low-priority list (GoW:A's EDGE,
++             * priority 8, on up to three lanes) keeps the thread for the whole rerun
++             * window while a higher one (HighestPrio6, priority 1-3) waits and the
++             * PPU spins on it. Not spurs_poll_select: a module that drains its own
++             * list leaves its readyCount 0, and that answers "exit" before looking
++             * at the others. Every 60 s it logs how many reruns it ended.
++             * Default off: on GoW:A it ends ~10k reruns a minute and changes nothing
++             * (HighestPrio6 becomes ready only after the SPU work it depends on). */
++            { static int s_ry = -1; static volatile LONG s_ry_n, s_ry_y; static volatile LONG64 s_ry_t;
++              if (s_ry < 0) { const char* e = getenv("SPURS_RERUN_YIELD"); s_ry = e ? atoi(e) : 0; }
++              if (s_ry && my_spu >= 0 && my_spu < CELL_SPURS_MAX_SPU) {
++                  const u32 sel = spurs_higher_ready(si, ea, wid, my_spu);
++                  InterlockedIncrement(&s_ry_n);
++                  LARGE_INTEGER q; QueryPerformanceCounter(&q);
++                  const LONG64 t = s_ry_t;
++                  if (!t) InterlockedCompareExchange64(&s_ry_t, q.QuadPart, 0);
++                  else { LARGE_INTEGER f; QueryPerformanceFrequency(&f);
++                         if (q.QuadPart - t >= 60 * f.QuadPart &&
++                             InterlockedCompareExchange64(&s_ry_t, q.QuadPart, t) == t)
++                             fprintf(stderr, "[spurs-ry] 60s: rerun checks %ld, yielded %ld\n",
++                                     InterlockedExchange(&s_ry_n, 0), InterlockedExchange(&s_ry_y, 0)); }
++                  if (sel != wid) { InterlockedIncrement(&s_ry_y); break; } } }
 +            { LARGE_INTEGER q; QueryPerformanceCounter(&q);
 +              if (q.QuadPart - rr_t0.QuadPart >= s_rerun) break; }
 +            }
@@ -1575,7 +1606,7 @@ index 19a8516..c480b74 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1860,30 +2421,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1860,30 +2452,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
              printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
          _n++;
      }
@@ -1615,7 +1646,7 @@ index 19a8516..c480b74 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2448,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2479,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -1676,7 +1707,7 @@ index 19a8516..c480b74 100644
      return CELL_OK;
  }
  
-@@ -3095,6 +3685,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3716,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -1719,7 +1750,7 @@ index 19a8516..c480b74 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3728,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3759,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1728,7 +1759,7 @@ index 19a8516..c480b74 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +3749,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +3780,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -1759,7 +1790,7 @@ index 19a8516..c480b74 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4053,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4084,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  

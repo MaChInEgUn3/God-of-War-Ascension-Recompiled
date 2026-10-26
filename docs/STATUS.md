@@ -859,6 +859,25 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     frame did not move: it is now bound by the main PPU thread (~87-90 ms busy). Frame dumps unchanged; no
     hang. Still on the walker: depth/colour stored to guest memory and re-decoded as textures (~18 ms per
     frame with GPU waits), FIFO decode (~16% of walker samples), `rsx_vertex_fetch_many` (6.4%).
+  - **The main thread's HighestPrio6 wait is SPU work, not scheduling** (x70, x71; one instance, 3 lanes,
+    `PS3_FTRACE=600:20`). The top main-thread guest function `466E38` (called from `467B18`) busy-waits on the
+    per-SPU progress counters of the `HighestPrio6` job list (wid 2, priority 3 3 3 2 1 1): ~13-15 ms per frame,
+    counted as main busy. Two scheduler changes left it unchanged:
+    - `SPURS_RERUN_YIELD=1` (toolkit, default off): end a module's rerun window when a workload the SPU ranks
+      higher is ready. It fired (~10k ended reruns a minute) and changed nothing: x71 game frames/s 600-1080 s
+      9.27 against baseline 9.36 / 9.34, HP6 wait 15 against 14 ms per frame.
+    - `SPURS_PM_RERUN_US=500` instead of 2000: 9.30 / 9.34 game frames/s, HP6 wait 14 ms.
+    - The trace shows why. HighestPrio6 runs once per frame, at the end (median start 99 ms after the flip,
+      7 spans, 2.1 ms busy, one cluster on one SPU). In the 15 ms before it starts the four kernel threads are
+      busy throughout: General6 (wid 3) 11.8 ms, RenJobSet (wids 11, 12) 16.2, EDGE (15-17) 22.2, audio (8) 7.7.
+      The list becomes ready only after the SPU work it depends on, and the kernel threads are ~100% busy.
+    - SPU busy time by workload (x71 baseline): General6 17%, audio 16%, EDGE 14% each, RenderJobs (13) 8%,
+      RenJobSet (11) 4%, BatchJobList (7) 4%. The next lever is SPU compute (General6 first), not the kernel.
+    - 2 EDGE lanes instead of 3 (x70): 8.71 / 8.87 against 9.30 / 9.37 game frames/s (EDGE wait 15 against
+      7 ms per frame). 3 stays the default.
+    - Noise: in both batches the fourth run of six was ~18% slower on every thread at once (EDGE ms/job
+      0.122 against 0.108, walker drain 125-128 against 85-98 ms), whatever its settings. In x70 that run's
+      settings could not have mattered: before the fix, the yield never fired.
 - **M0.70: the sixth native EDGE stage, +2.7%/+3.8% (2026-10-25).**
   - The loop nest of EDGE job function `6AC8` (`loc_6BE0`/`loc_6DE0`, ~3.7% of job time: a smooth falloff
     around up to three spheres per group of 8 gathered vertices, accumulated and stored by index) as AVX2

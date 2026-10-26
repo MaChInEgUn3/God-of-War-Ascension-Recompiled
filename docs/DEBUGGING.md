@@ -403,7 +403,9 @@ Lessons that cost days; keep them.
   overrides it), `SPURS_KERN_SPUS` (port default `0,1,2,5`), `SPURS_EDGE_DIAG=<s>` with `SPURS_EDGE_WIDS`
   (whether those workloads ever run side by side), `SPURS_MAXCONT="<wid>=<n>,..."` (lanes per workload, experiment),
   `SPURS_LANES="<wid>[,<wid>...]=<n>[;...]"` (up to n kernel threads run that workload's module at once, each as
-  the SPU it plays, only on SPUs the workload has a priority on; the port's default is `SPURS_LANES=15,16,17=3`, `SPURS_LANES=off` disables it).
+  the SPU it plays, only on SPUs the workload has a priority on; the port's default is `SPURS_LANES=15,16,17=3`, `SPURS_LANES=off` disables it),
+  `SPURS_RERUN_YIELD=1` (end a rerun window when a workload this SPU ranks higher is ready; logs `[spurs-ry]`
+  counts every 60 s; default off, measured neutral on GoW:A).
 * **Timer resolution**: the port opts out of Windows 11 power throttling so its 1 ms timer resolution holds without a
   visible window (`GOW_TIMER_FIX=0` skips that). PS3_FTRACE shows the SPURS kernel threads' between-pass pauses as
   SPU_WAIT spans with `a=0x51EE` and resident-slot waits with `a=0x5107`. `GOW_CLOCK_WATCH=<s>` names the walker's
