@@ -799,6 +799,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.74: a sixth SPURS kernel thread, +1-2% (2026-10-26).**
+  - SPU 4 was the last SPU without a kernel thread; HighestPrio6 and General6 have nonzero priority there. The
+    port now sets `SPURS_KERN_SPUS=0,1,2,3,4,5` (was `0,1,2,3,5`).
+  - Alternating, one instance at a time, game frames/s over 600-960 s (x80): 10.59 / 10.61 against 10.38 /
+    10.49. Per frame: HighestPrio6 wait 11 -> 9 ms, flip pacing (`375A88`, main-thread profile) 7-8 -> 10 ms:
+    the main thread waits on the walker again. SPU busy 420-447 -> 456 ms per frame over the six. No hang,
+    frame dumps unchanged. Eight threads are busy on a 6-core/12-thread host.
+  - Per workload, SPU busy per frame (x78n_1, five threads): General6 69 ms, the audio workload
+    (`BrBDblBufWrkld`, SPU 5 only) 60, each EDGE lane 58, RenderJobs 32, BatchJobList 18, RenJobSet 11/12
+    18/12. The audio share is a fixed ~67% of wall time on its SPU, not per frame.
+  - `SPURS_KERN_SPUS=0,1,2,3,5` goes back.
 - **M0.73: depth read as A8R8G8B8 built on the GPU: exact, but no frame-rate change (2026-10-26).**
   - The largest `z2guest` case is the 1280x720 D24S8 zeta at `0x011B0000`, sampled twice per frame as a linear
     A8R8G8B8 texture (the deferred passes rebuild positions from it). The walker stored it to guest memory (a GPU

@@ -668,8 +668,12 @@ int main(int argc, char** argv)
      * four were ~100% busy with three EDGE lanes. x74, alternating, 600-960 s: 9.77 /
      * 10.02 vs 9.37 / 9.01 game frames/s; EDGE wait 7 -> 0 and HighestPrio6 wait
      * 14 -> 11 ms per frame; the walker's drain grew (7 busy threads on 6 cores).
-     * Frame dumps unchanged, no hang. 0,1,2,5 goes back. */
-    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,2,3,5");
+     * Frame dumps unchanged, no hang. 0,1,2,5 goes back.
+     * SPURS_KERN_SPUS=0,1,2,3,4,5 (the default now): a sixth thread, SPU 4, the last
+     * one. x80, alternating, 600-960 s: 10.59 / 10.61 vs 10.38 / 10.49 game frames/s;
+     * HighestPrio6 wait 11 -> 9 ms per frame, flip pacing 7-8 -> 10 (the walker
+     * again). Eight busy threads on 6 cores / 12 threads. 0,1,2,3,5 goes back. */
+    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,2,3,4,5");
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
     /* SPURS_LANES=15,16,17=3 (the default now): the EDGE lists run on up to three
      * SPUs at once (0-2, each as its own spuNum, with its own output ring the game
