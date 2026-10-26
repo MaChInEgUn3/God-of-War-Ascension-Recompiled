@@ -838,6 +838,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     change is gated on its own thread's cost from one ftrace window: walker CPU = drain - GPU waits, main busy
     = frame - main blocked (plus `VK_DRAW_PROF` us/draw for the walker); frames/s is claimed only when both
     sides have come down.
+  - **Inline lifted stores and a gated trace hook** (toolkit `ppu: inline fast path for lifted stores`). Every
+    lifted store called the out-of-line `vm_writeN` (the lift's loads were already inline); the lift header now
+    stores inline when no store diagnostic is armed (`vm_inline_st_ok`, from the variables that arm the
+    watches and store observers), the address is plain guest memory and its line is not SPU-reserved, and
+    otherwise calls the out-of-line store as before. `ppu_trace_enter` runs only while it can still log
+    (`ppu_trace_live`). The existing lift (`work/recompiled_v015`) was not re-lifted: its `ppu_recomp.h` was
+    replaced by the new template preamble plus its original forward declarations (the template's `vrsave`
+    field left out, as the v015 sources were lifted without it). x68 against x65 (one run each, same setup):
+    frame median 112.8 -> 106.1 ms; main thread busy (frame - blocked) ~95 -> ~88 ms; walker CPU (drain - GPU
+    waits) 101.1 -> 95.8 ms; 600-1080 s 9.06 -> 9.27 game frames/s, 14.25 -> 14.40 presents/s; no hang.
 - **M0.70: the sixth native EDGE stage, +2.7%/+3.8% (2026-10-25).**
   - The loop nest of EDGE job function `6AC8` (`loc_6BE0`/`loc_6DE0`, ~3.7% of job time: a smooth falloff
     around up to three spheres per group of 8 gathered vertices, accumulated and stored by index) as AVX2

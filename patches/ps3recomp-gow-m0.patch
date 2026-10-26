@@ -5962,10 +5962,19 @@ index 79f3cc6..3af5feb 100644
          return 1;
      }
 diff --git a/runtime/ppu/ppu_fs.cpp b/runtime/ppu/ppu_fs.cpp
-index 4d54b72..413947a 100644
+index 4d54b72..14405fd 100644
 --- a/runtime/ppu/ppu_fs.cpp
 +++ b/runtime/ppu/ppu_fs.cpp
-@@ -25,6 +25,7 @@
+@@ -13,6 +13,8 @@
+  * Context-aware HLE: guest pointers (path, buffers, out params) are read/written
+  * through vm_base in big-endian.
+  */
++#define PPU_NO_INLINE_STORES  /* declares the out-of-line vm_write32/64 below; the
++                                 tests that include this file define them */
+ #include "ppu_recomp.h"      /* ppu_context */
+ #include "../../libs/filesystem/edat.h"
+ #include "ps3emu/nid.h"      /* ps3_compute_nid */
+@@ -25,6 +27,7 @@
  #include <errno.h>
  #include <atomic>
  #include <sys/stat.h>
@@ -5973,7 +5982,7 @@ index 4d54b72..413947a 100644
  #include "../platform/win32_dirent.h"   /* <dirent.h>, or a Win32 stand-in */
  
  /* Guest-resolving host backtrace (ppu_loader.cpp). Must be declared at file scope:
-@@ -48,7 +49,7 @@ extern "C" void ydkj_host_bt(const char* tag);
+@@ -48,7 +51,7 @@ extern "C" void ydkj_host_bt(const char* tag);
   * differs between CRTs: MinGW-w64's own stat() wrapper (msvcrt builds) fails
   * with EOVERFLOW, UCRT's _stat64i32 (llvm-mingw) returns the size truncated, so
   * the same title took different paths depending on the toolchain. POSIX LP64
@@ -5982,7 +5991,7 @@ index 4d54b72..413947a 100644
  #ifdef _WIN32
  #  define FS_SEEK64(f, o, w) _fseeki64((f), (int64_t)(o), (w))
  #  define FS_TELL64(f)       ((int64_t)_ftelli64(f))
-@@ -434,7 +435,7 @@ static void cellFsRead(ppu_context* ctx)
+@@ -434,7 +437,7 @@ static void cellFsRead(ppu_context* ctx)
      uint32_t nread_ptr = (uint32_t)ctx->gpr[6];
      if (fd < 0 || fd >= FS_MAX || !g_files[fd]) { ctx->gpr[3] = (uint64_t)(int64_t)CELL_FS_EIO; return; }
      uint64_t raw_nbytes = ctx->gpr[5];
@@ -5991,7 +6000,7 @@ index 4d54b72..413947a 100644
      if (ppu_vm_size && (uint64_t)buf + nbytes > ppu_vm_size) nbytes = ppu_vm_size - buf;
      fs_prefault(buf, nbytes);
      size_t n = fread(vm_base + buf, 1, (size_t)nbytes, g_files[fd]);   /* raw bytes, no swap */
-@@ -452,16 +453,16 @@ static void cellFsRead(ppu_context* ctx)
+@@ -452,16 +455,16 @@ static void cellFsRead(ppu_context* ctx)
            if (!once++) fprintf(stderr, "[fs] PS3_FSLOG_EOF: fd=%d truncated at %ld bytes\n", fd, elim);
            n = 0;
        } }
@@ -6035,7 +6044,7 @@ index b44816b..4d5329f 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index f54150d..74b2710 100644
+index f54150d..9d49c35 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -34,6 +34,7 @@
@@ -6583,7 +6592,44 @@ index f54150d..74b2710 100644
              spu_lockline_lock();                                              \
              memcpy(vm_base + (uint32_t)(a), (src), (n));                      \
              spu_coh_notify_write((uint32_t)(a));                              \
-@@ -1792,8 +2112,82 @@ static void ww_arm_inline_window(uint32_t ww)
+@@ -1567,6 +1887,23 @@ static inline void ppu_null_read_report(uint32_t a, int width, void* ra)
+ /* ppu_recomp.h's inline loads (vm_read*_inl) skip the out-of-line accessors'
+  * probes, so they run only while no read diagnostic is armed. */
+ extern "C" int vm_inline_ok = 0;
++/* ...and its inline stores (vm_write*_inl) skip vm_write*'s probes, so they run
++ * only while none of them can act. Every probe a store makes, and why the
++ * inline path may skip it:
++ *   barrier_watch_hit  watches armed only by PPU_WDEC/PPU_WJUMPBACK/PPU_WVAL/
++ *                      PPU_WWATCH (the rest of its variables need one of those);
++ *                      g_ppu_jump_store_observer is set only under GCM_PARKLOG
++ *                      (cellGcmSys) and g_barrier_sync_watch only under
++ *                      SPU_ATOM_EA (spu_channels), so the variables stand in for
++ *                      the run-time arming. A new writer of either must clear
++ *                      vm_inline_st_ok.
++ *   vm_null_store      a < 0x1000 is outside the inline range; g_null_sweep_hi
++ *                      is only ever set under PS3_NULL_SWEEP.
++ *   PT detector        PT.
++ *   vm_oob / raw SPU / reserved lines   checked inline, out-of-line on a hit.
++ * Lifted stores bind to the vm_write* below, not ppu_memory.h's, so PPU_RESV_STORE
++ * (g_resv_store_active) has never applied to them and does not gate this. */
++extern "C" int vm_inline_st_ok = 0;
+ static struct VmInlineInit {
+     VmInlineInit() {
+         static const char* const vars[] = {
+@@ -1575,6 +1912,12 @@ static struct VmInlineInit {
+         int d = 0;
+         for (int i = 0; vars[i]; i++) if (getenv(vars[i])) d = 1;
+         vm_inline_ok = !d;
++        static const char* const st_vars[] = {
++            "PPU_WDEC", "PPU_WJUMPBACK", "PPU_WVAL", "PPU_WWATCH",
++            "GCM_PARKLOG", "SPU_ATOM_EA", "PS3_NULL_SWEEP", "PT", 0 };
++        d = 0;
++        for (int i = 0; st_vars[i]; i++) if (getenv(st_vars[i])) d = 1;
++        vm_inline_st_ok = !d;
+     }
+ } s_vm_inline_init;
+ 
+@@ -1792,8 +2135,82 @@ static void ww_arm_inline_window(uint32_t ww)
      g_ww_lo = ww & ~15u;
      g_ww_hi = (ww & ~15u) + len;
  }
@@ -6667,7 +6713,7 @@ index f54150d..74b2710 100644
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
       * it lands. PPU_WWATCH answers "who writes this address"; when a bad value is
       * copied from node to node down a list, that only ever catches the copy.
-@@ -1913,6 +2307,12 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1913,6 +2330,12 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
      }
  }
  
@@ -6680,7 +6726,7 @@ index f54150d..74b2710 100644
  /* See the note on the forward declaration above ppu_stwcx32. */
  extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* ra)
  {
-@@ -2062,6 +2462,16 @@ extern "C" uint32_t ppu_prof_resolve_host(void* ra)
+@@ -2062,6 +2485,16 @@ extern "C" uint32_t ppu_prof_resolve_host(void* ra)
      return lo ? g_inv[lo - 1].guest : 0;
  }
  
@@ -6697,7 +6743,7 @@ index f54150d..74b2710 100644
  static ppu_fn ppu_lookup(uint32_t a)
  {
      uint32_t i = (a * 2654435761u) & PPU_HASH_MASK;
-@@ -2169,6 +2579,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
+@@ -2169,6 +2602,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
  #endif
  }
  
@@ -6750,7 +6796,7 @@ index f54150d..74b2710 100644
  extern "C" void ppu_dump_guest_stack(ppu_context* ctx, const char* tag)
  {
      if (!ctx || !vm_base) return;
-@@ -2496,6 +2952,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2496,6 +2975,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
  #endif
      uint32_t addr = (uint32_t)ctx->ctr;
      if (g_icall_target_set) { addr = g_icall_target; g_icall_target_set = 0; }
@@ -6776,7 +6822,7 @@ index f54150d..74b2710 100644
      /* PS3_CALLTRACE=N: log the first N indirect calls (target + r3/r4) --
       * generic visibility into vtable/callback dispatch (e.g. which job body a
       * JobManager worker runs). */
-@@ -3244,11 +3719,61 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3244,11 +3742,61 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                  char bt[512]; uint32_t bn = wlen < 511 ? wlen : 511;
                  for (uint32_t i = 0; i < bn; i++) bt[i] = (char)vm_read8(buf + i);
                  bt[bn] = 0;
@@ -6841,7 +6887,7 @@ index f54150d..74b2710 100644
                      }
                  }
              }
-@@ -3939,8 +4464,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
+@@ -3939,8 +4487,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
           * an empty boot device before deadlocking on a data.toc it never loaded. */
          ctx.gpr[3] = argc_n;                        /* argc */
          ctx.gpr[4] = argv_base;                     /* argv */
@@ -6856,21 +6902,57 @@ index f54150d..74b2710 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4051,3 +4580,125 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4051,3 +4603,157 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
 +/* Guest function-entry tracer (PPU_TRACE_FUNCS at lift time): logs the argument
 + * registers, caller and thread on entry. PPU_TRACE_MAX caps the output (default
 + * 4000 lines); PPU_TRACE_REGS=1 adds r11..r14 and the callee-saved r27..r31. */
++/* PPU_TRACE_ADDRS=<hex>[-<hex>],... -> a bit per code word below 0x800000. */
++static uint8_t* ppu_trace_parse_mask(const char* e)
++{
++    uint8_t* tmask = (uint8_t*)calloc(0x800000 / 4 / 8, 1);
++    while (*e) { char* p = nullptr; uint32_t lo = (uint32_t)strtoul(e, &p, 16), hi = lo;
++        if (p && *p == '-') hi = (uint32_t)strtoul(p + 1, &p, 16);
++        for (uint32_t a = lo; a <= hi && a < 0x800000; a += 4) tmask[(a >> 2) >> 3] |= 1u << ((a >> 2) & 7);
++        if (!p || p == e) break; e = p; while (*e == ',') e++; }
++    return tmask;
++}
++/* ppu_recomp.h skips the ppu_trace_enter call while this is 0 (a PPU_TRACE_FUNCS=all
++ * lift calls it on every guest function entry: 4.6% of GoW:A's main thread). It is
++ * cleared only when the tracer provably does nothing more: at startup when no
++ * extra (DESC_CHECK, DELAY_FN, TRACE_DUMP/2) is set and either the line cap is
++ * <= 0 or PPU_TRACE_ADDRS selects no lifted function (ab_exe.sh's ADDRS=0), and
++ * at run time by the tracer itself once its cap is spent with no extra set. */
++extern "C" int ppu_trace_live = 1;
++static struct PpuTraceLiveInit {
++    PpuTraceLiveInit() {
++        if (getenv("PPU_DESC_CHECK") || getenv("PPU_DELAY_FN") || getenv("PPU_TRACE_DUMP") ||
++            getenv("PPU_TRACE_DUMP2")) return;
++        const char* m = getenv("PPU_TRACE_MAX");
++        if ((m ? atol(m) : 4000) <= 0) { ppu_trace_live = 0; return; }
++        const char* e = getenv("PPU_TRACE_ADDRS");
++        if (!e) return;
++        uint8_t* tmask = ppu_trace_parse_mask(e);
++        int any = 0;
++        for (uint64_t k = 0; k < function_table_count && !any; k++) {
++            const uint32_t addr = (uint32_t)function_table[k].addr;
++            any = addr < 0x800000 && (tmask[(addr >> 2) >> 3] >> ((addr >> 2) & 7) & 1);
++        }
++        free(tmask);
++        if (!any) ppu_trace_live = 0;
++    }
++} s_ppu_trace_live_init;
 +void ppu_trace_enter(uint32_t addr, ppu_context* ctx)   /* declared in ppu_recomp.h */
 +{
-+    /* A PPU_TRACE_FUNCS=all lift calls this on every guest function entry (5% of
-+     * GoW:A's main thread in a profile). Once the first call has seen that only
-+     * the PPU_TRACE_ADDRS filter or the line cap can still act, reject here. */
++    /* Once the first call has seen that only the PPU_TRACE_ADDRS filter or the
++     * line cap can still act, reject here. */
 +    static int s_extras = -1;              /* DESC_CHECK, DELAY_FN or TRACE_DUMP(2) set */
 +    static uint8_t* tmask = nullptr; static int tinit = 0;
 +    static long limit = -1; static long n = 0;
++    /* Cap spent and no extra: nothing below can act again, so stop the calls. */
++    if (s_extras == 0 && limit >= 0 && n >= limit) { ppu_trace_live = 0; return; }
 +    if (s_extras == 0 && (tmask ? !(addr < 0x800000 && (tmask[(addr >> 2) >> 3] >> ((addr >> 2) & 7) & 1))
 +                                : n >= limit))
 +        return;
@@ -6907,11 +6989,7 @@ index f54150d..74b2710 100644
 +              fprintf(stderr, "\n");
 +          } } }
 +    if (!tinit) { tinit = 1; const char* e = getenv("PPU_TRACE_ADDRS");
-+        if (e) { tmask = (uint8_t*)calloc(0x800000 / 4 / 8, 1);
-+            while (*e) { char* p = nullptr; uint32_t lo = (uint32_t)strtoul(e, &p, 16), hi = lo;
-+                if (p && *p == '-') hi = (uint32_t)strtoul(p + 1, &p, 16);
-+                for (uint32_t a = lo; a <= hi && a < 0x800000; a += 4) tmask[(a >> 2) >> 3] |= 1u << ((a >> 2) & 7);
-+                if (!p || p == e) break; e = p; while (*e == ',') e++; } } }
++        if (e) tmask = ppu_trace_parse_mask(e); }
 +    /* PPU_DELAY_FN=<hex fn>,<ms>: sleep ms on every entry to fn (timing experiments: slow one
 +     * guest loop, e.g. the frame function, against the SPU/RSX side). Needs a PPU_TRACE_FUNCS=all lift. */
 +    { static uint32_t s_dfn = 1, s_dms = 0;
@@ -14414,7 +14492,7 @@ index 1c07c88..5422cb7 100644
          # (`4 ila | entry | size | 0 | 0 | C0DEC0DE | 0 | 0 | n`). Usually it is
          # reached by a branch and found anyway, but in two modules it is a bare
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index 9d9df71..3a740bf 100644
+index 9d9df71..adcddf1 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
 @@ -20,6 +20,12 @@ import time
@@ -14430,15 +14508,104 @@ index 9d9df71..3a740bf 100644
  # ---------------------------------------------------------------------------
  # We import the disassembler from the same directory.
  # ---------------------------------------------------------------------------
-@@ -220,6 +226,7 @@ static inline uint64_t vm_read64_inl(uint64_t a)
+@@ -215,11 +221,96 @@ static inline uint64_t vm_read64_inl(uint64_t a)
+ #define vm_read64(a) vm_read64_inl(a)
+ #endif
+ 
++/* Inline guest-store fast paths, the twin of the loads above. Every lifted
++ * store was an out-of-line call -- the std register saves in every prologue
++ * go through vm_write64, 18% of GoW:A's main thread in a host profile. The
++ * runtime sets vm_inline_st_ok at startup only when no store diagnostic can
++ * act (no watch, null-sweep, PT or observer variable is set; each of those is
++ * armed only through its variable). Everything else the out-of-line store
++ * treats specially still goes there: the first 64 KB (null page), the raw-SPU
++ * windows and the rest of 0xE0000000+, the end of the mapping, and a line an
++ * SPU holds reserved (that store takes the lock-line lock and notifies). A TU
++ * that opts out of the inline loads opts out of these too. */
++#ifdef __cplusplus
++extern "C" {
++#endif
++extern int vm_inline_st_ok;
++extern const unsigned char* g_spu_coh_bits;   /* runtime/spu/spu_coh_bitmap.h */
++#ifdef __cplusplus
++}
++#endif
++static inline int vm_inl_st_ok(uint32_t ea, uint32_t n)
++{
++    if (!(__builtin_expect(vm_inline_st_ok, 1) && ea >= 0x10000u && ea < 0xE0000000u &&
++          (ppu_vm_size == 0 || (uint64_t)ea + n <= ppu_vm_size)))
++        return 0;
++    const unsigned char* bits = g_spu_coh_bits;   /* the start line only, as the runtime */
++    if (!bits) return 1;
++    const uint32_t line = ea >> 7;
++    return !((bits[line >> 3] >> (line & 7)) & 1);
++}
++static inline void vm_write8_inl(uint64_t a, uint8_t v)
++{
++    const uint32_t ea = (uint32_t)a;
++    if (vm_inl_st_ok(ea, 1)) { __atomic_store_n(vm_base + ea, v, __ATOMIC_RELAXED); return; }
++    vm_write8(a, v);
++}
++static inline void vm_write16_inl(uint64_t a, uint16_t v)
++{
++    const uint32_t ea = (uint32_t)a;
++    if (vm_inl_st_ok(ea, 2)) {   /* aligned: single-copy atomic, as on Cell */
++        v = __builtin_bswap16(v);
++        if (!(ea & 1u)) __atomic_store_n((uint16_t*)(vm_base + ea), v, __ATOMIC_RELAXED);
++        else memcpy(vm_base + ea, &v, 2);
++        return; }
++    vm_write16(a, v);
++}
++static inline void vm_write32_inl(uint64_t a, uint32_t v)
++{
++    const uint32_t ea = (uint32_t)a;
++    if (vm_inl_st_ok(ea, 4)) {   /* aligned: single-copy atomic, as on Cell */
++        v = __builtin_bswap32(v);
++        if (!(ea & 3u)) __atomic_store_n((uint32_t*)(vm_base + ea), v, __ATOMIC_RELAXED);
++        else memcpy(vm_base + ea, &v, 4);
++        return; }
++    vm_write32(a, v);
++}
++static inline void vm_write64_inl(uint64_t a, uint64_t v)
++{
++    const uint32_t ea = (uint32_t)a;
++    if (vm_inl_st_ok(ea, 8)) {   /* aligned: single-copy atomic, as on Cell */
++        v = __builtin_bswap64(v);
++        if (!(ea & 7u)) __atomic_store_n((uint64_t*)(vm_base + ea), v, __ATOMIC_RELAXED);
++        else memcpy(vm_base + ea, &v, 8);
++        return; }
++    vm_write64(a, v);
++}
++#if !defined(PPU_NO_INLINE_LOADS) && !defined(PPU_NO_INLINE_STORES)
++#define vm_write8(a, v)  vm_write8_inl(a, v)
++#define vm_write16(a, v) vm_write16_inl(a, v)
++#define vm_write32(a, v) vm_write32_inl(a, v)
++#define vm_write64(a, v) vm_write64_inl(a, v)
++#endif
++
+ /* Syscall handler */
+ #ifdef __cplusplus
  extern "C"
  #endif
  void lv2_syscall(ppu_context* ctx);
 +void ppu_trace_enter(uint32_t addr, ppu_context* ctx);  /* PPU_TRACE_FUNCS */
++/* A PPU_TRACE_FUNCS=all lift calls the tracer on every function entry. The
++ * runtime clears ppu_trace_live when no trace variable can make it act (at
++ * startup, or once its line cap is spent), and the call is skipped. */
++#ifdef __cplusplus
++extern "C" {
++#endif
++extern int ppu_trace_live;
++#ifdef __cplusplus
++}
++#endif
++#ifndef PPU_NO_INLINE_LOADS
++#define ppu_trace_enter(a, c) (__builtin_expect(ppu_trace_live, 0) ? ppu_trace_enter(a, c) : (void)0)
++#endif
  
  /* Thread-local storage qualifier. The runtime's boot scaffold declares the
   * same objects the generated code does (g_active_ctx, g_trampoline_fn), so
-@@ -944,6 +951,9 @@ class PPULifter:
+@@ -944,6 +1035,9 @@ class PPULifter:
              self.functions.append(func)
              return func
  
@@ -14448,7 +14615,7 @@ index 9d9df71..3a740bf 100644
          # Instructions in [start, end), located via a cached sorted index so
          # this is O(log N + span) rather than a full O(N) scan per call.
          range_insns = self._range_insns(instructions, start, end)
-@@ -1076,7 +1086,10 @@ class PPULifter:
+@@ -1076,7 +1170,10 @@ class PPULifter:
          # carry forms (addic/addc/adde/addze/subfc/subfic) are emitted as
          # `{ uint64_t _a = ...; ctx->gpr[N] = _r; ... }`, so they were invisible: a
          # single spill/reload of a register set by one of them passed as a callee-save
@@ -14472,6 +14639,169 @@ index ec62f26..969f228 100644
              return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
                      f"int32_t _si = (int32_t)ctx->image_id; "
                      f"{_ied}ctx->pc = _tg; ctx->host_depth++; "
+diff --git a/tools/test_ppu_inline_stores.py b/tools/test_ppu_inline_stores.py
+new file mode 100644
+index 0000000..aac2980
+--- /dev/null
++++ b/tools/test_ppu_inline_stores.py
+@@ -0,0 +1,157 @@
++#!/usr/bin/env python3
++"""The lifter header's inline guest stores (vm_write*_inl) and trace gate.
++
++Builds a small driver against a ppu_recomp.h made from the lifter's own
++HEADER_PREAMBLE and checks that each inline store writes the same big-endian
++bytes the out-of-line store would, and that everything the out-of-line store
++treats specially still reaches it: vm_inline_st_ok clear, the first 64 KB,
++0xE0000000 and up (raw SPU windows), past ppu_vm_size, and a line an SPU holds
++reserved. Also that ppu_trace_enter is skipped while ppu_trace_live is 0.
++
++It needs a host C++ compiler (under CI=1 a missing one fails instead of
++skipping).
++
++Usage:
++    python3 tools/test_ppu_inline_stores.py
++"""
++
++import importlib.util
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++
++TOOLS = os.path.dirname(os.path.abspath(__file__))
++
++DRIVER = r"""
++#include "ppu_recomp.h"
++#include <stdio.h>
++#include <string.h>
++#include <stdlib.h>
++
++static uint8_t* g_mem;
++extern "C" {
++uint8_t* vm_base;
++uint32_t ppu_vm_size = 0, ppu_hle_inject_base = 0;
++int vm_inline_ok = 1, vm_inline_st_ok = 1, ppu_trace_live = 0;
++const unsigned char* g_spu_coh_bits = 0;
++static int g_slow;     /* out-of-line calls */
++uint8_t  (vm_read8)(uint64_t) { return 0; }
++uint16_t (vm_read16)(uint64_t) { return 0; }
++uint32_t (vm_read32)(uint64_t) { return 0; }
++uint64_t (vm_read64)(uint64_t) { return 0; }
++void (vm_write8)(uint64_t a, uint8_t v)   { g_slow++; g_mem[(uint32_t)a] = v; }
++void (vm_write16)(uint64_t a, uint16_t v) { g_slow++; v = __builtin_bswap16(v); memcpy(g_mem + (uint32_t)a, &v, 2); }
++void (vm_write32)(uint64_t a, uint32_t v) { g_slow++; v = __builtin_bswap32(v); memcpy(g_mem + (uint32_t)a, &v, 4); }
++void (vm_write64)(uint64_t a, uint64_t v) { g_slow++; v = __builtin_bswap64(v); memcpy(g_mem + (uint32_t)a, &v, 8); }
++}
++static int g_traced;
++void (ppu_trace_enter)(uint32_t, ppu_context*) { g_traced++; }
++
++static int fails, total;
++static void check(int ok, const char* what) {
++    total++; if (!ok) fails++;
++    printf("[%s] %s\n", ok ? "PASS" : "FAIL", what);
++}
++/* one store of each width at ea; returns how many went out of line */
++static int store_all(uint32_t ea) {
++    int s = g_slow;
++    vm_write8(ea, 0x11);
++    vm_write16(ea + 2, 0x2233);
++    vm_write32(ea + 4, 0x44556677u);
++    vm_write64(ea + 8, 0x8899AABBCCDDEEFFull);
++    return g_slow - s;
++}
++static int bytes_ok(uint32_t ea) {
++    static const uint8_t want[16] = { 0x11, 0, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
++                                      0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
++    uint8_t got[16]; memcpy(got, g_mem + ea, 16); got[1] = 0;
++    return !memcmp(got, want, 16);
++}
++
++int main() {
++    g_mem = (uint8_t*)calloc(1, 0x100000);           /* the low 1 MB of guest space */
++    static uint8_t hi[0x1000];                        /* stands in for 0xE0000000 */
++    vm_base = g_mem;
++
++    check(store_all(0x20000) == 0 && bytes_ok(0x20000), "aligned stores inline, big-endian");
++    check(store_all(0x30001) == 0, "unaligned stores inline");
++    { uint8_t want[15] = { 0x11, 0, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE };
++      uint8_t got[15]; memcpy(got, g_mem + 0x30001, 15); got[1] = 0;
++      check(!memcmp(got, want, 15), "unaligned inline stores land big-endian"); }
++    check(store_all(0x1000) == 4, "first 64 KB goes out of line (null page)");
++    check(store_all(0xFFF0) == 4, "just below 0x10000 goes out of line");
++    vm_inline_st_ok = 0;
++    check(store_all(0x40000) == 4 && bytes_ok(0x40000), "vm_inline_st_ok=0: every store out of line");
++    vm_inline_st_ok = 1;
++    ppu_vm_size = 0x50008;
++    { int s = g_slow;
++      vm_write64(0x50000, 1);   check(g_slow == s, "store ending at ppu_vm_size inline");
++      vm_write64(0x50004, 1);   check(g_slow == s + 1, "store past ppu_vm_size out of line"); }
++    ppu_vm_size = 0;
++    /* raw SPU windows: point vm_base so 0xE0000000 lands in `hi` */
++    { uint8_t* save = vm_base; vm_base = hi - 0xE0000000u; g_mem = vm_base;
++      check(store_all(0xE0000000u) == 4, "0xE0000000+ (raw SPU) out of line");
++      vm_base = save; g_mem = save; }
++    /* SPU-reserved line: bit for the line holding 0x60080 */
++    { static unsigned char bits[(0x100000 >> 7) / 8];
++      const uint32_t line = 0x60080u >> 7; bits[line >> 3] |= (unsigned char)(1u << (line & 7));
++      g_spu_coh_bits = bits;
++      check(store_all(0x60080) == 4 && bytes_ok(0x60080), "reserved line out of line");
++      check(store_all(0x60100) == 0, "unreserved neighbour line inline");
++      g_spu_coh_bits = 0; }
++
++    ppu_context ctx; memset(&ctx, 0, sizeof ctx);
++    ppu_trace_live = 0; ppu_trace_enter(0x10200u, &ctx);
++    check(g_traced == 0, "ppu_trace_live=0 skips the tracer");
++    ppu_trace_live = 1; ppu_trace_enter(0x10200u, &ctx);
++    check(g_traced == 1, "ppu_trace_live=1 calls the tracer");
++
++    printf("%s (%d/%d failed)\n", fails ? "FAIL" : "PASS", fails, total);
++    return fails ? 1 : 0;
++}
++"""
++
++
++def _cxx():
++    return (shutil.which(os.environ.get("CXX", "c++")) or shutil.which("g++")
++            or shutil.which("clang++"))
++
++
++def _header():
++    spec = importlib.util.spec_from_file_location(
++        "ppu_lifter", os.path.join(TOOLS, "ppu_lifter.py"))
++    lifter = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(lifter)
++    return lifter.HEADER_PREAMBLE
++
++
++def main():
++    cxx = _cxx()
++    if cxx is None:
++        if os.environ.get("CI"):
++            print("FAIL: no C++ compiler found")
++            return 1
++        print("skip test_ppu_inline_stores: no C++ compiler")
++        return 0
++    with tempfile.TemporaryDirectory() as td:
++        with open(os.path.join(td, "ppu_recomp.h"), "w") as fh:
++            fh.write(_header())
++        src = os.path.join(td, "driver.cpp")
++        with open(src, "w") as fh:
++            fh.write(DRIVER)
++        exe = os.path.join(td, "driver")
++        r = subprocess.run([cxx, "-std=gnu++17", "-O2", "-w", "-I" + td, "-o", exe, src],
++                           capture_output=True, text=True)
++        if r.returncode != 0:
++            print("FAIL: driver did not build")
++            print(r.stdout + r.stderr)
++            return 1
++        r = subprocess.run([exe], capture_output=True, text=True)
++        sys.stdout.write(r.stdout + r.stderr)
++        return r.returncode
++
++
++if __name__ == "__main__":
++    sys.exit(main())
 diff --git a/tools/test_spu_event_ack_sn.py b/tools/test_spu_event_ack_sn.py
 new file mode 100644
 index 0000000..51c6a6d
