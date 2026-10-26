@@ -878,6 +878,24 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - Noise: in both batches the fourth run of six was ~18% slower on every thread at once (EDGE ms/job
       0.122 against 0.108, walker drain 125-128 against 85-98 ms), whatever its settings. In x70 that run's
       settings could not have mattered: before the fix, the yield never fired.
+  - **What the HighestPrio6 list waits on** (x71 baseline trace, x72 host samples per workload with
+    `PS3_SAMPLE_WIDS`). Per frame, the last span of RenJobSet wid 11 ends a median 0.9 ms before HighestPrio6
+    starts and it does not run again until the next frame; General6 (wid 3) ends 2 ms before but keeps running
+    through it, so it is not the gate. The RenJobSet lists run as a chain at the end of the frame: wid 9
+    (ends ~29 ms before HighestPrio6), wid 10 (~22), wid 11 (26.6 ms wall, 17.2 ms busy) and wid 12 (12.6 ms
+    busy in 9 long jobs, ends ~4 ms before).
+    - Wid 11 runs as 9 visits of ~2.06 ms (the rerun window) with ~0.86 ms between them, 95% of them on a
+      different kernel thread: ~7.4 ms a frame waiting to be picked again, while the SPUs stay full (42.7 of
+      44.2 SPU-ms busy in those gaps: General6, EDGE, audio).
+    - `SPURS_PM_RERUN_WIDS="11,12=10000"` (toolkit, default unset; x73, alternating, two runs each): wid 11's
+      chain 21.0 / 21.0 ms against 27.5 / 25.9, but it starts later by about as much. HighestPrio6 wait 15 / 15
+      against 14 / 14 ms per frame, game frames/s 9.23 / 8.74 against 9.22 / 9.30, EDGE wait 9 against 7 ms.
+      The chain itself is gated by earlier work, not by its pickups.
+    - Host samples while each workload runs: General6 is 61% `jobmod_a67e` `4AB0` and 15% `63B4` (one
+      routine; native-stage candidate, ~13% of SPU time). RenJobSet is flat: no function above 6%, ~29% in
+      the runtime (`spu_drain_call` 10%, `spu_indirect_branch` 4%, MFC and channels).
+    - With the kernel threads full and the end-of-frame lists chained, scheduling knobs are done. What is left
+      is SPU compute: General6's `4AB0` as a native stage, and the runtime's dispatch cost on every workload.
 - **M0.70: the sixth native EDGE stage, +2.7%/+3.8% (2026-10-25).**
   - The loop nest of EDGE job function `6AC8` (`loc_6BE0`/`loc_6DE0`, ~3.7% of job time: a smooth falloff
     around up to three spheres per group of 8 gathered vertices, accumulated and stored by index) as AVX2

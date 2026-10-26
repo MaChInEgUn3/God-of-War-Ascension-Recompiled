@@ -155,7 +155,7 @@ index 204a005..1f5c7bc 100644
      u32 fmt_ea = (u32)(uintptr_t)format, dst = (u32)(uintptr_t)outBuff;
      if (handle >= MAX_VDEC || !s_vdec[handle].in_use || !fmt_ea)
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516..953a1a0 100644
+index 19a8516..5b3d1cb 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -13,6 +13,7 @@
@@ -942,7 +942,7 @@ index 19a8516..953a1a0 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,184 +1935,516 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,184 +1935,540 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1187,8 +1187,7 @@ index 19a8516..953a1a0 100644
 +            for (int i = 0; i < nw; i++) s_n[ws[i]] = (u8)(n > 0 ? n : 0);
 +            while (*e && *e != ';') e++;
 +            if (*e == ';') e++;
-         }
--    ReleaseSRWLockExclusive(&s_workload_registry_lock);
++        }
 +        s_init = 1;
 +    }
 +    return wid < SPURS_MAXW ? s_n[wid] : 0;
@@ -1450,6 +1449,30 @@ index 19a8516..953a1a0 100644
 +            if (s_rerun < 0) { const char* e = getenv("SPURS_PM_RERUN_US");
 +                               LARGE_INTEGER f; QueryPerformanceFrequency(&f);
 +                               s_rerun = e ? (long long)f.QuadPart * atoll(e) / 1000000 : 0; }
++            /* SPURS_PM_RERUN_WIDS="<wid>[,<wid>...]=<us>[;...]": a window of its own for
++             * those workloads. GoW:A's RenJobSet list (wid 11) gates the frame's last
++             * job list; with the shared 2 ms window it ran as ~9 visits a frame with
++             * ~0.9 ms between them, waiting to be picked again. 10 ms for wids 11,12
++             * shortened that chain by 5-6 ms but not the frame: it started later. */
++            static volatile LONG s_rrw_init; static long long s_rrw[SPURS_MAXW];
++            if (!s_rrw_init) {
++                LARGE_INTEGER f; QueryPerformanceFrequency(&f);
++                for (const char* e = getenv("SPURS_PM_RERUN_WIDS"); e && *e; ) {
++                    u32 ws[SPURS_MAXW]; int nw = 0;
++                    while (*e && *e != '=' && *e != ';') {
++                        int w = atoi(e);
++                        if (w >= 0 && w < SPURS_MAXW && nw < SPURS_MAXW) ws[nw++] = (u32)w;
++                        while (*e && *e != ',' && *e != '=' && *e != ';') e++;
++                        if (*e == ',') e++;
++                    }
++                    const long long us = (*e == '=') ? atoll(++e) : 0;
++                    for (int i = 0; i < nw; i++) s_rrw[ws[i]] = (long long)f.QuadPart * us / 1000000;
++                    while (*e && *e != ';') e++;
++                    if (*e == ';') e++;
++                }
++                s_rrw_init = 1;
++            }
++            const long long rr_lim = s_rrw[wid] ? s_rrw[wid] : s_rerun;
 +            LARGE_INTEGER rr_t0; QueryPerformanceCounter(&rr_t0);
 +            int rr_found = 0;
 +            for (;;) {
@@ -1544,7 +1567,7 @@ index 19a8516..953a1a0 100644
 +             * idle streak and stretched its wake-up cadence. */
 +            const int did = g_spurs_pm_polls != 0 || g_spu_job_entries != jobs_before;
 +            rr_found |= did;
-+            if (!did || s_rerun <= 0 || maxcont > 1) break;
++            if (!did || rr_lim <= 0 || maxcont > 1) break;
 +            /* SPURS_RERUN_YIELD=1: end the rerun as soon as a workload this SPU ranks
 +             * higher is ready and unclaimed, as the real kernel's selection would at
 +             * the module's next poll. Otherwise a low-priority list (GoW:A's EDGE,
@@ -1570,13 +1593,14 @@ index 19a8516..953a1a0 100644
 +                                     InterlockedExchange(&s_ry_n, 0), InterlockedExchange(&s_ry_y, 0)); }
 +                  if (sel != wid) { InterlockedIncrement(&s_ry_y); break; } } }
 +            { LARGE_INTEGER q; QueryPerformanceCounter(&q);
-+              if (q.QuadPart - rr_t0.QuadPart >= s_rerun) break; }
++              if (q.QuadPart - rr_t0.QuadPart >= rr_lim) break; }
 +            }
 +            if (!rr_found) { if (s_idle[wid] < 8) s_idle[wid]++; }
 +            else { s_idle[wid] = 0; pass_found_work = 1; }
 +            InterlockedDecrement(&s_wid_busy[wid]);
 +            }
-+        }
+         }
+-    ReleaseSRWLockExclusive(&s_workload_registry_lock);
 +    }
  }
  
@@ -1606,7 +1630,7 @@ index 19a8516..953a1a0 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1860,30 +2452,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1860,30 +2476,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
              printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
          _n++;
      }
@@ -1646,7 +1670,7 @@ index 19a8516..953a1a0 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2479,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2503,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -1707,7 +1731,7 @@ index 19a8516..953a1a0 100644
      return CELL_OK;
  }
  
-@@ -3095,6 +3716,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3740,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -1750,7 +1774,7 @@ index 19a8516..953a1a0 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3759,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3783,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1759,7 +1783,7 @@ index 19a8516..953a1a0 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +3780,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +3804,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -1790,7 +1814,7 @@ index 19a8516..953a1a0 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4084,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4108,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
