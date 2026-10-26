@@ -819,8 +819,25 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     0.0995 -> 0.1105 (+11%: the lanes share host cores). Timeline 600-620 s: 166 frames, median 112.8 ms; the
     RSX walker's drain is 110.5 ms per frame (of which GPU waits 9.4), i.e. the walker runs the whole frame,
     and the main thread is blocked only 17.7 ms per frame (flip pacing `375A88` 11.7). The frame is now bound
-    by the walker's CPU time (~101 ms) with the main PPU thread close behind (~95 ms busy); SPUs 0-3 show
-    100% busy.
+    by the walker's CPU time (~101 ms) and the main PPU thread (~95 ms busy) together: speeding up only the
+    walker would land the frame on the main thread at ~100 ms. The four kernel threads (SPUs 0, 1, 2, 5) show
+    100% busy; whether EDGE lanes spin at the ring-space wait is not known yet. The overlay stage O11430 stays
+    default-lifted: with EDGE no longer the bound, an A/B of its ~1.9% of job time would measure noise.
+  - **Host profile with three lanes** (x66: `PS3_SAMPLE=2 PS3_SAMPLE_HOST=1`, 1100 s; resolved with
+    `samp_resolve.py`). The lanes do not spin at the EDGE ring-space wait: no samples at `B700`/`409C` on any
+    kernel thread, `mfc_do_transfer` 1.7%. Six threads are busy nearly all the time on the 6-core host: main
+    20.3% of samples, the four kernel threads ~16% each, the walker 13.1%.
+    - Main thread: `vm_write64` 18.1% (the out-of-line store in `ppu_loader.cpp`; `vm_write32` is 0.5% of the
+      whole process), guest `466E38` 14.8%, `416338` 14.7%, `416610` 8.7%, `3E82A8` 6.4%, `ppu_trace_enter`
+      4.6% (the lift was made with `PPU_TRACE_FUNCS=all`).
+    - Kernel threads: job module `a67e` `4AB0` ~9% each (not EDGE: absent from cap_3), runtime dispatch
+      (`spu_indirect_branch`, `spu_drain_call`, `spu_lookup`) ~20%.
+    - Walker: `rsx_vertex_remap_build` 18.1%, `rsx_draw_engine_guest_read` 10.8%, texture content hashes ~8%.
+  - **How to measure from here.** With the walker (~101 ms CPU) and the main thread (~95 ms busy) both near the
+    frame, a change on one side moves frames/s by at most ~12% before the other side bounds it. A one-sided
+    change is gated on its own thread's cost from one ftrace window: walker CPU = drain - GPU waits, main busy
+    = frame - main blocked (plus `VK_DRAW_PROF` us/draw for the walker); frames/s is claimed only when both
+    sides have come down.
 - **M0.70: the sixth native EDGE stage, +2.7%/+3.8% (2026-10-25).**
   - The loop nest of EDGE job function `6AC8` (`loc_6BE0`/`loc_6DE0`, ~3.7% of job time: a smooth falloff
     around up to three spheres per group of 8 gathered vertices, accumulated and stored by index) as AVX2
