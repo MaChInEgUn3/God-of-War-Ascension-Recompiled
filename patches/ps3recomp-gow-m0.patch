@@ -2974,7 +2974,7 @@ index 6be29e4..a7f89c3 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b..08e0070 100644
+index f99986b..ce0a9c3 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -125,6 +125,8 @@ typedef struct {
@@ -3746,7 +3746,22 @@ index f99986b..08e0070 100644
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
              dc.refs_remapped ? dc.ref_remap.occurrence_to_unique : NULL,
-@@ -2722,8 +3110,71 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2659,7 +3047,13 @@ static void sink_end(void* user, const rsx_dispatch* r)
+         memcpy(g.fp_cb, g.fp_constants.values, g.fp_constants.count * 16u);
+     { float* alpha = (float*)(g.fp_cb + nslots * 16u);
+       alpha[0] = rsx_fp_alpha_ref(rs.alpha_ref_raw, rs.alpha_ref_format);
+-      alpha[1] = alpha[2] = alpha[3] = 0.0f; }
++      /* Window convention for WPOS (rsx_fp_decompiler.c, _rsx_wpos): SET_SHADER_WINDOW
++       * height in bits 0-11, origin (1 = BOTTOM) in 12-15, pixel centers (1 = INTEGER)
++       * in 16-19. */
++      const u32 win = rsx_dsp_reg(&g.rsx, 0x1D88);
++      alpha[1] = ((win >> 12) & 0xFu) ? (float)(win & 0xFFFu) : 0.0f;
++      alpha[2] = ((win >> 16) & 0xFu) ? -0.5f : 0.0f;
++      alpha[3] = 0.0f; }
+ 
+     pd_note(targets, n_targets, zslot, &rs, pipeline, tex_mask);
+ 
+@@ -2722,8 +3116,71 @@ static void sink_end(void* user, const rsx_dispatch* r)
      }
  
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
@@ -3818,7 +3833,7 @@ index f99986b..08e0070 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2787,6 +3238,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2787,6 +3244,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -3832,7 +3847,7 @@ index f99986b..08e0070 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2818,9 +3276,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2818,9 +3282,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -3866,7 +3881,7 @@ index f99986b..08e0070 100644
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
-@@ -2945,6 +3426,33 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+@@ -2945,6 +3432,33 @@ void rsx_draw_engine_method(u32 method, u32 arg)
       * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
       * preserve them with the wider mask. */
      u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
@@ -3931,9 +3946,18 @@ index 4dec1d6..d3b5276 100644
  
  /* ---- the engine --------------------------------------------------------- */
 diff --git a/libs/video/rsx_fp_decompiler.c b/libs/video/rsx_fp_decompiler.c
-index 5ce72ef..fa06ca2 100644
+index 5ce72ef..83e0d66 100644
 --- a/libs/video/rsx_fp_decompiler.c
 +++ b/libs/video/rsx_fp_decompiler.c
+@@ -340,7 +340,7 @@ static const char* input_expr(u32 input_src)
+         "input.tc0", "input.tc1", "input.tc2", "input.tc3",
+         "input.tc4", "input.tc5", "input.tc6", "input.tc7" };
+     switch (input_src) {
+-    case 0x0: return "input.position"; /* WPOS */
++    case 0x0: return "_rsx_wpos(input.position)"; /* WPOS (window origin applied below) */
+     /* RSX clamps fragment color-input reads before swizzle/abs/negate.
+      * Texture coordinates and the vertex output registers remain unbounded. */
+     case 0x1: return "saturate(input.col0)"; /* COL0 */
 @@ -415,6 +415,14 @@ static void dest_mask(u32 op0, char* m)
   * FragmentProgramDecompiler::BuildCode (gcm_enums.h). */
  #define FP_CTRL_32BIT_EXPORTS 0x40u
@@ -3990,6 +4014,24 @@ index 5ce72ef..fa06ca2 100644
      if (dbg_here) {
          static u32 reported;
          if (PS3_LOG_FIRST(reported, 8))
+@@ -1274,6 +1291,17 @@ static int rsx_fp_decompile_internal(
+             "#else\n"
+             "#define _rsx_inv_w(p) (1.0 / (p).w)\n"
+             "#endif\n");
++    /* WPOS in the RSX window convention. The host position has its origin at the
++     * top left; with SET_SHADER_WINDOW origin BOTTOM the RSX counts y up from the
++     * bottom edge, and full-screen passes build their UVs from it (GoW:A:
++     * uv = wpos * (1/W, -1/H) + (0, 1)), so reading the host y mirrored every such
++     * pass. The engine passes the window height in fp_alpha.y when the origin is
++     * BOTTOM (0 otherwise) and a pixel-center bias in fp_alpha.z. */
++    if (strstr(o.p, "_rsx_wpos("))
++        out_puts(&p, buffered
++            ? "#define _rsx_wpos(p) float4((p).x + fp_alpha.z, "
++              "(fp_alpha.y != 0.0 ? fp_alpha.y - (p).y : (p).y) + fp_alpha.z, (p).z, (p).w)\n"
++            : "#define _rsx_wpos(p) (p)\n");
+     /* Texture bank. With no cube units (the default) emit the exact legacy
+      * array declaration so 2D-only programs are byte-identical. When any unit
+      * is a cubemap, declare each unit individually at its t-register so the
 diff --git a/libs/video/rsx_texture_layout.c b/libs/video/rsx_texture_layout.c
 index 131cc0d..71c0b6c 100644
 --- a/libs/video/rsx_texture_layout.c

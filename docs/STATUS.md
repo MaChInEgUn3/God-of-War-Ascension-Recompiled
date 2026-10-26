@@ -799,6 +799,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.71: EDGE on three SPUs at once, +65%; the 3D scene the right way up (2026-10-25).**
+  - Parallel EDGE lanes are on by default: the port sets `SPURS_LANES=15,16,17=3` (toolkit `SPURS_LANES`, see
+    the lanes entry under M0.62 for how it works and why the old blocker was our runtime). One instance at a
+    time, 600-1080 s, alternated (x63): off 5.63 / 6.20 game frames/s, two lanes 8.41 / 9.45, three lanes
+    9.65 / 9.76; presents/s 11.05 / 12.28 off, 13.51 / 13.72 with three. No `[pm-hang]` or HALT in any run, frame
+    dumps clean. `SPURS_LANES=off` goes back to one EDGE lane.
+  - The 3D scene was upside down under an upright HUD (seen in the frame dumps). The fragment translator read
+    WPOS as the host position (origin top left) and ignored `SET_SHADER_WINDOW` (0x1D88); GoW sets origin BOTTOM
+    and builds its full-screen pass UVs as `wpos * (1/W, -1/H) + (0, 1)`, so every such pass mirrored its
+    source. WPOS now follows the window register (height when origin BOTTOM, pixel-center bias), passed in the
+    unused lanes of `fp_alpha`. Check run x64 (both defaults on): scene upright with the HUD upright, no hang,
+    9.64 game frames/s and 13.9 presents/s at 600-1080 s. 127-174 of the game's fragment programs read WPOS,
+    so screen-space reads in materials changed too; nothing wrong seen in the dumps, not checked further.
 - **M0.70: the sixth native EDGE stage, +2.7%/+3.8% (2026-10-25).**
   - The loop nest of EDGE job function `6AC8` (`loc_6BE0`/`loc_6DE0`, ~3.7% of job time: a smooth falloff
     around up to three spheres per group of 8 gathered vertices, accumulated and stored by index) as AVX2

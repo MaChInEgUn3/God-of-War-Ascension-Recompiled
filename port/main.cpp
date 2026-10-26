@@ -666,6 +666,12 @@ int main(int argc, char** argv)
      * or bad size in 8 runs. SPURS_KERN_SPUS=0,1,5 or 0,1 goes back. */
     if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,2,5");
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
+    /* SPURS_LANES=15,16,17=3 (the default now): the EDGE lists run on up to three
+     * SPUs at once (0-2, each as its own spuNum, with its own output ring the game
+     * set up). One instance, 600-1080 s, alternated: 5.63/6.20 game frames/s off,
+     * 8.41/9.45 with two lanes, 9.65/9.76 with three; no hang, clean frames.
+     * SPURS_LANES=off goes back to one EDGE lane. */
+    if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE
      * lock they skew exactly the runs that measure timing. Set PS3_VERBOSE=1 to
