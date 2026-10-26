@@ -799,6 +799,24 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.72: a fifth SPURS kernel thread, +4-11% (2026-10-26).**
+  - With three EDGE lanes the four kernel threads were ~100% busy (x71: SPUs 99-103% in the trace), and the
+    main thread's two SPU waits were the frame's slack: the EDGE list (`3E8388`, ~7 ms per frame) and
+    HighestPrio6 (`467B2C`, ~14). The port now sets `SPURS_KERN_SPUS=0,1,2,3,5` (was `0,1,2,5`): SPU 3, where
+    EDGE0-2 have priority 8, HighestPrio6 2 and General6 12.
+  - Alternating, one instance at a time, game frames/s over 600-960 s (x74, x75): 9.77 / 10.02 / 10.12 against
+    9.37 / 9.01 / 9.09. Per frame: EDGE wait 7 -> 0 ms, HighestPrio6 wait 14 -> 11, flip pacing (`375A88`)
+    6-7 -> 10-13 (the main thread now waits on the walker). Seven threads are busy on a 6-core/12-thread host;
+    the walker's drain grew in one pair (115 against 93 ms) and not in the other two. Frame dumps unchanged, no
+    hang.
+    `SPURS_KERN_SPUS=0,1,2,5` goes back.
+  - The heartbeat's `presents` are not distinct frames: `flips` equals `game_frame` in every run, while presents
+    run 1.4-1.8x higher. The frame clock (`main.cpp`) presents on the flip-pending flag and again when the flip
+    count changed, so one flip can be presented twice. Game frames/s is the frame rate; earlier presents/s
+    figures in this file count those repeats.
+  - Next: the walker is the bound again. Its largest known cost is depth and colour targets sampled with
+    another format, copied to guest memory and uploaded again (`z2guest`/`s2guest`/reupload in
+    `ENG_PHASE_STATS`, ~19 ms per frame).
 - **M0.71: EDGE on three SPUs at once, +65%; the 3D scene the right way up (2026-10-25).**
   - Parallel EDGE lanes are on by default: the port sets `SPURS_LANES=15,16,17=3` (toolkit `SPURS_LANES`, see
     the lanes entry under M0.62 for how it works and why the old blocker was our runtime). One instance at a
@@ -875,11 +893,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       RenJobSet (11) 4%, BatchJobList (7) 4%. The next lever is SPU compute (General6 first), not the kernel.
     - 2 EDGE lanes instead of 3 (x70): 8.71 / 8.87 against 9.30 / 9.37 game frames/s (EDGE wait 15 against
       7 ms per frame). 3 stays the default.
-    - Noise: a few minutes roughly every two hours run ~15-20% slower on every thread at once (EDGE ms/job
-      0.122 against 0.108, walker drain 125-128 against 85-98 ms), whatever the settings: seen near 02:45,
-      04:40 and 07:05 in x70, x71 and x73 (the 30 s heartbeats of x73w_2 drop from ~9.3 to 7.5-8.4 game
-      frames/s between 840 and 1050 s only). Likely a periodic host task; a run that overlaps one is flagged
-      from its heartbeats, not discarded.
+    - Noise: stretches of a few minutes run ~15-20% slower on every thread at once (EDGE ms/job 0.122
+      against 0.108, walker drain 125-128 against 85-98 ms), whatever the settings, 40 minutes to 2.5 hours
+      apart (x70, x71, x73, x74; e.g. the 30 s heartbeats of x73w_2 drop from ~9.3 to 7.5-8.4 game frames/s
+      between 840 and 1050 s only). Likely a host task; a run that overlaps one is flagged from its heartbeats
+      and compared over the clean window, not discarded.
   - **What the HighestPrio6 list waits on** (x71 baseline trace, x72 host samples per workload with
     `PS3_SAMPLE_WIDS`). Per frame, the last span of RenJobSet wid 11 ends a median 0.9 ms before HighestPrio6
     starts and it does not run again until the next frame; General6 (wid 3) ends 2 ms before but keeps running

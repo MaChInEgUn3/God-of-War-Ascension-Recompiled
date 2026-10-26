@@ -663,8 +663,13 @@ int main(int argc, char** argv)
      * SPURS_KERN_SPUS=0,1,2,5 (the default now): SPU 2 too, where EDGE0-2 (priority
      * 8 on SPUs 0-3) may run. Without SPURS_PM_RERUN_US it measured neutral; with it,
      * tail 1.542/1.467/1.508/1.479 vs 1.429/1.371/1.402/1.400 (swapped 2+2), no hang
-     * or bad size in 8 runs. SPURS_KERN_SPUS=0,1,5 or 0,1 goes back. */
-    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,2,5");
+     * or bad size in 8 runs. SPURS_KERN_SPUS=0,1,5 or 0,1 goes back.
+     * SPURS_KERN_SPUS=0,1,2,3,5 (the default now): a fifth thread, SPU 3, once the
+     * four were ~100% busy with three EDGE lanes. x74, alternating, 600-960 s: 9.77 /
+     * 10.02 vs 9.37 / 9.01 game frames/s; EDGE wait 7 -> 0 and HighestPrio6 wait
+     * 14 -> 11 ms per frame; the walker's drain grew (7 busy threads on 6 cores).
+     * Frame dumps unchanged, no hang. 0,1,2,5 goes back. */
+    if (!getenv("SPURS_KERN_SPUS") && !getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_SPUS", "0,1,2,3,5");
     if (!getenv("SPURS_KERN_THREADS")) _putenv_s("SPURS_KERN_THREADS", "2");
     /* SPURS_LANES=15,16,17=3 (the default now): the EDGE lists run on up to three
      * SPUs at once (0-2, each as its own spuNum, with its own output ring the game

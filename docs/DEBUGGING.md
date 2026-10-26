@@ -400,7 +400,7 @@ Lessons that cost days; keep them.
 * **Async Vulkan submission**: `VK_ASYNC=1` (port default) keeps up to 3 batches in flight (`VK_ASYNC=0` waits at
   every flush, the thing to try for a rendering bug that might be ordering).
 * **SPURS scheduling knobs**: `SPURS_PM_RERUN_US` (port default 2000; the second argument of `work/ab_exe.sh`
-  overrides it), `SPURS_KERN_SPUS` (port default `0,1,2,5`), `SPURS_EDGE_DIAG=<s>` with `SPURS_EDGE_WIDS`
+  overrides it), `SPURS_KERN_SPUS` (port default `0,1,2,3,5`), `SPURS_EDGE_DIAG=<s>` with `SPURS_EDGE_WIDS`
   (whether those workloads ever run side by side), `SPURS_MAXCONT="<wid>=<n>,..."` (lanes per workload, experiment),
   `SPURS_LANES="<wid>[,<wid>...]=<n>[;...]"` (up to n kernel threads run that workload's module at once, each as
   the SPU it plays, only on SPUs the workload has a priority on; the port's default is `SPURS_LANES=15,16,17=3`, `SPURS_LANES=off` disables it),
