@@ -812,6 +812,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     unused lanes of `fp_alpha`. Check run x64 (both defaults on): scene upright with the HUD upright, no hang,
     9.64 game frames/s and 13.9 presents/s at 600-1080 s. 127-174 of the game's fragment programs read WPOS,
     so screen-space reads in materials changed too; nothing wrong seen in the dumps, not checked further.
+  - **Where the frame goes with three lanes** (x65: production defaults, one instance, 1100 s, PM profiling on,
+    `PS3_FTRACE=600:20`), against x56 (six stages, one lane). Tail 5.95 -> 9.06 game frames/s (168 -> 110 ms
+    per frame). The main thread's EDGE list wait (`3E8388`) fell from 83 to 6 ms per frame (49% -> 5% of
+    samples): EDGE no longer bounds the frame. EDGE w15-17 busy 160% of wall (lanes overlap); ms/job
+    0.0995 -> 0.1105 (+11%: the lanes share host cores). Timeline 600-620 s: 166 frames, median 112.8 ms; the
+    RSX walker's drain is 110.5 ms per frame (of which GPU waits 9.4), i.e. the walker runs the whole frame,
+    and the main thread is blocked only 17.7 ms per frame (flip pacing `375A88` 11.7). The frame is now bound
+    by the walker's CPU time (~101 ms) with the main PPU thread close behind (~95 ms busy); SPUs 0-3 show
+    100% busy.
 - **M0.70: the sixth native EDGE stage, +2.7%/+3.8% (2026-10-25).**
   - The loop nest of EDGE job function `6AC8` (`loc_6BE0`/`loc_6DE0`, ~3.7% of job time: a smooth falloff
     around up to three spheres per group of 8 gathered vertices, accumulated and stored by index) as AVX2
