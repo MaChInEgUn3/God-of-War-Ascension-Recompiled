@@ -812,6 +812,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     +2.3% and +5.9%, no hang, nothing else above 0.2 cores. The spread between the two pairs (~1.3 frames/s) is
     larger than the effect, so the size is uncertain; the lookup returns exactly what the scan returned, so it is
     kept.
+  - Where the walker's driver time goes (x105, `PS3_SAMPLE_MOD=nvoglv64.dll`): the NVIDIA Vulkan driver is at most
+    ~24% of the walker's samples, and 79% of the driver samples are entered from `vk_eng_draw`. Each draw began and
+    ended its own render pass behind a full memory barrier and an image barrier per target; `VK_DRAW_PROF` put
+    recording at ~5.7 us of the draw.
+  - Tried, not adopted as a default: `VK_PASS_MERGE=1` (toolkit e5a4814c) keeps a batched draw's render pass open
+    for the next draw with the same render pass, framebuffer and size that samples none of the pass's targets.
+    96% of draws went into an open pass, no draw sampled a target of its own pass, recording fell to 2.2-2.4 us,
+    and the frame dumps looked right (x106). A/B f n n f (x107): 12.75 / 12.73 against 12.64 / 12.40, +1.8%,
+    under the 0.44 noise floor, with a browser using ~0.5-0.7 cores in three of the runs. The walker's own CPU
+    fell from ~0.86 to ~0.78 cores without the frame rate following, so after M0.80 and M0.81 the walker is no
+    longer the only limit. The knob stays, off.
 - **M0.80: EdgeWatchdog sleeps instead of spinning, +5.8%; the RSX walker is the binding stage (2026-10-27).**
   - Per-thread host CPU over 120 s (x101, `Get-Process` thread times, tids matched to the all-thread sampler): main
     thread 0.91 cores, RSX FIFO walker 0.87, the busiest SPU kernel thread 0.85, the others 0.73-0.77, and one

@@ -191,7 +191,9 @@ Lessons that cost days; keep them.
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:
   `RSX_PIPE_FAST=0` (M0.81) brings back the per-draw linear pipeline scan and fragment-program walks, to check whether
-  a pipeline mix-up comes from the index or the memo. `scripts/thrsnap.ps1` diffs `Get-Process` thread times between two moments of a run.
+  a pipeline mix-up comes from the index or the memo. `VK_DRAW_PROF=<s>` splits the Vulkan draw into lookup,
+  descriptors, copies, recording and flush per draw, and counts render passes; `VK_PASS_MERGE=1` (off) lets
+  consecutive batched draws share one. `scripts/thrsnap.ps1` diffs `Get-Process` thread times between two moments of a run.
 * **Sub-millisecond sleeps** (M0.80): the port sets `PS3_USLEEP_WAIT_US=500`, so a guest `usleep` of 500-999 us
   waits on a high-resolution timer instead of spinning; `0` brings the spin back for every sub-ms sleep.
 * **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU
