@@ -811,6 +811,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Game frames/s over 360-720 s, alternating, one instance at a time (x93): 12.06 / 11.84 against 11.74 / 11.72
     for M0.77. SPU busy time 391.3 / 358.3 against 397.0 / 391.3 ms per frame, drain 81.5 / 71.9 against
     77.8 / 76.2. No hang. The CPU log shows nothing else above 13 CPU-seconds per 30 s during the runs.
+  - Both arms ran with `SPURS_PM_PROF=60`, which times every channel write with two `QueryPerformanceCounter`
+    calls in the old build; the fast path returns before that. Without `SPURS_PM_PROF` (normal play) the saving is
+    smaller than measured. The A/B metrics come from `PS3_FTRACE` and the heartbeat, so later channel-path A/Bs run
+    with `NOPMPROF=1`.
   - The main thread waits on the SPU chain for 71-82 ms of each 76-87 ms frame, so only work that shortens that
     chain shows up in frames/s; a trim smaller than ~3% cannot be told apart from noise with two pairs.
 - **M0.77: GETLLAR without the lock-line lock for registered holders, +0.5-2.6% (2026-10-26).**
