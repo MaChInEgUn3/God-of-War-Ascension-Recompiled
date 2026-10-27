@@ -181,6 +181,10 @@ Lessons that cost days; keep them.
 * **Time inside a system DLL**: `PS3_SAMPLE_MOD=ntdll.dll` (one module) also buckets that module's samples by RVA
   (`[samp] modrva ntdll.dll+0x...`); resolve them against the DLL's export table, nearest export at or below. This is
   how the `longjmp` unwinding was found (M0.64). `SPU_LONGJMP_UNWIND=1` brings the unwinding jump back.
+* **SPU indirect-branch dispatch cache** (M0.79): `PS3_SPU_IBC=0` turns it off, to check whether a dispatch bug comes
+  from the cache. It is also off whenever `SPU_IBCOV`, `SPU_IB_STATS`, `SPU_POLLTRACE`, `YDKJ_POLTRACE`,
+  `SPU_JOBTRACE`, `SPU_JOBEXEC` or `LBP_HLE_JOBDONE` is set, and while job capture or replay runs, so those traces
+  see every dispatch.
   Each such sample is also unwound to the first frame in the exe (`[samp] modcaller rva 0x...`, resolve against the
   link map): which code calls into the DLL. That found an uncached `getenv` in `spu_run_with_halt`.
 * **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU

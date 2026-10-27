@@ -799,6 +799,29 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.79: indirect-branch dispatch cache, SPU busy time -8% (2026-10-27).**
+  - Most indirect branches on the render/job chain go to a few targets: in an x84 census of ~700k branches/s, one
+    target was 12% and the top 24 were 44%. Each one still walked every check in `spu_indirect_branch`, up to
+    16 resident code slots, and up to three `spu_lookup` probes into a 96 KB per-thread table that the lifted code
+    between dispatches evicts.
+  - A per-thread cache of 512 16-byte entries, keyed on pc, image, overlay and policy mode, now answers the common
+    case (toolkit 4f4c1418, 7934d504). An entry is written only when the standard lookups found the target and
+    nothing else applied; job entry and the resident code slots are checked live on a hit, and the paths that read
+    local store are never cached. Any function, task-entry or task-ELF registration bumps one epoch that empties
+    the cache. `PS3_SPU_IBC=0` turns it off, as does any trace switch the dispatcher reads.
+  - A bitmask of the resident code slots in use lets dispatch skip the 16-slot loop when no slot is in use. The
+    `spu_lookup` entries shrank from 24 to 16 bytes, so the table is 64 KB and no entry straddles two cache lines.
+  - The cache alone did not help. In a host profile (x94) the cost moved from `spu_lookup` into
+    `spu_indirect_branch`, and the dispatch group stayed at 14.3% (14.1% before): the slot loop and three global
+    loads for the generation still touched cold cache lines. With the slot mask and the single epoch (x95) the group
+    is 11.6% (`spu_indirect_branch` 6.4%, `spu_lookup` 1.1%, `spu_drain_call` 4.1%), and `spu_overlay_note_get`
+    fell from ~1.3% to 0.8%. On this host, cost per dispatch follows the cache lines it touches, not the
+    instructions it runs.
+  - A/B without `SPURS_PM_PROF` (x96, alternating, one instance at a time), game frames/s over 360-720 s: 12.22 /
+    12.11 against 12.17 / 11.92 for M0.78. SPU busy time 360.3 / 357.4 against 397.1 / 380.6 ms per frame, drain
+    75.4 / 76.8 against 85.7 / 82.4, ftrace frames in the window 250 / 251 against 222 / 233. No hang. Nothing
+    else used more than 10 CPU-seconds per 30 s during the runs.
+  - The frames/s gain is inside the noise floor; the SPU busy time and drain drops are the measured effect.
 - **M0.78: MFC parameter channel writes skip the MFC path, +1-2.7% (2026-10-27).**
   - A host profile of the critical render/job chain (x91, SPURS workloads 2 and 9-13) puts the runtime at ~36% of
     samples, with ~18% in channel/MFC code (`spu_wrch_impl` 3.3%, `mfc_for` 2.5%, `mfc_submit` 2.2%) and ~14% in

@@ -9257,7 +9257,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..46cb927c 100644
+index 59f5e4b8..dc005fcc 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -9453,7 +9453,7 @@ index 59f5e4b8..46cb927c 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,3844 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,3952 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -13303,6 +13303,9 @@ index 59f5e4b8..46cb927c 100644
 +#define SPU_FN_REGISTRY_MAX 262144
 +static spu_reg_entry s_registry[SPU_FN_REGISTRY_MAX];
 +static uint32_t s_registry_count = 0;
++/* Bumped by every function, task-entry and task-ELF registration: the
++ * indirect-branch dispatch cache (t_ibc) empties when it changes. */
++static uint32_t s_ibc_epoch = 0;
 +
 +/* Accessor for the sampling profiler in ppu_loader.cpp. Its address->function
 + * map is built from the PPU table alone, which leaves the SPU-lifted bodies as
@@ -13371,6 +13374,7 @@ index 59f5e4b8..46cb927c 100644
 +    s_registry[i].fn = fn;
 +    s_registry[i].image_id = s_reg_image;
 +    s_registry_count = i + 1;
++    s_ibc_epoch++;
 +    uint32_t h = spu_fn_hash(addr);
 +    s_hash_next[i] = 0;
 +    if (s_hash_head[h] == 0)
@@ -13438,13 +13442,19 @@ index 59f5e4b8..46cb927c 100644
 +     * thread. Entries are stamped with the registry size, so a later
 +     * registration invalidates them. */
 +    enum { LC_SIZE = 4096 };
-+    static SPU_THREAD_LOCAL struct { uint32_t addr; int image_id; uint32_t gen; spu_fn fn; } t_lc[LC_SIZE];
++    /* 16-byte entries: address and image share a key word, so the table is
++     * 64 KB instead of 96 KB and no entry straddles two cache lines. Keys that
++     * do not fit go straight to the walk. */
++    static SPU_THREAD_LOCAL struct { uint32_t key; uint32_t gen; spu_fn fn; } t_lc[LC_SIZE];
++    if (__builtin_expect(addr >= SPU_LS_SIZE || (uint32_t)image_id >= 0x4000u, 0))
++        return spu_lookup_walk(addr, image_id);
++    const uint32_t key = addr | (uint32_t)image_id << 18;
 +    const uint32_t gen = s_registry_count;
 +    const uint32_t slot = ((addr >> 2) ^ ((uint32_t)image_id * 0x9E37u)) & (LC_SIZE - 1);
-+    if (t_lc[slot].gen == gen && t_lc[slot].addr == addr && t_lc[slot].image_id == image_id)
++    if (t_lc[slot].key == key && t_lc[slot].gen == gen)
 +        return t_lc[slot].fn;
 +    spu_fn fn = spu_lookup_walk(addr, image_id);
-+    t_lc[slot].addr = addr; t_lc[slot].image_id = image_id; t_lc[slot].gen = gen; t_lc[slot].fn = fn;
++    t_lc[slot].key = key; t_lc[slot].gen = gen; t_lc[slot].fn = fn;
 +    return fn;
 +}
 +
@@ -13615,6 +13625,7 @@ index 59f5e4b8..46cb927c 100644
 +        s_task_entry[s_task_entry_count].entry = entry & SPU_LS_MASK;
 +        s_task_entry[s_task_entry_count].image_id = image_id;
 +        s_task_entry_count++;
++        s_ibc_epoch++;
 +    }
 +}
 +static int spu_taskset_task_image(uint32_t entry)
@@ -13634,6 +13645,7 @@ index 59f5e4b8..46cb927c 100644
 +        s_task_elf[s_task_elf_count].elf_ea = elf_ea & ~7u;
 +        s_task_elf[s_task_elf_count].image_id = image_id;
 +        s_task_elf[s_task_elf_count++].policy_image_id = policy_image_id;
++        s_ibc_epoch++;
 +    }
 +}
 +static int spu_taskset_resident_image(const spu_context* ctx)
@@ -13746,13 +13758,15 @@ index 59f5e4b8..46cb927c 100644
 +          }
 +          ReleaseSRWLockExclusive(&lk);
 +      } }
-+    for (unsigned slot = 0; slot < SPU_RESIDENT_CODE_SLOTS; ++slot) {
-+        if (!ctx->resident_code[slot].image_id) continue;
++    for (uint32_t m = ctx->resident_code_mask; m; m &= m - 1) {
++        const unsigned slot = (unsigned)__builtin_ctz(m);
 +        uint32_t base = ctx->resident_code[slot].lsa;
 +        uint32_t end = base + ctx->resident_code[slot].size;
 +        if (lsa < end && lsa + size > base &&
-+            (lsa < base || ea != ctx->resident_code[slot].source_ea + (lsa - base)))
++            (lsa < base || ea != ctx->resident_code[slot].source_ea + (lsa - base))) {
 +            ctx->resident_code[slot].image_id = 0;
++            ctx->resident_code_mask &= ~(1u << slot);
++        }
 +    }
 +    /* The first registered entry that matches wins, as in a scan in order. */
 +    int best = -1;
@@ -13776,6 +13790,8 @@ index 59f5e4b8..46cb927c 100644
 +                    ctx->resident_code[slot].size = o->span;
 +                    ctx->resident_code[slot].source_ea = ea;
 +                    ctx->resident_code[slot].image_id = o->image_id;
++                    if (o->image_id) ctx->resident_code_mask |= 1u << slot;
++                    else ctx->resident_code_mask &= ~(1u << slot);
 +                    return;
 +                }
 +                fprintf(stderr, "[spu-ovl] no free resident code span for image %d\n", o->image_id);
@@ -15145,6 +15161,64 @@ index 59f5e4b8..46cb927c 100644
 +    fflush(stderr);
 +}
 +
++/* Indirect-branch dispatch cache. Most dispatches go to a few targets (in a
++ * GoW:A render-chain census one target was 12% of all indirect branches and
++ * 24 targets 44%), yet each one walked every check below and up to three
++ * spu_lookup probes into a 64 KB table that the lifted code between
++ * dispatches evicts. A per-thread table of 512 16-byte entries answers the
++ * common case.
++ *
++ * An entry is only written at the tail of spu_indirect_branch, when the
++ * standard lookups found the target and nothing else applied. Its key is what
++ * that decision read besides the link register, the resident code slots and
++ * local store: pc, image, overlay and policy mode. The probe checks the link
++ * register (job entry) and the code slots live; the image-23 and 0xA70 paths,
++ * which read local store, are never cached. Any registration -- function, task
++ * entry or task ELF -- bumps s_ibc_epoch, which empties the table. PS3_SPU_IBC=0 turns it off, as does
++ * any trace switch spu_indirect_branch reads. */
++enum { IBC_SIZE = 512 };
++static SPU_THREAD_LOCAL struct { uint64_t key; spu_fn fn; } t_ibc[IBC_SIZE];
++static SPU_THREAD_LOCAL uint32_t t_ibc_gen;
++static int s_ibc_on = -1;
++static __attribute__((noinline)) int spu_ibc_init(void)
++{
++    const char* e = getenv("PS3_SPU_IBC");
++    s_ibc_on = !(e && e[0] == '0') &&
++        !getenv("SPU_IBCOV") && !getenv("SPU_IB_STATS") && !getenv("SPU_POLLTRACE") &&
++        !getenv("YDKJ_POLTRACE") && !getenv("SPU_JOBTRACE") && !getenv("SPU_JOBEXEC") &&
++        !getenv("LBP_HLE_JOBDONE");
++    return s_ibc_on;
++}
++static inline uint32_t spu_ibc_gen(void)
++{
++    return s_ibc_epoch;
++}
++static inline int spu_ibc_key(const spu_context* ctx, uint64_t* key, uint32_t* slot)
++{
++    const uint32_t img = (uint32_t)ctx->image_id, ovl = (uint32_t)ctx->resident_ovl;
++    if (img >= 0x1000u || ovl >= 0x1000u) return 0;
++    *key = (uint64_t)ctx->pc | (uint64_t)img << 18 | (uint64_t)ovl << 30 |
++           (uint64_t)(ctx->policy_mode != 0) << 42 | 1ull << 43;
++    *slot = ((ctx->pc >> 2) ^ (img * 0x9E37u) ^ (ovl * 0x85EBu)) & (IBC_SIZE - 1);
++    return 1;
++}
++static inline spu_fn spu_ibc_probe(const spu_context* ctx)
++{
++    uint64_t key; uint32_t slot;
++    if (!spu_ibc_key(ctx, &key, &slot)) return NULL;
++    const uint32_t gen = spu_ibc_gen();
++    if (__builtin_expect(gen != t_ibc_gen, 0)) { memset(t_ibc, 0, sizeof t_ibc); t_ibc_gen = gen; return NULL; }
++    return t_ibc[slot].key == key ? t_ibc[slot].fn : NULL;
++}
++static inline void spu_ibc_fill(const spu_context* ctx, spu_fn fn)
++{
++    uint64_t key; uint32_t slot;
++    if (!spu_ibc_key(ctx, &key, &slot)) return;
++    const uint32_t gen = spu_ibc_gen();
++    if (gen != t_ibc_gen) { memset(t_ibc, 0, sizeof t_ibc); t_ibc_gen = gen; }
++    t_ibc[slot].key = key; t_ibc[slot].fn = fn;
++}
++
 +void spu_indirect_branch(spu_context* ctx)
 +{
 +    /* Real SPU bi/bisl mask the target to the 256 KB local store; the high bits
@@ -15175,6 +15249,33 @@ index 59f5e4b8..46cb927c 100644
 +          if (s_it && PS3_LOG_FIRST(_r, 200))
 +              fprintf(stderr, "[irq] IRET restore at srr0=0x%05X\n", ctx->pc & SPU_LS_MASK);
 +      } }
++    /* Dispatch cache (see t_ibc). A hit does what the path to the tail below
++     * does for it: drop resident_task outside the task region, then the
++     * stack-reset check and the call. */
++    if (__builtin_expect(s_ibc_on != 0, 1) && (s_ibc_on > 0 || spu_ibc_init()) &&
++        !g_spu_jobcap_on && g_spu_jobrep_on <= 0 &&
++        (ctx->resident_task == 0 || ctx->pc < SPU_TASKSET_TASK_LO)) {
++        spu_fn fn = spu_ibc_probe(ctx);
++        if (fn) {
++            const uint32_t jl = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
++            int plain = !(ctx->policy_mode && ctx->pc >= 0x4000 && ctx->pc < 0x3E000 && jl >= 0xA00 && jl < 0x4000);
++            for (uint32_t m = plain ? ctx->resident_code_mask : 0; m; m &= m - 1) {
++                const unsigned slot = (unsigned)__builtin_ctz(m);
++                if (ctx->pc - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size &&
++                    ctx->pc >= ctx->resident_code[slot].lsa) { plain = 0; break; }
++            }
++            if (plain) {
++                ctx->resident_task = 0;
++                spu_check_stack_reset(ctx, fn);
++#if defined(__clang__)
++                __attribute__((musttail)) return fn(ctx);
++#else
++                fn(ctx);
++                return;
++#endif
++            }
++        }
++    }
 +    /* SPURS kernel services (policy-module runs only): the HLE kernel plants
 +     * these two reserved addresses as exitToKernelAddr / selectWorkloadAddr in
 +     * the SpursKernelContext (spurs_policy.c). */
@@ -15387,8 +15488,9 @@ index 59f5e4b8..46cb927c 100644
 +     * is 0 outside the region, so this only ever fires for genuine task code.) */
 +    spu_fn fn = NULL;
 +    int code_owner = 0;
-+    for (unsigned slot = 0; slot < SPU_RESIDENT_CODE_SLOTS; ++slot) {
-+        if (ctx->resident_code[slot].image_id && ctx->pc >= ctx->resident_code[slot].lsa &&
++    for (uint32_t m = ctx->resident_code_mask; m; m &= m - 1) {
++        const unsigned slot = (unsigned)__builtin_ctz(m);
++        if (ctx->pc >= ctx->resident_code[slot].lsa &&
 +            ctx->pc - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size) {
 +            code_owner = ctx->resident_code[slot].image_id;
 +            fn = spu_lookup(ctx->pc, code_owner);
@@ -15402,6 +15504,11 @@ index 59f5e4b8..46cb927c 100644
 +     * may also be registered (historical junk lifts) and must lose. */
 +    if (!code_owner && !fn && ctx->resident_ovl) fn = spu_lookup(ctx->pc, ctx->resident_ovl);
 +    if (!code_owner && !fn) fn = spu_lookup(ctx->pc, ctx->image_id);
++    /* Only these lookups' answer goes into the dispatch cache: the fallbacks
++     * below read local store or change the overlay. */
++    const int ibc_fill = fn && !code_owner && !ctx->resident_task && s_ibc_on > 0 &&
++        ctx->image_id != SPU_RESOLVER_ONLY_IMAGE_ID && ctx->pc != SPURS_TASKSET_PM_SYSCALL_LS;
++    const spu_fn ibc_fn = fn;
 +    /* Job starts: a policy module branching from its own code (LS 0xA00-0x3FFF)
 +     * into staged job code (SPURS_PM_PROF counts them per workload). */
 +    uint32_t jc_link = 0;   /* SPU_JOB_CAPTURE: nonzero = open a capture before the entry runs */
@@ -15692,6 +15799,7 @@ index 59f5e4b8..46cb927c 100644
 +                  s_dumped = 1; } } }
 +    }
 +    if (fn) {
++        if (ibc_fill && fn == ibc_fn) spu_ibc_fill(ctx, fn);
 +        /* After the overlay match above, so the header names the overlay this
 +         * entry resolved to. */
 +        if (jc_link) spu_jobcap_open(ctx, jc_link);
@@ -16333,7 +16441,7 @@ index ca76ccd1..53226cb2 100644
   * lookup guarded by a global that is zero until the first GETLLAR. */
  int spu_coh_is_reserved(uint32_t addr);
 diff --git a/runtime/spu/spu_context.h b/runtime/spu/spu_context.h
-index f46d415f..b9c8b523 100644
+index f46d415f..c7756f01 100644
 --- a/runtime/spu/spu_context.h
 +++ b/runtime/spu/spu_context.h
 @@ -39,17 +39,17 @@ extern "C" {
@@ -16363,10 +16471,13 @@ index f46d415f..b9c8b523 100644
  }
  static inline void spu_ls_watch_hit(uint32_t lsa, int is_write, const uint8_t* p) {
      spu_ls_watch_hit2(lsa, is_write, p, 0, 0);
-@@ -284,12 +284,17 @@ typedef struct spu_context {
+@@ -284,12 +284,20 @@ typedef struct spu_context {
       * path recognizes a registered overlay's source EA and records which
       * overlay is now resident; dispatch retries a missed lookup against it. */
      int resident_ovl;
++    /* Bit k set while resident_code[k] is in use, so dispatch skips the slots
++     * when none is (it sits beside resident_ovl, which dispatch reads anyway). */
++    uint32_t resident_code_mask;
 +    /* Edge-style jobs keep several small code fragments resident at once (GoW:A's
 +     * EDGE jobs stage up to ~6 EBOOT fragments at LS 0x11090+). */
 +#ifndef SPU_RESIDENT_CODE_SLOTS
@@ -16382,7 +16493,7 @@ index f46d415f..b9c8b523 100644
  
      /* Resident SPURS-taskset TASK image id (0 = none) retires the id-0 wildcard
       * for co-resident tasks. A taskset may hold several tasks that all lift at the
-@@ -376,24 +381,46 @@ typedef struct spu_context {
+@@ -376,24 +384,46 @@ typedef struct spu_context {
      uint64_t list_stall_ea_base[32];      /* ea base (hi32 carries), per tag */
      uint32_t list_stall_cmd[32];          /* base (non-list) MFC command, per tag */
  
@@ -16445,7 +16556,7 @@ index f46d415f..b9c8b523 100644
  /* Reserved LS addresses (inside the kernel area, below the 0xA00 policy-module
   * base) that the HLE kernel plants as exitToKernelAddr / selectWorkloadAddr in
   * the SpursKernelContext. A policy module branching to them is performing a
-@@ -482,26 +509,36 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
+@@ -482,26 +512,36 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
  #define SPU_LS_FAST 1
  #endif
  
@@ -16501,7 +16612,7 @@ index f46d415f..b9c8b523 100644
      /* SPU_LS_LOWREAD=1: a job that reads its OWN first bytes as data is
       * dereferencing a null base -- the job binary loads at LS 0, so [NULL+off]
       * returns its own instruction words. Report each distinct low address once,
-@@ -535,17 +572,22 @@ static __attribute__((noinline, cold)) void spu_ls_read_probe(const spu_context*
+@@ -535,17 +575,22 @@ static __attribute__((noinline, cold)) void spu_ls_read_probe(const spu_context*
                      off >> 6, (off >> 2) & 0xF, off);
          }
      }
@@ -16531,7 +16642,7 @@ index f46d415f..b9c8b523 100644
  #if SPU_LS_FAST
      uint32_t w0, w1, w2, w3;
      memcpy(&w0, p,      4); memcpy(&w1, p + 4,  4);
-@@ -563,7 +605,8 @@ static inline u128 spu_ls_read128(const spu_context* ctx, uint32_t lsa)
+@@ -563,7 +608,8 @@ static inline u128 spu_ls_read128(const spu_context* ctx, uint32_t lsa)
      return v;
  }
  
@@ -16541,7 +16652,7 @@ index f46d415f..b9c8b523 100644
  {
      if (lsa == 0x1320 && ctx->image_id == 2 && ctx->policy_mode) {
          extern int g_wws_code_probe;   /* defined in spu_channels.c, capped */
-@@ -591,12 +634,12 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_pre(spu_context*
+@@ -591,12 +637,12 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_pre(spu_context*
              #undef _RD32
          }
      }
@@ -16560,7 +16671,7 @@ index f46d415f..b9c8b523 100644
      /* SPU_SMC_WATCH=<img>: self-modification detector. Log any store whose
       * target LS line falls inside that image's CODE segment (the segment
       * bounds come from SPU_SMC_LO/HI, default the pm_wwsjob range 0xA00..
-@@ -615,39 +658,44 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_smc(spu_context*
+@@ -615,39 +661,44 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_smc(spu_context*
                        p[0], p[1], p[2], p[3]);
        } }
  }
@@ -16637,7 +16748,7 @@ index f46d415f..b9c8b523 100644
  /* ---------------------------------------------------------------------------
   * Preferred slot extraction
   *
-@@ -783,6 +831,8 @@ extern SPU_THREAD_LOCAL unsigned g_spu_pch_n;
+@@ -783,6 +834,8 @@ extern SPU_THREAD_LOCAL unsigned g_spu_pch_n;
  /* Central per-transfer hooks (stubbed in spu_drain.c until their milestones). */
  void yz_lockstep_tick(spu_context* ctx);             /* round-robin token gate */
  void spu_task_launch_check(spu_context* ctx, void* fn); /* SPURS task-launch    */
@@ -16646,7 +16757,7 @@ index f46d415f..b9c8b523 100644
  /* Restore image_id after a call-bracket (adopt-on-serve); re-applies the
   * persistent LS-0xA00 workload module if one is set. */
  void spu_img_restore(spu_context* ctx, int32_t saved_img);
-@@ -802,6 +852,13 @@ int  spu_tailret_enabled(void);
+@@ -802,6 +855,13 @@ int  spu_tailret_enabled(void);
   * unchanged (interrupt not taken) if LS 0 holds no branch instruction. */
  void (*spu_take_interrupt(spu_context* ctx,
                            void (*tf)(spu_context*)))(spu_context*);
@@ -16660,7 +16771,7 @@ index f46d415f..b9c8b523 100644
  
  /* Drain a translated call up to its explicit architectural return PC. */
  void spu_drain_call(spu_context* ctx, uint32_t return_pc);
-@@ -872,11 +929,13 @@ static inline void spu_pchist_tick(const spu_context* ctx)
+@@ -872,11 +932,13 @@ static inline void spu_pchist_tick(const spu_context* ctx)
              }                                                              \
              void (*_tf)(spu_context*) = g_spu_trampoline_fn;    \
              g_spu_trampoline_fn = 0;                            \
@@ -16676,7 +16787,7 @@ index f46d415f..b9c8b523 100644
              spu_pchist_tick(ctx);                              \
              g_spu_pch[g_spu_pch_n++ & 7u] =                    \
                  (uint32_t)((ctx)->pc & SPU_LS_MASK);           \
-@@ -884,6 +943,46 @@ static inline void spu_pchist_tick(const spu_context* ctx)
+@@ -884,6 +946,46 @@ static inline void spu_pchist_tick(const spu_context* ctx)
          }                                                      \
      } while (0)
  
@@ -19479,10 +19590,10 @@ index 90a2f775..99154c21 100644
 +}
 diff --git a/runtime/spu/spu_job_replay.c b/runtime/spu/spu_job_replay.c
 new file mode 100644
-index 00000000..a63a062a
+index 00000000..925c88d5
 --- /dev/null
 +++ b/runtime/spu/spu_job_replay.c
-@@ -0,0 +1,685 @@
+@@ -0,0 +1,688 @@
 +/*
 + * SPU job replay: SPU_JOB_REPLAY=<dir> (docs/EDGE_NATIVE.md, "Replay").
 + *
@@ -19909,6 +20020,9 @@ index 00000000..a63a062a
 +        ctx->resident_code[k].source_ea = h->code[k].source_ea;
 +        ctx->resident_code[k].image_id = h->code[k].image_id;
 +    }
++    ctx->resident_code_mask = 0;
++    for (unsigned k = 0; k < SPU_RESIDENT_CODE_SLOTS; ++k)
++        if (ctx->resident_code[k].image_id) ctx->resident_code_mask |= 1u << k;
 +    const spu_jobcap_state* st = &h->st;
 +    ctx->int_enable = st->int_enable; ctx->event_status = st->event_status;
 +    ctx->event_mask = st->event_mask; ctx->srr0 = st->srr0;
