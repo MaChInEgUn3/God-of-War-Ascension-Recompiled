@@ -799,6 +799,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.81: the walker's pipeline lookup without the linear scan, +4% (2026-10-27).**
+  - `eng_pipeline_get` runs on every draw (~2000 a frame). It compared the key with every cached pipeline in turn,
+    and walked the fragment program four times: sampled units, gamma units, sign-expansion units and the
+    structural hash.
+  - A key-hash index over the pipeline list finds the same entry the scan did (a key is added only when it is not
+    found, so keys are unique). A 16-entry memo, validated by a copy of the program's bytes like the existing
+    vertex-program memo, keeps the three unit sets and the structural hash per program; the per-draw texture
+    masks are applied to the stored sets. Inline constants are still collected every draw (toolkit ae236f41).
+    `RSX_PIPE_FAST=0` turns both off.
+  - A/B, one exe, env alternated f n n f (x104), game frames/s over 360-720 s: 11.81 / 13.27 against 11.55 / 12.53,
+    +2.3% and +5.9%, no hang, nothing else above 0.2 cores. The spread between the two pairs (~1.3 frames/s) is
+    larger than the effect, so the size is uncertain; the lookup returns exactly what the scan returned, so it is
+    kept.
 - **M0.80: EdgeWatchdog sleeps instead of spinning, +5.8%; the RSX walker is the binding stage (2026-10-27).**
   - Per-thread host CPU over 120 s (x101, `Get-Process` thread times, tids matched to the all-thread sampler): main
     thread 0.91 cores, RSX FIFO walker 0.87, the busiest SPU kernel thread 0.85, the others 0.73-0.77, and one
