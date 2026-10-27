@@ -799,6 +799,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.77: GETLLAR without the lock-line lock for registered holders, +0.5-2.6% (2026-10-26).**
+  - The last v0.18 SPU commit held back from M0.76 (c9a450d8): a context that already holds a reservation and
+    re-reads a line that is already marked publishes its reservation and copies the line without taking the
+    lock-line lock. Line marks are never cleared, so every repeated policy-module poll of the SPURS instance takes
+    this path (no counter was added; read from the code).
+  - Game frames/s over 360-720 s, alternating, one instance at a time (x89): 11.73 / 11.71 against 11.43 / 11.65
+    for M0.76. The second pair is inside the spread of two M0.76 runs (0.22). SPU busy time is 10 ms per frame lower
+    in both pairs (410.6 / 390.6 against 421.0 / 400.9), drain 82.0 / 77.3 against 85.1 / 79.9. The CPU log shows
+    nothing else above 13 CPU-seconds per 30 s during the four runs.
+  - It changes lock behaviour, so a run longer than the four 12-minute runs without a hang is still to be done.
 - **M0.76: ps3recomp v0.18 SPU and runtime work picked onto the toolkit, +5% (2026-10-26).**
   - ps3recomp v0.18.0 is out (2026-10-26). Our 56 toolkit commits conflict with it in about 140 hunks over 26
     files, so the full merge waits; the commits that matter for speed were picked onto `gow-v017` instead:
@@ -816,8 +826,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     Every per-minute rate of the new build is at or above the old build's. SPU busy time drops from 450-465 to
     400-419 ms per frame over six SPUs. No hang in four 12-minute runs. The CPU log was not running for this
     batch.
-  - Not picked: the GETLLAR fast path (c9a450d8) was picked, then reverted while the hang was bisected; it was not
-    the cause and will be measured on its own. Per-line PUT copies (13a7676b) would break the PUT ordering this
+  - Held back: the GETLLAR fast path (c9a450d8) was picked, then reverted while the hang was bisected; it was not
+    the cause and is M0.77. Per-line PUT copies (13a7676b) would break the PUT ordering this
     game depends on (`SPU_PUT_HEAD_LAST`).
   - `PS3_SPU_DIRECT=0` goes back to the trampoline.
 - **M0.75: the GPU depth path pays with six kernel threads, +4% (2026-10-26).**
