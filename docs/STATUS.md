@@ -799,7 +799,7 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
-- **M0.79: indirect-branch dispatch cache, SPU busy time -8% (2026-10-27).**
+- **M0.79: indirect-branch dispatch cache, dispatch share 14.1% -> 11.6%, frames/s within noise (2026-10-27).**
   - Most indirect branches on the render/job chain go to a few targets: in an x84 census of ~700k branches/s, one
     target was 12% and the top 24 were 44%. Each one still walked every check in `spu_indirect_branch`, up to
     16 resident code slots, and up to three `spu_lookup` probes into a 96 KB per-thread table that the lifted code
@@ -818,10 +818,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     fell from ~1.3% to 0.8%. On this host, cost per dispatch follows the cache lines it touches, not the
     instructions it runs.
   - A/B without `SPURS_PM_PROF` (x96, alternating, one instance at a time), game frames/s over 360-720 s: 12.22 /
-    12.11 against 12.17 / 11.92 for M0.78. SPU busy time 360.3 / 357.4 against 397.1 / 380.6 ms per frame, drain
-    75.4 / 76.8 against 85.7 / 82.4, ftrace frames in the window 250 / 251 against 222 / 233. No hang. Nothing
-    else used more than 10 CPU-seconds per 30 s during the runs.
-  - The frames/s gain is inside the noise floor; the SPU busy time and drain drops are the measured effect.
+    12.11 against 12.17 / 11.92 for M0.78, +0.4% / +1.6%, inside the noise floor. No hang. Nothing else used more
+    than 10 CPU-seconds per 30 s during the runs.
+  - The per-frame ftrace numbers look larger than that and are not a result: SPU busy 360.3 / 357.4 against
+    397.1 / 380.6 ms per frame and drain 75.4 / 76.8 against 85.7 / 82.4, but the 20 s trace window held 250 / 251
+    flips against 222 / 233, and the total SPU busy time in it is the same in both builds (90.1 / 89.7 against
+    88.2 / 88.7 s). The heartbeat for the same stretch does not show the extra flips. A per-frame
+    number from one 20 s window moves with the flip count, so compare window totals when the counts differ.
+  - The build is kept for the lower dispatch cost (x95) and because it is not slower; it does not move frames/s.
 - **M0.78: MFC parameter channel writes skip the MFC path, +1-2.7% (2026-10-27).**
   - A host profile of the critical render/job chain (x91, SPURS workloads 2 and 9-13) puts the runtime at ~36% of
     samples, with ~18% in channel/MFC code (`spu_wrch_impl` 3.3%, `mfc_for` 2.5%, `mfc_submit` 2.2%) and ~14% in
@@ -832,8 +836,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - The first A/B (x92) measured nothing: the fast path was also off under `SPURS_PM_PROF`, which the A/B harness
     always sets. It did show the noise floor: the two M0.77 runs differed by 0.44 game frames/s (11.66 / 11.22).
   - Game frames/s over 360-720 s, alternating, one instance at a time (x93): 12.06 / 11.84 against 11.74 / 11.72
-    for M0.77. SPU busy time 391.3 / 358.3 against 397.0 / 391.3 ms per frame, drain 81.5 / 71.9 against
-    77.8 / 76.2. No hang. The CPU log shows nothing else above 13 CPU-seconds per 30 s during the runs.
+    for M0.77. SPU busy time 391.3 / 358.3 against 397.0 / 391.3 ms per frame (window totals 91.6 / 93.5 against
+    94.5 / 94.7 s), drain 81.5 / 71.9 against 77.8 / 76.2. No hang. The CPU log shows nothing else above 13 CPU-seconds per 30 s during the runs.
   - Both arms ran with `SPURS_PM_PROF=60`, which times every channel write with two `QueryPerformanceCounter`
     calls in the old build; the fast path returns before that. Without `SPURS_PM_PROF` (normal play) the saving is
     smaller than measured. The A/B metrics come from `PS3_FTRACE` and the heartbeat, so later channel-path A/Bs run
