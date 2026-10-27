@@ -799,6 +799,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.78: MFC parameter channel writes skip the MFC path, +1-2.7% (2026-10-27).**
+  - A host profile of the critical render/job chain (x91, SPURS workloads 2 and 9-13) puts the runtime at ~36% of
+    samples, with ~18% in channel/MFC code (`spu_wrch_impl` 3.3%, `mfc_for` 2.5%, `mfc_submit` 2.2%) and ~14% in
+    indirect-branch dispatch (`spu_indirect_branch` 6.6%, `spu_lookup` 3.9%, `spu_drain_call` 3.8%).
+  - Five or six of the eight or nine channel writes of every DMA only latch LSA, EAH, EAL, size, tag or the tag
+    mask. `spu_wrch` now stores those in the context directly instead of going through `spu_wrch_impl`,
+    `mfc_for` and the channel switch (toolkit b0c9b2c8, c1720f75). `SPU_CHHIST` turns it off.
+  - The first A/B (x92) measured nothing: the fast path was also off under `SPURS_PM_PROF`, which the A/B harness
+    always sets. It did show the noise floor: the two M0.77 runs differed by 0.44 game frames/s (11.66 / 11.22).
+  - Game frames/s over 360-720 s, alternating, one instance at a time (x93): 12.06 / 11.84 against 11.74 / 11.72
+    for M0.77. SPU busy time 391.3 / 358.3 against 397.0 / 391.3 ms per frame, drain 81.5 / 71.9 against
+    77.8 / 76.2. No hang. The CPU log shows nothing else above 13 CPU-seconds per 30 s during the runs.
+  - The main thread waits on the SPU chain for 71-82 ms of each 76-87 ms frame, so only work that shortens that
+    chain shows up in frames/s; a trim smaller than ~3% cannot be told apart from noise with two pairs.
 - **M0.77: GETLLAR without the lock-line lock for registered holders, +0.5-2.6% (2026-10-26).**
   - The last v0.18 SPU commit held back from M0.76 (c9a450d8): a context that already holds a reservation and
     re-reads a line that is already marked publishes its reservation and copies the line without taking the
