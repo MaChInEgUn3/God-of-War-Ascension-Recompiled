@@ -832,6 +832,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     alternated (x97): 11.43 / 11.50 game frames/s pinned against 11.91 / 12.04 unpinned, -4% in both pairs, no
     hang. A hard pin keeps a kernel thread waiting when the main, RSX or Vulkan thread holds its processor, where
     the scheduler would have moved it.
+  - Also tried, not adopted: letting the main thread's wait loops yield. A host sample of every thread with the main
+    thread's guest pc (x98, `GOW_MAIN_PROF`) has the main thread on a processor almost all the time, about three
+    quarters of it in three polling loops: 0x3E8910 in frame routine 0x3E82A8 (reload a halfword flag, 16 nops,
+    loop, ~13%), and the job-slot scan 0x416338 called from loops 0x416654 and 0x416A44 (~25%), plus a bounded
+    poll at 0x464F80 (~15%, not hooked). A probe called a hook at the three loop heads that paused for the first
+    64 quick repeats and then called `SwitchToThread`. Game frames/s over 360-720 s, one exe, env alternated
+    y n n y y n (x100): 11.42 / 12.02 / 10.39 yielding against 12.53 / 12.00 / 11.53, no hang. The pair with no
+    other load on the host is even; in the other two the yielding run had a browser or chat client using ~0.8-1.1
+    cores and lost more. The game used ~7 logical processors in both arms. With the pinning result, two tests say
+    host CPU contention is not what limits frames/s; the spin cycles freed did not turn into SPU progress. The
+    probe was removed.
 - **M0.78: MFC parameter channel writes skip the MFC path, +1-2.7% (2026-10-27).**
   - A host profile of the critical render/job chain (x91, SPURS workloads 2 and 9-13) puts the runtime at ~36% of
     samples, with ~18% in channel/MFC code (`spu_wrch_impl` 3.3%, `mfc_for` 2.5%, `mfc_submit` 2.2%) and ~14% in
