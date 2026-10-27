@@ -826,6 +826,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     88.2 / 88.7 s). The heartbeat for the same stretch does not show the extra flips. A per-frame
     number from one 20 s window moves with the flip count, so compare window totals when the counts differ.
   - The build is kept for the lower dispatch cost (x95) and because it is not slower; it does not move frames/s.
+  - Tried after it, not adopted: pinning each SPURS kernel thread to its own physical core. The game uses ~6.5 of the
+    host's 12 logical processors (6 cores), so kernel threads share cores with SMT siblings. `SPURS_PIN=1` (toolkit
+    branch gow-v017pin, off by default) gives kernel thread k the first logical processor of core k. One exe, env
+    alternated (x97): 11.43 / 11.50 game frames/s pinned against 11.91 / 12.04 unpinned, -4% in both pairs, no
+    hang. A hard pin keeps a kernel thread waiting when the main, RSX or Vulkan thread holds its processor, where
+    the scheduler would have moved it.
 - **M0.78: MFC parameter channel writes skip the MFC path, +1-2.7% (2026-10-27).**
   - A host profile of the critical render/job chain (x91, SPURS workloads 2 and 9-13) puts the runtime at ~36% of
     samples, with ~18% in channel/MFC code (`spu_wrch_impl` 3.3%, `mfc_for` 2.5%, `mfc_submit` 2.2%) and ~14% in
