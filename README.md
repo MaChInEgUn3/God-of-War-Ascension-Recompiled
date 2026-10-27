@@ -2,7 +2,7 @@
 
 > **Status: research / early bring-up. Not playable.** The game boots, plays its intro movies, shows the main menu
 > with text and music, and runs the first level with the Vulkan backend at about 11-11.5 frames per second on a
-> 6-core CPU with an RTX 3080, with no hangs in 18-minute runs. Where the time
+> 6-core CPU with an RTX 3080, with no hangs in 25-minute runs. Where the time
 > goes and what is being worked on is in [docs/STATUS.md](docs/STATUS.md). Generic fixes go upstream to ps3recomp
 > as small PRs. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 

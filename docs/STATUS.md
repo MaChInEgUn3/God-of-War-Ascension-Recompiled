@@ -808,7 +808,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     for M0.76. The second pair is inside the spread of two M0.76 runs (0.22). SPU busy time is 10 ms per frame lower
     in both pairs (410.6 / 390.6 against 421.0 / 400.9), drain 82.0 / 77.3 against 85.1 / 79.9. The CPU log shows
     nothing else above 13 CPU-seconds per 30 s during the four runs.
-  - It changes lock behaviour, so a run longer than the four 12-minute runs without a hang is still to be done.
+  - It changes lock behaviour, so it also ran 25 minutes on its own (x90): no hang, 11.6-11.9 game frames/s per
+    two minutes from 720 s on, working set 1127 -> 1156 MB and private bytes 2394 -> 2462 MB between 300 and 1500 s.
+    From 240 to 600 s it ran at 10.0-10.4 while I was running git cherry-picks in the toolkit tree; the CPU log
+    shows no other process above 8 CPU-seconds per 30 s then, so the cause is not confirmed.
 - **M0.76: ps3recomp v0.18 SPU and runtime work picked onto the toolkit, +5% (2026-10-26).**
   - ps3recomp v0.18.0 is out (2026-10-26). Our 56 toolkit commits conflict with it in about 140 hunks over 26
     files, so the full merge waits; the commits that matter for speed were picked onto `gow-v017` instead:
