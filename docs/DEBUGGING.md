@@ -253,6 +253,10 @@ Lessons that cost days; keep them.
 * **Targets sampled through guest memory**: with `ENG_PHASE_STATS` set, `[eng-via-guest]` lists each distinct way a
   draw samples a depth or colour target as a texture by storing it to guest memory first (z2guest/s2guest): the
   texture format, the target's format and size (first 32).
+* **SPU direct tails**: lifted known-target branches tail-call their target (SPU_DIRECT, toolkit default on).
+  `PS3_SPU_DIRECT=0` sends every transfer back through the drain loop's trampoline; the drain-step diagnostics
+  (`SPU_LOCKSTEP`, `SPU_TAILRET`, `SPU_PCHIST`, `SPU_STEPTRACE`, `SPU_JOBDRAIN`, `SPURS_PM_FLOW`, ...,
+  `SPU_JOB_CAPTURE`, `SPU_JOB_REPLAY`) turn it off by themselves, so they see every step.
 * **Depth read as A8R8G8B8 on the GPU**: `RSX_Z2ARGB=1` (GoW:A port default) builds a D24S8 depth target sampled as linear A8R8G8B8
   on the GPU instead of storing it to guest memory. It prints `[z2argb] 60s:` with conversions, textures created,
   failures and backend time. `RSX_Z2ARGB=2` also does the store and compares the texels (`[z2argb-check] 60s: N

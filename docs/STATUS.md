@@ -799,6 +799,27 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.76: ps3recomp v0.18 SPU and runtime work picked onto the toolkit, +5% (2026-10-26).**
+  - ps3recomp v0.18.0 is out (2026-10-26). Our 56 toolkit commits conflict with it in about 140 hunks over 26
+    files, so the full merge waits; the commits that matter for speed were picked onto `gow-v017` instead:
+    poison scan only when reported (a903520e), lwmutex with an atomic lock word (dc37f00b), a leaf-import fast
+    path (9a3fbffd), buffered stdout/stderr (c40829d7), the walker forgetting a park (3e9311c6), a bounded EA->IO
+    lookup (06a37689) and SPU_DIRECT (#510): a lifted branch with a known target tail-calls it instead of
+    returning to the drain loop.
+  - The SPU_DIRECT commit also makes a drain restore the outer `drain_ret_pc` when it returns. Here that hung the
+    level after about 2.5 minutes (`[pm-hang] wid=12 pc=0x02EA0 img=10`, RenJobSet's policy module) with or without
+    SPU_DIRECT on; this toolkit's interpreter still stops at `drain_ret_pc`, which v0.18 changed. Setting it back
+    to 0 when a drain returns (3c818525) fixes it.
+  - Lifts made before this need the new tails: `python scripts/spu_direct_rewrite.py port/spu --apply` rewrites
+    33,953 sites in 364 images (a fresh lift with the toolkit's `spu_lifter.py` emits them already).
+  - Game frames/s over 360-720 s, alternating, one instance at a time (x88): 11.41 / 11.51 against 10.91 / 10.90.
+    Every per-minute rate of the new build is at or above the old build's. SPU busy time drops from 450-465 to
+    400-419 ms per frame over six SPUs. No hang in four 12-minute runs. The CPU log was not running for this
+    batch.
+  - Not picked: the GETLLAR fast path (c9a450d8) was picked, then reverted while the hang was bisected; it was not
+    the cause and will be measured on its own. Per-line PUT copies (13a7676b) would break the PUT ordering this
+    game depends on (`SPU_PUT_HEAD_LAST`).
+  - `PS3_SPU_DIRECT=0` goes back to the trampoline.
 - **M0.75: the GPU depth path pays with six kernel threads, +4% (2026-10-26).**
   - With the sixth kernel thread the main thread waits on the walker again, so `RSX_Z2ARGB=1` (M0.73) was
     measured again and is now the port default.
