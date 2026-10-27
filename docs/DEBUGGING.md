@@ -181,12 +181,18 @@ Lessons that cost days; keep them.
 * **Time inside a system DLL**: `PS3_SAMPLE_MOD=ntdll.dll` (one module) also buckets that module's samples by RVA
   (`[samp] modrva ntdll.dll+0x...`); resolve them against the DLL's export table, nearest export at or below. This is
   how the `longjmp` unwinding was found (M0.64). `SPU_LONGJMP_UNWIND=1` brings the unwinding jump back.
+  Each such sample is also unwound to the first frame in the exe (`[samp] modcaller rva 0x...`, resolve against the
+  link map): which code calls into the DLL. That found an uncached `getenv` in `spu_run_with_halt`.
 * **SPU indirect-branch dispatch cache** (M0.79): `PS3_SPU_IBC=0` turns it off, to check whether a dispatch bug comes
   from the cache. It is also off whenever `SPU_IBCOV`, `SPU_IB_STATS`, `SPU_POLLTRACE`, `YDKJ_POLTRACE`,
   `SPU_JOBTRACE`, `SPU_JOBEXEC` or `LBP_HLE_JOBDONE` is set, and while job capture or replay runs, so those traces
   see every dispatch.
-  Each such sample is also unwound to the first frame in the exe (`[samp] modcaller rva 0x...`, resolve against the
-  link map): which code calls into the DLL. That found an uncached `getenv` in `spu_run_with_halt`.
+* **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
+  and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
+  n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:
+  `scripts/thrsnap.ps1` diffs `Get-Process` thread times between two moments of a run.
+* **Sub-millisecond sleeps** (M0.80): the port sets `PS3_USLEEP_WAIT_US=500`, so a guest `usleep` of 500-999 us
+  waits on a high-resolution timer instead of spinning; `0` brings the spin back for every sub-ms sleep.
 * **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU
   channel read/write with two `QueryPerformanceCounter` calls, ~5% of EDGE time. A/B comparisons stay valid; absolute
   numbers are a bit pessimistic. `NOPMPROF=1` runs without them (no `[pm-prof]`, so no EDGE ms/job).

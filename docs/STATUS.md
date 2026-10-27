@@ -1,4 +1,4 @@
-# Status (updated 2026-10-25)
+# Status (updated 2026-10-27)
 
 ## Works
 * Loader, lifter, compile and link of the whole PPU; boot through CRT, FIOS, PSARC mounting, DCDS, savedata.
@@ -799,6 +799,27 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.80: EdgeWatchdog sleeps instead of spinning, +5.8%; the RSX walker is the binding stage (2026-10-27).**
+  - Per-thread host CPU over 120 s (x101, `Get-Process` thread times, tids matched to the all-thread sampler): main
+    thread 0.91 cores, RSX FIFO walker 0.87, the busiest SPU kernel thread 0.85, the others 0.73-0.77, and one
+    above-normal-priority thread at 0.77 cores that the sampler did not cover. Guest threads with priority below 256
+    get `THREAD_PRIORITY_ABOVE_NORMAL`.
+  - That thread is EdgeWatchdog. It polls with ~800 us `sys_timer_usleep` calls, and the runtime serves a sleep
+    under 1 ms with a `QueryPerformanceCounter` loop around `SwitchToThread`, so the watchdog held a logical
+    processor for the whole sleep. `PS3_USLEEP_WAIT_US=<n>` (toolkit fd12038a) waits a sub-millisecond sleep of
+    at least n us on a high-resolution waitable timer instead; shorter sleeps, like the main thread's 30 us polls,
+    keep the precise spin. The port sets 500.
+  - The walker: in the x99 traces its drain passes cover 57.8 of 60 s with no ACQUIRE block, and the flip reaches
+    it ~23 ms after the guest requests it. `ENG_PHASE_STATS=30` (x102) shows a constant ~22.9 s of every 30 s in
+    methods, 20.3 s of it in 580-700 thousand draws (~2000 per frame, ~30 us each): backend recording 6.2 s,
+    textures 5-6 s (hash 1.4, re-upload 1.5-1.8, surface stores 0.9-1.7), vertex fetch 4.3 s, pipeline lookup
+    3.5 s, index build 0.7 s.
+  - Causal check: `RSX_SLOW_PCT=<n>` (toolkit 5f4740df, diagnostic) busy-waits n% of each walker pass. At 25 the
+    game ran 10.65 game frames/s against 12.21 / 12.39, -13% where a fully binding stage would give -20%.
+  - A/B, one exe, env alternated b s w b w (x103), game frames/s over 360-720 s: 13.02 / 13.02 with the watchdog
+    timer against 12.21 / 12.39, no hang; the game used ~6.6 cores against ~7.5, and nothing else used more than
+    0.5 cores during the runs.
+  - Next: per-draw work on the walker (pipeline key, vertex fetch, texture checks, backend recording).
 - **M0.79: indirect-branch dispatch cache, dispatch share 14.1% -> 11.6%, frames/s within noise (2026-10-27).**
   - Most indirect branches on the render/job chain go to a few targets: in an x84 census of ~700k branches/s, one
     target was 12% and the top 24 were 44%. Each one still walked every check in `spu_indirect_branch`, up to

@@ -724,6 +724,13 @@ int main(int argc, char** argv)
      * Storing the head last, behind a store fence, publishes the release after
      * the segment. 0 restores the plain copy. */
     if (!getenv("SPU_PUT_HEAD_LAST")) _putenv_s("SPU_PUT_HEAD_LAST", "1");
+    /* PS3_USLEEP_WAIT_US=500: sub-millisecond sleeps of 500 us or more wait on
+     * a high-resolution timer instead of the runtime's yield-spin. EdgeWatchdog
+     * polls with ~800 us sleeps at an above-normal host priority and held a
+     * logical processor all the time (0.76-0.90 cores); off it, the game ran
+     * 13.02 / 13.02 game frames/s against 12.21 / 12.39 (x103). Shorter
+     * sleeps, like the main thread's 30 us polls, still spin. 0 restores it. */
+    if (!getenv("PS3_USLEEP_WAIT_US")) _putenv_s("PS3_USLEEP_WAIT_US", "500");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole
