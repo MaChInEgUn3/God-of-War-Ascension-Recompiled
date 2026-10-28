@@ -808,10 +808,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - adding `9,10,11,13` to the lane group (x132, L P P L): 10.82 / 10.64 vs 10.63 / 10.77, noise, not adopted.
   - From ~7.4 before M0.84 that is about +45%. No `[pm-hang]` and clean frame dumps in all eight runs.
   - 25-minute soak with the new default (x133, environment unset): no hang, no `[pm-hang]`, longest gap between
-    flips after the boot 4.8 s at ~280 s. In this run the bot got through the corridor door into the next area
-    (stairs, more enemies), so the rates (9.56 at 360-690 s, 10.01 at 690-1100 s, 10.28 to the end) are of a
-    different scene than the A/B runs. With the pad script unchanged, how far the bot gets now depends on the
-    frame rate, so A/B arms should be compared only while their frame dumps show the same place.
+    flips after the boot 4.8 s at ~280 s. From ~250 s on, this run's bot fought in another part of the area (by
+    the stairs, more enemies on screen) than the door the A/B runs stood at, so its rates (9.56 at 360-690 s, 10.01
+    at 690-1100 s, 10.28 to the end) are of a different scene. The pad script is timed in wall-clock, so where the
+    bot ends up can differ between runs: compare A/B arms only while their frame dumps show the same place. All
+    eight x131/x132 runs were at the door at both 360 s and 690 s (the dumps nearest those times, picked by file
+    time).
 - **M0.84: General6 and BatchJobList run on three SPUs each, +19% in the corridor (2026-10-28).**
   - The main thread's longest waits in the corridor frame (x125: poll sites traced as `PS3_FTRACE` spans with a
     temporary lift patch) are `0x464F84` (41 ms of a 125 ms frame, while wid 7 BatchJobList runs) and `0x3E8910`
