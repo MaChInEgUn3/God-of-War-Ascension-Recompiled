@@ -215,6 +215,12 @@ Lessons that cost days; keep them.
     checkpoint would silently move every following run's start, so the harness keeps a copy of that save and
     restores it before each run; the frame dumps of each A/B arm are checked to show the same place at the start
     and end of the window.
+  - From 2026-10-28 the masher stops at 300 s (`scripts/pad_masher.sh 170 300 <file>`, flicks still to 700 s). With
+    attacks to 700 s, builds at ~11 game frames/s sometimes won the fight inside the window, and the door's unlock
+    effect (an orange glow spreading over the door and walls, then a round seal) or the next area changed the scene
+    mid-measurement. With attacks stopped, Kratos stays by the door, alive, from ~250 s to the end: two runs of the
+    same build gave 11.70 and 11.72 (x146, x147). This scene has less combat than the earlier window, so its numbers
+    are not comparable with the 10.7-11.6 series before it.
 * **Before trusting a timing** (2026-10-28 lessons; the same exe went from 11.4 to 0.6 game frames/s on a busy host):
   - Free space on the work drive: at 7 GB free (the frame dumps had grown to 91 GB) every run was ~25% slower,
     boot included. The harness now warns under 20 GB; prune old `work/frames/<tag>` dirs.
