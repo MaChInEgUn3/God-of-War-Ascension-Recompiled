@@ -34,7 +34,7 @@ Status: design, started 2026-10-24. Progress log at the end.
 ## Capture (`SPU_JOB_CAPTURE=<dir>`, toolkit runtime)
 
 - **Scope:** policy-module runs of chosen workloads (`SPU_JOB_CAPTURE_WIDS`, default `15,16,17`), N jobs
-  (`SPU_JOB_CAPTURE_N`) after `SPU_JOB_CAPTURE_T0` seconds.
+  (`SPU_JOB_CAPTURE_N`) after `SPU_JOB_CAPTURE_T0` seconds; `SPU_JOB_CAPTURE_IMG=<image>` keeps one job module only.
 - **Job start:** where `g_spu_job_entries++` fires in `spu_indirect_branch` (a policy context, pc >= 0x4000, link in PM
   code). Snapshot:
   - the full 256 KB LS (it includes the policy module, so JobApi calls replay naturally);

@@ -239,7 +239,8 @@ Lessons that cost days; keep them.
   GPRs at entry, then every GET/PUT (with the bytes), GETLLAR/PUTLLC/PUTLLUC line, channel read, JobApi dispatch,
   and LS and GPRs at the end. `SPU_JOB_CAPTURE_WIDS` (default `15,16,17`), `SPU_JOB_CAPTURE_N` (default 100, all
   threads), `SPU_JOB_CAPTURE_T0=<s>` (skip boot), `SPU_JOB_CAPTURE_EVERY=<k>` (keep one job in k: a
-  sample spread over minutes and workloads instead of one burst). One `[jobcap]` line per job. `analysis/jobcap_dump.py <file> [-v]`
+  sample spread over minutes and workloads instead of one burst), `SPU_JOB_CAPTURE_IMG=<image>` (keep only jobs whose
+  resident module is that image: a workload that alternates modules otherwise aliases with `EVERY`). One `[jobcap]` line per job. `analysis/jobcap_dump.py <file> [-v]`
   prints a file. Format: `runtime/spu/spu_channels.c` (toolkit), see `docs/EDGE_NATIVE.md`. Captures hold game data:
   keep them under `work/`. Version 2 adds the context state block, interrupts taken and `rchcnt` values; replay
   refuses version 1.

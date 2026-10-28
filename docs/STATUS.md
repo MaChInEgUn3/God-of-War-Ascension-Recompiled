@@ -828,6 +828,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     2.4%. `4AB0` is a ~2200-line lifted function of float math (231 `fma`, 178 `fm`, 176 `fa`) and shuffles (460
     `shufb`): the next native-stage candidate, by the EDGE_NATIVE.md recipe. The shuffle and rotate helpers already
     use `pshufb`.
+  - Job lab on General6 (lab exe, `SPU_JOB_CAPTURE_WIDS=3 SPU_JOB_CAPTURE_IMG=218`): 300 a67e jobs captured, replay
+    300/300 identical, ~2.2 ms per job. A block count of `4AB0` shows that only its entry block runs: 780 straight-line
+    operations (113 indexed `lqx` gathers, 190 `shufb`, 80 `fa`, 44 `fm`), called 1920 times per job. Register
+    promotion of that block gave no gain in replay.
+  - Toolkit: `shufb` and the quadword byte rotates/shifts no longer swap bytes around `pshufb` (the index is remapped
+    instead, SSE4.1 path). Exact: `test_spu_shufb` passes 200000 random cases. a67e replay 2.227 -> ~2.17 ms per job
+    (-2.6%). Corridor A/B (x156, new recipe, 360-690 s): previous build 11.58, new build 11.62 game frames/s (a second
+    pair ran under browser load and is not counted). Neutral to slightly positive; the new build is the reference.
+  - The walker (`ENG_PHASE_STATS`) now spends ~77% of its time in methods (was 67%).
 - **M0.85: the same two lists as kernel-thread lanes, ~10.8 game frames/s in the corridor (2026-10-28).**
   - `SPURS_LANES` (the mechanism the EDGE lists already used) lets up to n of the six kernel threads run a workload
     at once, each as the SPU it plays (its own spuNum), with the rerun window kept and no thread created per
