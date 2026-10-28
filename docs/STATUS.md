@@ -817,6 +817,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     `0x20BD0`), code from other sources; not chased while General6 is the bound.
   - Timing notes from the same day are in DEBUGGING.md ("Before trusting a timing"): a full drive and a busy host
     each cost 25% or more, which an A/B between builds cannot tell from a regression.
+  - The toolkit change went upstream as PR #636 (ported to v0.18 with a unit test; CI green).
+  - New benchmark recipe (DEBUGGING.md: attacks stop at 300 s): the production build gives 11.70 / 11.72 game frames/s.
+  - General6 on more lanes does not help (x149 vs x150, one diagnostic exe, new recipe, 420-480 s): with
+    `3=6` General6 really runs on 4 SPUs 24% and on 5-6 SPUs 29% of its active time, yet the main thread's wait on
+    it (`0x375A88`) grows 10.22 -> 11.48 s per 60 s and the frame rate falls 11.77 -> 9.53. Its job list has a serial
+    chain: only faster jobs shorten it.
+  - Where General6's time goes (x148, host sampler on wid 3 only): job module a67e `4AB0` 46%, a67e `63B4` 12.7%,
+    job module 1bdd ~30% (`59C0` 8.1%, `53E0` 5.6%, `4450` 5.1%, `A588` 5.0%, `73E0` 2.7%, `40B8` 2.6%), a67e `4930`
+    2.4%. `4AB0` is a ~2200-line lifted function of float math (231 `fma`, 178 `fm`, 176 `fa`) and shuffles (460
+    `shufb`): the next native-stage candidate, by the EDGE_NATIVE.md recipe. The shuffle and rotate helpers already
+    use `pshufb`.
 - **M0.85: the same two lists as kernel-thread lanes, ~10.8 game frames/s in the corridor (2026-10-28).**
   - `SPURS_LANES` (the mechanism the EDGE lists already used) lets up to n of the six kernel threads run a workload
     at once, each as the SPU it plays (its own spuNum), with the rerun window kept and no thread created per
