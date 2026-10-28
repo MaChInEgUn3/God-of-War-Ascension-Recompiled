@@ -11,7 +11,8 @@ Inputs: run logs with SPU_LSA_GETLOG lines (and/or a previous edgefrags_register
 placements are kept, so a re-lift from new logs never drops one)
   [lsa-get] wid=<w> img=<i> lsa=0x<lsa> ea=0x<ea> size=0x<n> ...
 and optionally SPU_INTERP_MISS logs, whose targets inside a placement become extra
-function entries. Output: <port>/spu/edgefrag_<ea>_<lsa>/spu_recomp.{c,h} and
+function entries. The function entries of an existing lift of a placement (from the misses of older
+logs) are passed again, so a re-lift keeps them. Output: <port>/spu/edgefrag_<ea>_<lsa>/spu_recomp.{c,h} and
 <port>/spu/edgefrags_register.c (image ids 300+). Derived from the game: keep it out
 of the repository.
 
@@ -25,6 +26,9 @@ WIDS = {15, 16, 17}           # EDGE0/1/2
 EBOOT_LO, EBOOT_HI = 0x10000, 0x820000
 MAX_SIZE = 0x2000             # code fragments; the 4-16 KB tables at LS 0x10000 are data
 IMAGE_BASE = 300
+# Lifts the port patches at build time (port/gen_edge_frag_lift.py, gen_edge_o11430_body.py expect their block
+# layout; a new entry inside the patched loop breaks them): an existing lift of these is kept as it is.
+PINNED = {"edgefrag_7228c0_11150"}
 
 def main():
     args = [a for a in sys.argv[1:] if a != "--merge-chunks"]
@@ -32,7 +36,7 @@ def main():
     elf, port, sdk, logs = args[0], args[1], args[2], args[3:]
     data = open(elf, "rb").read()
     py = sys.executable
-    frags, misses = {}, []
+    frags, misses = {}, set()
     for log in logs:
         t = open(log, encoding="latin1").read()
         if log.endswith(".c"):   # a previous edgefrags_register.c: keep its placements
@@ -43,12 +47,16 @@ def main():
             w, lsa, ea, n = int(w), int(lsa, 16), int(ea, 16), int(n, 16)
             if w in WIDS and EBOOT_LO <= ea < EBOOT_HI and n <= MAX_SIZE and lsa >= 0x11000:
                 frags[(ea, lsa)] = n
-        misses += [int(pc, 16) for pc in re.findall(r"\[interp-miss\]\s+wid=1[567] img=\d+ pc=0x([0-9A-F]+)", t)]
+        misses |= {int(pc, 16) for pc in re.findall(r"\[interp-miss\]\s+wid=1[567] img=\d+ pc=0x([0-9A-F]+)", t)}
     out_dir = os.path.join(port, "spu")
     reg = []
     for k, ((ea, lsa), n) in enumerate(sorted(frags.items())):
         name = f"edgefrag_{ea:06x}_{lsa:05x}"
         d = os.path.join(out_dir, name)
+        if name in PINNED and os.path.exists(os.path.join(d, "spu_recomp.c")):
+            reg.append((name, ea, lsa, n, IMAGE_BASE + k))
+            print(f"{name}: kept (pinned) image {IMAGE_BASE + k}")
+            continue
         os.makedirs(d, exist_ok=True)
         blob = data[ea - 0x10000: ea - 0x10000 + n]
         raw, elf_out = os.path.join(d, name + ".bin"), os.path.join(d, name + ".elf")
@@ -60,7 +68,11 @@ def main():
                "--symbol-prefix", name + "_", "-o", d]
         if merge:
             cmd += ["--merge-chunks"]
-        extra = sorted({m for m in misses if lsa <= m < lsa + n})
+        # Keep the entries of an existing lift of this placement (misses from older logs), so a re-lift never drops one.
+        old = os.path.join(d, "spu_recomp.c")
+        kept = {int(a, 16) for a in re.findall(r"^void \w+_spu_func_([0-9A-F]{8})\(", open(old, encoding="utf8").read(), re.M)} \
+            if os.path.exists(old) else set()
+        extra = sorted({m for m in misses | kept if lsa <= m < lsa + n})
         if extra:
             cmd += ["--extra-funcs", ",".join(hex(m) for m in extra)]
         subprocess.check_call(cmd, stdout=subprocess.DEVNULL)

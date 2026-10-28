@@ -799,6 +799,29 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.82: real gameplay runs at about half the benchmark rate; the corridor's EDGE fragments lifted (2026-10-27).**
+  - The benchmark scene (360-720 s) was the Megaera dodge tutorial: the pad script only pressed X, so Kratos kept
+    getting hit and the game never moved on. With the right stick flicked every 400 ms (`PAD_STICK` 7th field,
+    toolkit 2f614c87) the dodge passes, and pressing square / triangle / circle about three times a second through
+    `PAD_FILE` (`scripts/pad_masher.sh`) passes the attack tutorial and the prison. The game then reaches a corridor
+    in front of a door at ~270 s and stays there.
+  - In that corridor the game ran at ~6.3 game frames/s (~10 presents/s), against ~12.7 in the tutorial loop. The
+    README's number was the tutorial's. The corridor (360-690 s) is now the benchmark scene.
+  - What differs there (x110, x111): the RSX walker was ~67% busy (20 s of methods in 30 s; ~17.6k draws/s), and a
+    third of the sampler's hits were in the SPU interpreter. `SPU_INTERP_MISS` put 37.5 s of interpreted SPU time in
+    every 20 s: the three EDGE workloads were ~82% busy each with 62% of it interpreted (EDGE code fragments at
+    placements no earlier run had captured), and wid 7 (job module 759d) was 48% busy, 88% interpreted.
+  - A `SPU_LSA_GETLOG` capture in the corridor (x112) gave 131 new EDGE placements; `lift_edge_frags.py` now has
+    569. The script now passes the function entries of an existing lift again (a re-lift from new logs dropped the
+    entries that came from older logs) and keeps the lift the port patches at build time (`edgefrag_7228c0_11150`)
+    as it is.
+  - After the re-lift (x114): EDGE workloads ~42% busy each with 0% interpreted, all SPU kernels 4.57 -> 3.54
+    cores, interpreted time 37.5 -> 6.8 s per 20 s (what is left is wid 7). Frame rate, corridor A/B e d d e
+    (x113): 7.44 / 7.08 against 6.93 / 7.03 game frames/s, +7.4% and +0.7%. A core of SPU time went away and the
+    frame rate barely moved, so the SPUs are not what limits the corridor.
+  - wid 7's code is staged by the job itself: three EBOOT blobs (`0x716730`, `0x6D66B0`, `0x6AF1B0`, up to
+    `0x32E0` bytes) copied to LS addresses that change from job to job (299 placements in one run), so lifting one
+    copy per placement does not scale. It is ~0.33 cores interpreted.
 - **M0.81: the walker's pipeline lookup without the linear scan, +4% (2026-10-27).**
   - `eng_pipeline_get` runs on every draw (~2000 a frame). It compared the key with every cached pipeline in turn,
     and walked the fragment program four times: sampled units, gamma units, sign-expansion units and the

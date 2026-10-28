@@ -33,7 +33,8 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `SPU_LSA_GETLOG=10000-3E000 SPU_LSA_GETLOG_EA=10000-820000 SPU_INTERP_MISS=1`, then
    `python analysis/lift_edge_frags.py --merge-chunks <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
    `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted. Pass a copy of
-   the previous `edgefrags_register.c` among the inputs to keep its placements (the menu and the first level use 360),
+   the previous `edgefrags_register.c` among the inputs to keep its placements (the menu, the first level and its corridor
+   use 569; existing lifts keep their function entries, and `edgefrag_7228c0_11150`, patched at build time, is not re-lifted),
    then re-run `scripts\cfg.bat` so CMake picks up the new directories.
    SPU lifts made before the toolkit's SPU_DIRECT tails (M0.76): `python scripts/spu_direct_rewrite.py port/spu --apply`
    rewrites their known-target tails in place (keeps `.pre_direct` copies, git-ignored like the rest of `port/spu/`).
