@@ -421,12 +421,21 @@ endif()
 #     default; a PPC fmadd is spelt as one where the lifter means one.
 #   - /bigobj on MSVC. A single lifted file routinely passes the 65,536-section
 #     limit of the default object format.
+#   - PPU_HOST_ARCH (default -march=x86-64-v3, as SPU_HOST_ARCH; empty = the
+#     compiler's SSE2 baseline): host ISA for the lifted PPU code. FMA then exists,
+#     so contraction is turned off with it (clang-cl contracts a*b+c by default).
+#     GoW:A corridor A/B, 3 pairs: +2.5%.
+set(PPU_HOST_ARCH "-march=x86-64-v3" CACHE STRING "Host ISA flag for lifted PPU sources (empty = default)")
 if(MSVC)
+    set(_ppu_opts "/w;/bigobj")
+    if(PPU_HOST_ARCH)
+        list(APPEND _ppu_opts "${PPU_HOST_ARCH}" "/clang:-ffp-contract=off")
+    endif()
     set_source_files_properties(${RECOMP_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "/w;/bigobj")
+        COMPILE_OPTIONS "${_ppu_opts}")
 else()
     set_source_files_properties(${RECOMP_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "-w;-ffp-contract=off")
+        COMPILE_OPTIONS "-w;-ffp-contract=off;${PPU_HOST_ARCH}")
 endif()
 
 # ---------------------------------------------------------------------------

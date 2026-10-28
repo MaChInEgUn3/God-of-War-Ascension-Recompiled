@@ -47,7 +47,8 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `analysis/samp_resolve.py` uses to name `PS3_SAMPLE_HOST` samples. The lifted SPU sources build with `-O2 -march=x86-64-v3
    -ffp-contract=off` (AVX2 + FMA). On a CPU without AVX2/FMA, configure with `-DSPU_HOST_ARCH=-msse4.2`. Do not
    drop below SSE4.1: the `shufb` and quadword byte-rotate helpers fall back to byte loops, and `fma`/`fms`/`fnms`
-   become libm `fmaf` calls; the SPU jobs then run about 2x slower.
+   become libm `fmaf` calls; the SPU jobs then run about 2x slower. The lifted PPU sources build with `-march=x86-64-v3
+   -ffp-contract=off` too (`PPU_HOST_ARCH`, M0.83: +2.5%); `-DPPU_HOST_ARCH=` (empty) keeps the compiler's SSE2 baseline.
 6. Run `port\build_vk\MyGameRecomp.exe local\vfs\PS3_GAME\USRDIR\EBOOT.elf` (needs `SDL2.dll` next to the exe;
    set `PS3RECOMP_VK_WINDOW=1` to open the window).
 

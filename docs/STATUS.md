@@ -1,4 +1,4 @@
-# Status (updated 2026-10-27)
+# Status (updated 2026-10-28)
 
 ## Works
 * Loader, lifter, compile and link of the whole PPU; boot through CRT, FIOS, PSARC mounting, DCDS, savedata.
@@ -799,6 +799,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.83: the lifted PPU code builds for x86-64-v3, +2.5%; the corridor frame is main-thread bound (2026-10-28).**
+  - Frame timeline of the corridor (x117, `PS3_FTRACE` 420-480 s, re-lifted exe): median frame 123.9 ms. SPUs 0-3
+    are busy ~60% of it, SPU 4 87% (wid 8, the audio workload, alone on it; not on the frame's path), the walker
+    drains for 85.7 ms. Inside each frame there is a ~40 ms stretch where SPUs 0-3 are idle and the walker only
+    drains in short bursts (`D D D D`): only the main thread works then, so it is the frame's critical path.
+  - The main thread's 22.7% at `0x3E8900` is a poll of a u16 at `[[r30+0xC]+0xE0]` (loop `0x3E8910`) after the
+    frame routine's calls; `0x416A44` and `0x464FA4` are other polls (main-prof ~8% and ~18%). Which writer clears
+    them is not known yet.
+  - `PPU_HOST_ARCH` (port CMake, default `-march=x86-64-v3` like `SPU_HOST_ARCH`, with `-ffp-contract=off` since FMA
+    then exists): corridor A/B in exes g f f g f g (x118), 7.45 / 7.63 / 7.55 against 7.44 / 7.25 / 7.39 game
+    frames/s, +2.5% mean, the new build ahead in all three pairs. `-DPPU_HOST_ARCH=` brings back the SSE2 baseline.
 - **M0.82: real gameplay runs at about half the benchmark rate; the corridor's EDGE fragments lifted (2026-10-27).**
   - The benchmark scene (360-720 s) was the Megaera dodge tutorial: the pad script only pressed X, so Kratos kept
     getting hit and the game never moved on. With the right stick flicked every 400 ms (`PAD_STICK` 7th field,
