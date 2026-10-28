@@ -679,8 +679,14 @@ int main(int argc, char** argv)
      * SPUs at once (0-2, each as its own spuNum, with its own output ring the game
      * set up). One instance, 600-1080 s, alternated: 5.63/6.20 game frames/s off,
      * 8.41/9.45 with two lanes, 9.65/9.76 with three; no hang, clean frames.
-     * SPURS_LANES=off goes back to one EDGE lane. */
-    if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3");
+     * SPURS_LANES=off goes back to one EDGE lane.
+     * ;3,7=3 (added 2026-10-28): General6 (wid 3) and BatchJobList (wid 7), the two
+     * job lists the main thread waits on every frame (polls 0x3E8910 and 0x464F84),
+     * on up to three kernel threads too. Corridor, 360-690 s: 10.82/10.91 vs
+     * 9.03/8.60 game frames/s with SPURS_MAXCONT=3=3,7=3 (worker threads per
+     * dispatch, x131) and ~7.4 with neither; adding 9,10,11,13 to the group was
+     * noise (x132). */
+    if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3;3,7=3");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE
      * lock they skew exactly the runs that measure timing. Set PS3_VERBOSE=1 to
@@ -731,14 +737,6 @@ int main(int argc, char** argv)
      * 13.02 / 13.02 game frames/s against 12.21 / 12.39 (x103). Shorter
      * sleeps, like the main thread's 30 us polls, still spin. 0 restores it. */
     if (!getenv("PS3_USLEEP_WAIT_US")) _putenv_s("PS3_USLEEP_WAIT_US", "500");
-    /* SPURS_MAXCONT=3=3,7=3: General6 (wid 3) and BatchJobList (wid 7) run on up to
-     * three SPUs at once; the title registers maxContention 1 for every workload,
-     * and the main thread waits on both lists each frame (polls 0x3E8910 and
-     * 0x464F84). Corridor, 360-690 s: 3=3 alone 8.01/8.21/8.12 vs 7.45/7.28/7.50
-     * (x126/x127); with 7=3 8.70/9.07/8.93/9.16 vs 8.31/8.18 (x128/x129); no hang,
-     * clean frames. Adding 9,10,11,13=3 fell to 5.75/6.04. SPURS_MAXCONT=off (any value
-     * without <wid>=<n> pairs) goes back. */
-    if (!getenv("SPURS_MAXCONT")) _putenv_s("SPURS_MAXCONT", "3=3,7=3");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

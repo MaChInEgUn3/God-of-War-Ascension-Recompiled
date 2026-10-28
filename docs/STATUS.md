@@ -799,13 +799,26 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.85: the same two lists as kernel-thread lanes, ~10.8 game frames/s in the corridor (2026-10-28).**
+  - `SPURS_LANES` (the mechanism the EDGE lists already used) lets up to n of the six kernel threads run a workload
+    at once, each as the SPU it plays (its own spuNum), with the rerun window kept and no thread created per
+    dispatch. General6 and BatchJobList have a priority on SPUs 0-5, so every kernel thread may take them.
+  - Port default now `SPURS_LANES=15,16,17=3;3,7=3`, with no `SPURS_MAXCONT` default. Corridor, 360-690 s:
+    - lanes vs `SPURS_MAXCONT=3=3,7=3` (x131, M L L M): 10.82 / 10.91 vs 9.03 / 8.60 game frames/s;
+    - adding `9,10,11,13` to the lane group (x132, L P P L): 10.82 / 10.64 vs 10.63 / 10.77, noise, not adopted.
+  - From ~7.4 before M0.84 that is about +45%. No `[pm-hang]` and clean frame dumps in all eight runs.
+  - 25-minute soak with the new default (x133, environment unset): no hang, no `[pm-hang]`, longest gap between
+    flips after the boot 4.8 s at ~280 s. In this run the bot got through the corridor door into the next area
+    (stairs, more enemies), so the rates (9.56 at 360-690 s, 10.01 at 690-1100 s, 10.28 to the end) are of a
+    different scene than the A/B runs. With the pad script unchanged, how far the bot gets now depends on the
+    frame rate, so A/B arms should be compared only while their frame dumps show the same place.
 - **M0.84: General6 and BatchJobList run on three SPUs each, +19% in the corridor (2026-10-28).**
   - The main thread's longest waits in the corridor frame (x125: poll sites traced as `PS3_FTRACE` spans with a
     temporary lift patch) are `0x464F84` (41 ms of a 125 ms frame, while wid 7 BatchJobList runs) and `0x3E8910`
     (33 ms, General6), then `0x416A44` (15 ms) and `0x416654` (12 ms). During the `0x3E8910` wait only 2.15 SPUs are
     busy, and every non-EDGE workload runs on exactly one SPU at a time: the title registers maxContention 1 for all
     of them.
-  - `SPURS_MAXCONT=3=3,7=3` (now the port default) runs those two lists on up to three virtual SPUs, each with its own
+  - `SPURS_MAXCONT=3=3,7=3` (port default until M0.85 replaced it with `SPURS_LANES`) runs those two lists on up to three virtual SPUs, each with its own
     spuNum (lanes 1-2 on worker threads). Corridor, 360-690 s:
     - `3=3` alone vs off (x126, x127): 8.01 / 8.21 / 8.12 vs 7.45 / 7.28 / 7.50 game frames/s;
     - `3=3,7=3` vs `3=3` (x128, x129): 8.70 / 9.07 / 8.93 / 9.16 vs 8.31 / 8.18;
