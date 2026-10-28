@@ -822,6 +822,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - wid 7's code is staged by the job itself: three EBOOT blobs (`0x716730`, `0x6D66B0`, `0x6AF1B0`, up to
     `0x32E0` bytes) copied to LS addresses that change from job to job (299 placements in one run), so lifting one
     copy per placement does not scale. It is ~0.33 cores interpreted.
+  - Upstream PR #619's lost-wakeup fix (toolkit b606ff7c, `SPU_WAKE_LOCK=0` skips it): corridor A/B w n n w (x116)
+    7.09 / 7.11 against 6.75 / 7.21, noise. Kept on as a correctness fix.
+  - The corridor's limit (x115, re-lifted exe, 6.9 game frames/s): the main thread at ~0.96 cores with 22.7% of its
+    samples in the frame routine's wait at `0x3E8900` (22.0% in x110, before the re-lift), the walker ~68% busy, the
+    SPU kernel threads ~0.55 cores each. Nothing is saturated, so the next step is a frame timeline (`PS3_FTRACE`) of
+    the corridor: who waits for whom within a frame.
 - **M0.81: the walker's pipeline lookup without the linear scan, +4% (2026-10-27).**
   - `eng_pipeline_get` runs on every draw (~2000 a frame). It compared the key with every cached pipeline in turn,
     and walked the fragment program four times: sampled units, gamma units, sign-expansion units and the

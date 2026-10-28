@@ -9616,7 +9616,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..dc005fcc 100644
+index 59f5e4b8..e617f400 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -9812,7 +9812,7 @@ index 59f5e4b8..dc005fcc 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,3952 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,3961 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -13250,6 +13250,15 @@ index 59f5e4b8..dc005fcc 100644
 +void spu_ch_wake(spu_context* ctx)
 +{
 +    if (!ctx) return;
++    /* Pass through ch_wait_lock first: spu_ch_wait tests and sleeps under it, so a wake landing between its test and
++     * its sleep was lost and the read waited for the 10 ms re-poll (fix from upstream PR #619). SPU_WAKE_LOCK=0 skips
++     * it (A/B). */
++    static int s_wl = -1;
++    if (s_wl < 0) { const char* e = getenv("SPU_WAKE_LOCK"); s_wl = !(e && e[0] == '0'); }
++    if (s_wl) {
++        AcquireSRWLockExclusive((SRWLOCK*)&ctx->ch_wait_lock);
++        ReleaseSRWLockExclusive((SRWLOCK*)&ctx->ch_wait_lock);
++    }
 +    WakeAllConditionVariable((CONDITION_VARIABLE*)&ctx->ch_wait_cv);
 +}
 +

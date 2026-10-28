@@ -196,6 +196,13 @@ Lessons that cost days; keep them.
   consecutive batched draws share one. `scripts/thrsnap.ps1` diffs `Get-Process` thread times between two moments of a run.
 * **Sub-millisecond sleeps** (M0.80): the port sets `PS3_USLEEP_WAIT_US=500`, so a guest `usleep` of 500-999 us
   waits on a high-resolution timer instead of spinning; `0` brings the spin back for every sub-ms sleep.
+* **SPU channel wakeups** (M0.82): `spu_ch_wake` passes through the waiter's `ch_wait_lock` before waking it, so a
+  wake can no longer land between the waiter's test and its sleep and leave it on the 10 ms re-poll (upstream PR
+  #619's first fix). `SPU_WAKE_LOCK=0` skips it.
+* **Benchmark scene**: the corridor after the prison, reached at ~270 s with `PAD_STICK="128,128,255,128,170,700,400"`
+  (right-stick flicks every 400 ms pass the dodge tutorial) plus `scripts/pad_masher.sh 170 700 <file>` feeding
+  `PAD_FILE=<file>` (the attack tutorial); measure 360-690 s. The older 360-720 s numbers are the dodge-tutorial loop,
+  about twice the gameplay rate.
 * **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU
   channel read/write with two `QueryPerformanceCounter` calls, ~5% of EDGE time. A/B comparisons stay valid; absolute
   numbers are a bit pessimistic. `NOPMPROF=1` runs without them (no `[pm-prof]`, so no EDGE ms/job).
