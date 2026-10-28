@@ -209,6 +209,12 @@ Lessons that cost days; keep them.
   (right-stick flicks every 400 ms pass the dodge tutorial) plus `scripts/pad_masher.sh 170 700 <file>` feeding
   `PAD_FILE=<file>` (the attack tutorial); measure 360-690 s. The older 360-720 s numbers are the dodge-tutorial loop,
   about twice the gameplay rate.
+  - The save matters: the run that first got through (x109) let the game autosave a checkpoint into
+    `BCUS98232-PROFDATA-0`, and since then the menu's first entry is "Continue Game", so every later run (all the
+    corridor numbers, x110 on) starts from that checkpoint, not from the opening. A run that reaches the next
+    checkpoint would silently move every following run's start, so the harness keeps a copy of that save and
+    restores it before each run; the frame dumps of each A/B arm are checked to show the same place at the start
+    and end of the window.
 * **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU
   channel read/write with two `QueryPerformanceCounter` calls, ~5% of EDGE time. A/B comparisons stay valid; absolute
   numbers are a bit pessimistic. `NOPMPROF=1` runs without them (no `[pm-prof]`, so no EDGE ms/job).
