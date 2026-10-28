@@ -9616,7 +9616,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..e617f400 100644
+index 59f5e4b8..173ecb33 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -9812,7 +9812,7 @@ index 59f5e4b8..e617f400 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,3961 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4004 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -13880,8 +13880,14 @@ index 59f5e4b8..e617f400 100644
 +     * rest of that job, interpreted). */
 +    for (unsigned slot = 0; slot < SPU_RESIDENT_CODE_SLOTS; ++slot)
 +        if (ctx->resident_code[slot].image_id && lsa >= ctx->resident_code[slot].lsa &&
-+            lsa - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size)
-+            return (spu_lifted_fn)spu_lookup(lsa, ctx->resident_code[slot].image_id);
++            lsa - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size) {
++            const uint32_t canon = ctx->resident_code[slot].canon;
++            if (!canon) return (spu_lifted_fn)spu_lookup(lsa, ctx->resident_code[slot].image_id);
++            /* Relocatable code: the caller runs the function next, so set its delta now. */
++            spu_fn f = spu_lookup(lsa - ctx->resident_code[slot].lsa + canon, ctx->resident_code[slot].image_id);
++            if (f) ((spu_context*)ctx)->reloc_delta = (int32_t)(ctx->resident_code[slot].lsa - canon);
++            return (spu_lifted_fn)f;
++        }
 +    spu_fn fn = NULL;
 +    if (ctx->resident_task) fn = spu_lookup(lsa, ctx->resident_task);
 +    if (!fn && ctx->resident_ovl) fn = spu_lookup(lsa, ctx->resident_ovl);
@@ -13894,7 +13900,7 @@ index 59f5e4b8..e617f400 100644
 + * the image id its lifted functions were registered under. The MFC GET path
 + * marks that overlay resident in the streaming context; dispatch retries a
 + * primary-image miss against the resident overlay's registry. */
-+typedef struct { uint32_t src_ea; int image_id; uint8_t sig[16]; int has_sig; uint32_t span; uint32_t lsa; } spu_ovl_src;
++typedef struct { uint32_t src_ea; int image_id; uint8_t sig[16]; int has_sig; uint32_t span; uint32_t lsa; uint32_t canon; } spu_ovl_src;
 +/* 6 FMOD codec/DSP overlays + up to 89 WWS job-code modules (all stream into
 + * the same job code buffer at LS 0x4000, dispatched by content signature). */
 +/* GoW:A's EDGE jobs alone stage 360 (fragment, LSA) placements, one image each. */
@@ -13919,6 +13925,7 @@ index 59f5e4b8..e617f400 100644
 +        s_ovl_src[s_ovl_src_count].has_sig = 0;
 +        s_ovl_src[s_ovl_src_count].span = 0;
 +        s_ovl_src[s_ovl_src_count].lsa = 0;
++        s_ovl_src[s_ovl_src_count].canon = 0;
 +        const unsigned h = spu_ovl_hash(content_ea);
 +        s_ovl_next[s_ovl_src_count] = s_ovl_head[h];
 +        s_ovl_head[h] = s_ovl_src_count + 1;
@@ -13943,6 +13950,21 @@ index 59f5e4b8..e617f400 100644
 +    if (!lsa || lsa + span > SPU_LS_SIZE) return;
 +    spu_overlay_register_region(content_ea, span, image_id);
 +    if (s_ovl_src[s_ovl_src_count - 1].image_id == image_id) s_ovl_src[s_ovl_src_count - 1].lsa = lsa;
++}
++
++/* And for position-independent code the title copies to a different LS address at each
++ * load (GoW:A's BatchJobList jobs place four EBOOT blobs at a new 16-byte-aligned address
++ * every time): lifted ONCE at a canonical base with spu_lifter.py --reloc. A GET of the
++ * content at any address makes that copy resident; dispatch then looks the function up at
++ * canon + offset and sets ctx->reloc_delta, which the lifted code adds to every address
++ * it derives from its own pc. */
++void spu_overlay_register_region_reloc(uint32_t content_ea, uint32_t span, uint32_t canon, int image_id)
++{
++    if (!canon || canon + span > SPU_LS_SIZE) return;
++    { static int s_off = -1; if (s_off < 0) { const char* e = getenv("SPU_RELOC_OFF"); s_off = e && e[0] == '1'; }
++      if (s_off) return; }   /* SPU_RELOC_OFF=1: leave that code to the interpreter (A/B) */
++    spu_overlay_register_region(content_ea, span, image_id);
++    if (s_ovl_src[s_ovl_src_count - 1].image_id == image_id) s_ovl_src[s_ovl_src_count - 1].canon = canon;
 +}
 +
 +/* Register one-way runtime entries that replace the guest call stack.
@@ -14152,12 +14174,16 @@ index 59f5e4b8..e617f400 100644
 +            if (o->span) {
 +                if (lsa + o->span > SPU_LS_SIZE) return;
 +                for (unsigned slot = 0; slot < SPU_RESIDENT_CODE_SLOTS; ++slot) {
-+                    if (ctx->resident_code[slot].image_id && ctx->resident_code[slot].lsa != lsa)
++                    /* A relocatable image takes over its own previous placement's slot: each load
++                     * lands somewhere new, and stale copies would fill the slots. */
++                    if (ctx->resident_code[slot].image_id && ctx->resident_code[slot].lsa != lsa &&
++                        !(o->canon && ctx->resident_code[slot].image_id == o->image_id))
 +                        continue;
 +                    ctx->resident_code[slot].lsa = lsa;
 +                    ctx->resident_code[slot].size = o->span;
 +                    ctx->resident_code[slot].source_ea = ea;
 +                    ctx->resident_code[slot].image_id = o->image_id;
++                    ctx->resident_code[slot].canon = o->canon;
 +                    if (o->image_id) ctx->resident_code_mask |= 1u << slot;
 +                    else ctx->resident_code_mask &= ~(1u << slot);
 +                    return;
@@ -14581,13 +14607,25 @@ index 59f5e4b8..e617f400 100644
 +        static int s_im = -1; if (s_im < 0) s_im = getenv("SPU_INTERP_MISS") ? 1 : 0;
 +        int miss_slot = -1;
 +        if (s_im) {
-+            const int im = (pc_entry >= 0x4000 && ctx->resident_ovl) ? ctx->resident_ovl : ctx->image_id;
++            uint32_t key = pc_entry;
++            int im = (pc_entry >= 0x4000 && ctx->resident_ovl) ? ctx->resident_ovl : ctx->image_id;
++            /* Inside resident relocatable code: report its image and the CANONICAL pc
++             * (placement-independent), which is the entry its --reloc lift needs. */
++            for (uint32_t m = ctx->resident_code_mask; m; m &= m - 1) {
++                const unsigned sl = (unsigned)__builtin_ctz(m);
++                if (ctx->resident_code[sl].canon && pc_entry >= ctx->resident_code[sl].lsa &&
++                    pc_entry - ctx->resident_code[sl].lsa < ctx->resident_code[sl].size) {
++                    im = ctx->resident_code[sl].image_id;
++                    key = pc_entry - ctx->resident_code[sl].lsa + ctx->resident_code[sl].canon;
++                    break;
++                }
++            }
 +            const int wid = ctx->policy_mode ? ctx->ls[0x1DF] : -1;
 +            AcquireSRWLockExclusive(&ml);
-+            unsigned h = (pc_entry * 2654435761u ^ (unsigned)im * 40503u ^ (unsigned)(wid + 1) * 977u) % NM;
++            unsigned h = (key * 2654435761u ^ (unsigned)im * 40503u ^ (unsigned)(wid + 1) * 977u) % NM;
 +            for (unsigned q = 0; q < NM; q++, h = (h + 1) % NM) {
-+                if (mc[h] && mk[h] == pc_entry && mi[h] == im && mw[h] == wid) { mc[h]++; miss_slot = (int)h; break; }
-+                if (!mc[h]) { mk[h] = pc_entry; mi[h] = im; mw[h] = wid; mc[h] = 1; mt[h] = 0; miss_slot = (int)h; break; }
++                if (mc[h] && mk[h] == key && mi[h] == im && mw[h] == wid) { mc[h]++; miss_slot = (int)h; break; }
++                if (!mc[h]) { mk[h] = key; mi[h] = im; mw[h] = wid; mc[h] = 1; mt[h] = 0; miss_slot = (int)h; break; }
 +            }
 +            ReleaseSRWLockExclusive(&ml);
 +        }
@@ -15861,7 +15899,12 @@ index 59f5e4b8..e617f400 100644
 +        if (ctx->pc >= ctx->resident_code[slot].lsa &&
 +            ctx->pc - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size) {
 +            code_owner = ctx->resident_code[slot].image_id;
-+            fn = spu_lookup(ctx->pc, code_owner);
++            const uint32_t canon = ctx->resident_code[slot].canon;
++            if (canon) {   /* relocatable code (spu_overlay_register_region_reloc) */
++                fn = spu_lookup(ctx->pc - ctx->resident_code[slot].lsa + canon, code_owner);
++                ctx->reloc_delta = (int32_t)(ctx->resident_code[slot].lsa - canon);
++            } else
++                fn = spu_lookup(ctx->pc, code_owner);
 +            break;
 +        }
 +    }
@@ -16809,7 +16852,7 @@ index ca76ccd1..53226cb2 100644
   * lookup guarded by a global that is zero until the first GETLLAR. */
  int spu_coh_is_reserved(uint32_t addr);
 diff --git a/runtime/spu/spu_context.h b/runtime/spu/spu_context.h
-index f46d415f..c7756f01 100644
+index f46d415f..50d7866f 100644
 --- a/runtime/spu/spu_context.h
 +++ b/runtime/spu/spu_context.h
 @@ -39,17 +39,17 @@ extern "C" {
@@ -16839,7 +16882,7 @@ index f46d415f..c7756f01 100644
  }
  static inline void spu_ls_watch_hit(uint32_t lsa, int is_write, const uint8_t* p) {
      spu_ls_watch_hit2(lsa, is_write, p, 0, 0);
-@@ -284,12 +284,20 @@ typedef struct spu_context {
+@@ -284,12 +284,28 @@ typedef struct spu_context {
       * path recognizes a registered overlay's source EA and records which
       * overlay is now resident; dispatch retries a missed lookup against it. */
      int resident_ovl;
@@ -16857,11 +16900,19 @@ index f46d415f..c7756f01 100644
          uint32_t lsa, size, source_ea;
          int image_id;
 -    } resident_code[4];
++        /* Nonzero for position-independent code lifted once at this canonical LS base
++         * (spu_overlay_register_region_reloc): its functions are registered at
++         * canon + offset, wherever the title placed this copy. */
++        uint32_t canon;
 +    } resident_code[SPU_RESIDENT_CODE_SLOTS];
++    /* Placement minus canonical base of the relocatable code running now (spu_lifter.py
++     * --reloc): lifted relocatable code adds it to every address it derives from its own
++     * pc. Set by the dispatcher on entry into such code; only that code reads it. */
++    int32_t reloc_delta;
  
      /* Resident SPURS-taskset TASK image id (0 = none) retires the id-0 wildcard
       * for co-resident tasks. A taskset may hold several tasks that all lift at the
-@@ -376,24 +384,46 @@ typedef struct spu_context {
+@@ -376,24 +392,46 @@ typedef struct spu_context {
      uint64_t list_stall_ea_base[32];      /* ea base (hi32 carries), per tag */
      uint32_t list_stall_cmd[32];          /* base (non-list) MFC command, per tag */
  
@@ -16924,7 +16975,7 @@ index f46d415f..c7756f01 100644
  /* Reserved LS addresses (inside the kernel area, below the 0xA00 policy-module
   * base) that the HLE kernel plants as exitToKernelAddr / selectWorkloadAddr in
   * the SpursKernelContext. A policy module branching to them is performing a
-@@ -482,26 +512,36 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
+@@ -482,26 +520,36 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
  #define SPU_LS_FAST 1
  #endif
  
@@ -16980,7 +17031,7 @@ index f46d415f..c7756f01 100644
      /* SPU_LS_LOWREAD=1: a job that reads its OWN first bytes as data is
       * dereferencing a null base -- the job binary loads at LS 0, so [NULL+off]
       * returns its own instruction words. Report each distinct low address once,
-@@ -535,17 +575,22 @@ static __attribute__((noinline, cold)) void spu_ls_read_probe(const spu_context*
+@@ -535,17 +583,22 @@ static __attribute__((noinline, cold)) void spu_ls_read_probe(const spu_context*
                      off >> 6, (off >> 2) & 0xF, off);
          }
      }
@@ -17010,7 +17061,7 @@ index f46d415f..c7756f01 100644
  #if SPU_LS_FAST
      uint32_t w0, w1, w2, w3;
      memcpy(&w0, p,      4); memcpy(&w1, p + 4,  4);
-@@ -563,7 +608,8 @@ static inline u128 spu_ls_read128(const spu_context* ctx, uint32_t lsa)
+@@ -563,7 +616,8 @@ static inline u128 spu_ls_read128(const spu_context* ctx, uint32_t lsa)
      return v;
  }
  
@@ -17020,7 +17071,7 @@ index f46d415f..c7756f01 100644
  {
      if (lsa == 0x1320 && ctx->image_id == 2 && ctx->policy_mode) {
          extern int g_wws_code_probe;   /* defined in spu_channels.c, capped */
-@@ -591,12 +637,12 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_pre(spu_context*
+@@ -591,12 +645,12 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_pre(spu_context*
              #undef _RD32
          }
      }
@@ -17039,7 +17090,7 @@ index f46d415f..c7756f01 100644
      /* SPU_SMC_WATCH=<img>: self-modification detector. Log any store whose
       * target LS line falls inside that image's CODE segment (the segment
       * bounds come from SPU_SMC_LO/HI, default the pm_wwsjob range 0xA00..
-@@ -615,39 +661,44 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_smc(spu_context*
+@@ -615,39 +669,44 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_smc(spu_context*
                        p[0], p[1], p[2], p[3]);
        } }
  }
@@ -17116,7 +17167,7 @@ index f46d415f..c7756f01 100644
  /* ---------------------------------------------------------------------------
   * Preferred slot extraction
   *
-@@ -783,6 +834,8 @@ extern SPU_THREAD_LOCAL unsigned g_spu_pch_n;
+@@ -783,6 +842,8 @@ extern SPU_THREAD_LOCAL unsigned g_spu_pch_n;
  /* Central per-transfer hooks (stubbed in spu_drain.c until their milestones). */
  void yz_lockstep_tick(spu_context* ctx);             /* round-robin token gate */
  void spu_task_launch_check(spu_context* ctx, void* fn); /* SPURS task-launch    */
@@ -17125,7 +17176,7 @@ index f46d415f..c7756f01 100644
  /* Restore image_id after a call-bracket (adopt-on-serve); re-applies the
   * persistent LS-0xA00 workload module if one is set. */
  void spu_img_restore(spu_context* ctx, int32_t saved_img);
-@@ -802,6 +855,13 @@ int  spu_tailret_enabled(void);
+@@ -802,6 +863,13 @@ int  spu_tailret_enabled(void);
   * unchanged (interrupt not taken) if LS 0 holds no branch instruction. */
  void (*spu_take_interrupt(spu_context* ctx,
                            void (*tf)(spu_context*)))(spu_context*);
@@ -17139,7 +17190,7 @@ index f46d415f..c7756f01 100644
  
  /* Drain a translated call up to its explicit architectural return PC. */
  void spu_drain_call(spu_context* ctx, uint32_t return_pc);
-@@ -872,11 +932,13 @@ static inline void spu_pchist_tick(const spu_context* ctx)
+@@ -872,11 +940,13 @@ static inline void spu_pchist_tick(const spu_context* ctx)
              }                                                              \
              void (*_tf)(spu_context*) = g_spu_trampoline_fn;    \
              g_spu_trampoline_fn = 0;                            \
@@ -17155,7 +17206,7 @@ index f46d415f..c7756f01 100644
              spu_pchist_tick(ctx);                              \
              g_spu_pch[g_spu_pch_n++ & 7u] =                    \
                  (uint32_t)((ctx)->pc & SPU_LS_MASK);           \
-@@ -884,6 +946,46 @@ static inline void spu_pchist_tick(const spu_context* ctx)
+@@ -884,6 +954,46 @@ static inline void spu_pchist_tick(const spu_context* ctx)
          }                                                      \
      } while (0)
  
@@ -23046,20 +23097,95 @@ index 9d9df717..adcddf17 100644
          for _i, _l in enumerate(func.body_lines):
              for _dm in _CS_ANY_DEF_RE.finditer(_l):
 diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
-index ec62f269..db9654f8 100644
+index ec62f269..33420359 100644
 --- a/tools/spu_lifter.py
 +++ b/tools/spu_lifter.py
-@@ -572,8 +572,7 @@ class SPULifter:
+@@ -520,6 +520,12 @@ class SPULifter:
+                 f"underscore; using {prefix + chr(95)!r}"+chr(10))
+             prefix += "_"
+         self.prefix = prefix
++        # --reloc: position-independent code a title copies to a different LS address
++        # at each load (GoW:A's BatchJobList job code). It is lifted once at a canonical
++        # base, and every local-store address the code materializes from its own pc
++        # (links, lqr/stqr, transfer and return pcs) adds ctx->reloc_delta, which the
++        # dispatcher sets to placement - canonical base on entry (spu_overlay_register_region_reloc).
++        self.reloc = False
+         # Addresses of `bi/biz/... $r0` that are COMPUTED TAIL JUMPS (r0 reloaded
+         # via lqa/lqr), not function returns -- see compute_bi_r0_jumps(). Empty
+         # set => every `bi $r0` is a return (the prior behaviour).
+@@ -553,7 +559,7 @@ class SPULifter:
+             c = self._translate(insn, func)
+             if c:
+                 if self.trace:
+-                    func.body_lines.append(f"    spu_trace_pc(ctx, 0x{insn.addr:X});")
++                    func.body_lines.append(f"    spu_trace_pc(ctx, {self._pc(insn.addr)});")
+                 func.body_lines.append(f"    {c}")
+                 if self.trace and insn.mnemonic not in _NO_RT_WRITE:
+                     rt_idx = insn.raw & 0x7F
+@@ -572,8 +578,7 @@ class SPULifter:
                           and (last_insn.raw & 0x3FFF) in LV2_RESUMING_STOPS))
                  and end in getattr(self, "func_starts", set())):
              func.body_lines.append(
 -                f"    {{ ctx->pc = 0x{end:X}; "
 -                f"g_spu_trampoline_fn = {self.prefix}spu_func_{end:08X}; return; }}")
-+                f"    {{ SPU_DIRECT(ctx, 0x{end:X}, {self.prefix}spu_func_{end:08X}); }}")
++                f"    {{ SPU_DIRECT(ctx, {self._pc(end)}, {self.prefix}spu_func_{end:08X}); }}")
  
          # Infinite no-op self-loop (the SPU `br .` halt idiom): a function whose
          # whole body is nops + an unconditional branch back into itself does
-@@ -930,10 +929,11 @@ class SPULifter:
+@@ -596,6 +601,13 @@ class SPULifter:
+         self.functions.append(func)
+         return func
+ 
++    def _pc(self, a: int) -> str:
++        """A local-store address derived from the code's own placement: a constant, or
++        under --reloc the canonical address plus ctx->reloc_delta (wrapped to LS)."""
++        if self.reloc:
++            return f"((0x{a:X}u + (uint32_t)ctx->reloc_delta) & 0x3FFFFu)"
++        return f"0x{a:X}"
++
+     @staticmethod
+     def _branch_target(insn: SPUInstruction):
+         """The literal target of a direct branch, or None if it has none.
+@@ -856,9 +868,12 @@ class SPULifter:
+             if disp is not None:
+                 return f"spu_ls_write128(ctx, {g(base)}._u32[0] + {disp}, {g(rt())});"
+         if mn in ("lqa", "lqr"):
+-            return f"{g(rt())} = spu_ls_read128(ctx, {_imm(ops[1])});"
++            # lqr's address is pc-relative (the disassembler gives it absolute): under --reloc it moves with the code
++            a = self._pc(int(_imm(ops[1]), 0)) if mn == "lqr" and self.reloc else _imm(ops[1])
++            return f"{g(rt())} = spu_ls_read128(ctx, {a});"
+         if mn in ("stqa", "stqr"):
+-            return f"spu_ls_write128(ctx, {_imm(ops[1])}, {g(rt())});"
++            a = self._pc(int(_imm(ops[1]), 0)) if mn == "stqr" and self.reloc else _imm(ops[1])
++            return f"spu_ls_write128(ctx, {a}, {g(rt())});"
+         if mn == "lqx":
+             return f"{g(rt())} = spu_ls_read128(ctx, {g(ra())}._u32[0] + {g(rb())}._u32[0]);"
+         if mn == "stqx":
+@@ -892,7 +907,7 @@ class SPULifter:
+             tgt = self._branch_target(insn)
+             # Link register: preferred word only, other slots ZERO (real HW /
+             # RPCS3 v128::from32r) -- splatting corrupts full-quadword link use.
+-            link = f"{g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X});"   # wraps at the end of LS
++            link = f"{g(link_rt)} = spu_link({self._pc((addr + 4) & 0x3FFFC)});"   # wraps at the end of LS
+             # SELF-LOOP TRAP: `brsl rX, .` (target == this instruction) is an
+             # infinite loop on real SPU (re-sets the link each pass, never
+             # advances) -- a trap, NOT a call. Emitting a host call recurses
+@@ -917,9 +932,12 @@ class SPULifter:
+                 # `bi $r0` returns via host return) + SPU_DRAIN (drains the
+                 # callee's own tail-chains so they don't grow the caller frame)
+                 # + image save/restore (adopt-on-serve cannot leak upward).
+-                return (f"{link} {{ int32_t _si = (int32_t)ctx->image_id; "
++                # --reloc: the callee's drain may dispatch into other placed code, which sets
++                # ctx->reloc_delta for itself; put this placement's back on return.
++                rs, rr = ("const int32_t _rd = ctx->reloc_delta; ", " ctx->reloc_delta = _rd;") if self.reloc else ("", "")
++                return (f"{link} {{ int32_t _si = (int32_t)ctx->image_id; {rs}"
+                         f"ctx->host_depth++; {self.prefix}spu_func_{tgt:08X}(ctx); "
+-                        f"spu_drain_call(ctx, 0x{addr + 4:X}); ctx->host_depth--; spu_img_restore(ctx, _si); }}")
++                        f"spu_drain_call(ctx, {self._pc(addr + 4)}); ctx->host_depth--; spu_img_restore(ctx, _si);{rr} }}")
+             return f"{link} /* TODO spu: brsl unresolved target */;"
+         if mn in _COND_BR:
+             tgt = self._branch_target(insn)
+@@ -930,10 +948,11 @@ class SPULifter:
              if func.start_addr <= tgt < func.end_addr:
                  return f"if ({cond}) goto loc_{tgt:08X};"
              self.branch_targets.add(tgt)
@@ -23070,20 +23196,37 @@ index ec62f269..db9654f8 100644
 +            # Cross-function conditional branch = conditional tail: a direct
 +            # tail call when the drain has nothing to do on this step, else
 +            # the trampoline and unwind (SPU_DIRECT, spu_context.h).
-+            return (f"if ({cond}) {{ SPU_DIRECT(ctx, 0x{tgt:X}, "
++            return (f"if ({cond}) {{ SPU_DIRECT(ctx, {self._pc(tgt)}, "
 +                    f"{self.prefix}spu_func_{tgt:08X}); }}")
          # Interrupt enable/disable bits on the bi family (bie/bid, irete/iretd,
          # bisle(d)...): bit 0x40000 = E (enable), 0x80000 = D (disable), taking
          # effect when the branch is TAKEN. The WWS jobmanager's poll loop runs
-@@ -980,6 +980,7 @@ class SPULifter:
+@@ -980,17 +999,19 @@ class SPULifter:
              # SPU_DRAIN + image save/restore) so the callee's tail-chains drain
              # here and its `bi $r0` returns via host return.
              # read the target BEFORE writing the link: rt may be the same register as ra
+-            return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
+-                    f"int32_t _si = (int32_t)ctx->image_id; "
 +            # (`bisl $0,$0`, GoW:A's WWS jobs, must call the old value)
-             return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
-                     f"int32_t _si = (int32_t)ctx->image_id; "
++            rs, rr = ("const int32_t _rd = ctx->reloc_delta; ", " ctx->reloc_delta = _rd;") if self.reloc else ("", "")
++            return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link({self._pc((addr + 4) & 0x3FFFC)}); "
++                    f"int32_t _si = (int32_t)ctx->image_id; {rs}"
                      f"{_ied}ctx->pc = _tg; ctx->host_depth++; "
-@@ -1042,10 +1043,11 @@ class SPULifter:
+-                    f"spu_indirect_branch(ctx); spu_drain_call(ctx, 0x{addr + 4:X}); "
+-                    f"ctx->host_depth--; spu_img_restore(ctx, _si); }}")
++                    f"spu_indirect_branch(ctx); spu_drain_call(ctx, {self._pc(addr + 4)}); "
++                    f"ctx->host_depth--; spu_img_restore(ctx, _si);{rr} }}")
+         # bisled: set link, branch to RA only if an external event is pending.
+         if mn in ("bisled",):
+             link_rt = insn.raw & 0x7F            # rt = link
+             tgt_reg = (insn.raw >> 7) & 0x7F     # ra = target (the disassembler's last operand is rb, not the target)
+             # read the target before writing the link: rt may alias ra
+-            return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
++            return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link({self._pc((addr + 4) & 0x3FFFC)}); "
+                     f"if ((ctx->event_status & ctx->event_mask) != 0) {{ "
+                     f"{_ied}ctx->pc = _tg; "
+                     f"g_spu_trampoline_fn = spu_indirect_branch; return; }} }}")
+@@ -1042,10 +1063,11 @@ class SPULifter:
          if func.start_addr <= tgt < func.end_addr:
              return f"goto loc_{tgt:08X};"
          self.branch_targets.add(tgt)
@@ -23095,10 +23238,39 @@ index ec62f269..db9654f8 100644
 +        # drain has nothing to do on this step, else hand the target to the
 +        # trampoline and unwind so the enclosing SPU_DRAIN re-enters (no
 +        # host-stack growth either way; SPU_DIRECT, spu_context.h).
-+        return (f"{{ SPU_DIRECT(ctx, 0x{tgt:X}, {self.prefix}spu_func_{tgt:08X}); }}")
++        return (f"{{ SPU_DIRECT(ctx, {self._pc(tgt)}, {self.prefix}spu_func_{tgt:08X}); }}")
  
      # ------------------------------------------------------------------ #
      def emit_header(self) -> str:
+@@ -1089,7 +1111,7 @@ class SPULifter:
+             lines.append(" * branches that escape a function's range). */")
+             for t in externs:
+                 lines.append(f"void {self.prefix}spu_func_{t:08X}(spu_context* ctx) {{")
+-                lines.append(f"    ctx->pc = 0x{t:X}u; "
++                lines.append(f"    ctx->pc = {self._pc(t)}; "
+                              f"g_spu_trampoline_fn = spu_indirect_branch; return;")
+                 lines.append("}")
+             lines.append("")
+@@ -1174,6 +1196,11 @@ def main() -> None:
+                         "by trampolines. Every chunk is still emitted and "
+                         "registered on its own for indirect entry, so this only "
+                         "changes speed, not which code can be reached.")
++    p.add_argument("--reloc", action="store_true",
++                   help="Position-independent code the title places at a different LS "
++                        "address per load: lift once at --base, and offset every "
++                        "pc-derived address by ctx->reloc_delta at run time (register "
++                        "with spu_overlay_register_region_reloc).")
+     p.add_argument("--max-group-insns", type=int, default=4000,
+                    help="Cap on instructions per merged group (keeps clang fast).")
+     p.add_argument("--force-indirect", default="",
+@@ -1299,6 +1326,7 @@ def main() -> None:
+     insns = disassemble_spu(data, base)
+ 
+     lifter = SPULifter(trace=args.trace, prefix=args.symbol_prefix)
++    lifter.reloc = args.reloc
+     lifter.bi_r0_jump = compute_bi_r0_jumps(insns, bounds)
+     if lifter.bi_r0_jump:
+         print(f"  {len(lifter.bi_r0_jump)} `bi $r0` computed-jump site(s) "
 diff --git a/tools/test_gcm_ea2io_range.py b/tools/test_gcm_ea2io_range.py
 new file mode 100644
 index 00000000..acfe0ea0

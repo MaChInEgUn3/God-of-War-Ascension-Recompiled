@@ -36,6 +36,9 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    the previous `edgefrags_register.c` among the inputs to keep its placements (the menu, the first level and its corridor
    use 569; existing lifts keep their function entries, and `edgefrag_7228c0_11150`, patched at build time, is not re-lifted),
    then re-run `scripts\cfg.bat` so CMake picks up the new directories.
+   BatchJobList's position-independent blobs: `python analysis/lift_reloc_blobs.py --merge-chunks <elf> port <ps3recomp>
+   [SPU_INTERP_MISS run log...]` (generates `port/spu/relocblob_*` and `port/spu/relocblobs_register.c`, images 900-903,
+   lifted with `spu_lifter.py --reloc`). The port runs them only with `SPU_RELOC_OFF=0` (M0.86).
    SPU lifts made before the toolkit's SPU_DIRECT tails (M0.76): `python scripts/spu_direct_rewrite.py port/spu --apply`
    rewrites their known-target tails in place (keeps `.pre_direct` copies, git-ignored like the rest of `port/spu/`).
    PPU lifts made before ps3recomp's inline guest loads: `python analysis/patch_ppu_inline_loads.py <ps3recomp>

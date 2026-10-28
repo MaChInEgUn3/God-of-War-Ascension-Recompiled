@@ -799,6 +799,24 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.86: BatchJobList's position-independent code lifted (relocatable lifts); the wait moves to General6 (2026-10-28).**
+  - Toolkit: `spu_lifter.py --reloc` lifts position-independent code once at a canonical base; every address the
+    code derives from its own pc (links, `lqr`/`stqr`, transfer and return pcs) adds `ctx->reloc_delta`.
+    `spu_overlay_register_region_reloc()` makes a copy resident wherever the title DMAs it, and dispatch sets the
+    delta. The four blobs are pc-getter PIC (`brsl $rX, .+4`; no absolute branches or `lqa`/`stqa`).
+    `analysis/lift_reloc_blobs.py` lifts them (canonical base `0x20000`, images 900-903); `SPU_INTERP_MISS` now reports
+    misses inside such code at the canonical pc, ready to pass back as entries.
+  - Effect on the SPU side (x136): interpreted SPU time 13.6 -> 4.4 s per 20 s, BatchJobList 77% -> 29% busy, all the
+    workloads 497% -> 449%. No hang and clean frame dumps in every run.
+  - Effect on the frame (x144, one diagnostic exe, poll sites as spans, 420-480 s): with the lifts the main thread's
+    wait on BatchJobList (`0x464F84`) fell from 9.55 to 4.00 s per 60 s, but its waits on General6 grew
+    (`0x375A88` 6.68 -> 9.25 s); 10.81 vs 10.46 game frames/s. Corridor A/B (x142, quiet host, new vs previous
+    build): 11.04 / 10.63 vs 11.22 / 11.64. The frame rate is neutral within noise, so the port keeps them off
+    (`SPU_RELOC_OFF=1` default; `=0` runs them). General6 (job module a67e, `4AB0`) is the next bound.
+  - Still interpreted in BatchJobList: targets outside the four blobs (`0x359C0` ~1.5 s per 20 s, `0x18BD0`,
+    `0x20BD0`), code from other sources; not chased while General6 is the bound.
+  - Timing notes from the same day are in DEBUGGING.md ("Before trusting a timing"): a full drive and a busy host
+    each cost 25% or more, which an A/B between builds cannot tell from a regression.
 - **M0.85: the same two lists as kernel-thread lanes, ~10.8 game frames/s in the corridor (2026-10-28).**
   - `SPURS_LANES` (the mechanism the EDGE lists already used) lets up to n of the six kernel threads run a workload
     at once, each as the SPU it plays (its own spuNum), with the rerun window kept and no thread created per
@@ -818,8 +836,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     the main thread is blocked ~66 ms of a ~95 ms frame (41.4 s in 630 frames): `0x416A44` 10.7 s, `0x464F84`
     9.1 s, `0x3E8910` 7.3 s, `0x416654` 7.3 s and a new one, `0x375A88`, 4.9 s (General6 busy on 2.3 SPUs meanwhile).
     During every one of those waits 5.0-5.7 of the 6 SPU threads are busy, and `SPURS_PM_PROF` (x135) puts the
-    workloads at 497% of 600% with 2% idle: the SPU pool is now saturated, so more lanes cannot help. The lever is
-    SPU time per frame.
+    workloads at 497% of 600% with 2% idle: the SPU pool is now saturated. (M0.86 below: cutting BatchJobList's SPU
+    time shortened its wait, but the frame then waited on General6 instead, so the frame rate barely moved.)
   - Where that time goes (x135, `SPU_INTERP_MISS`): General6 95% busy and 0% interpreted (it is lifted; most of it is
     job module a67e's `4AB0`), the three EDGE lists 62% each and 0% interpreted, the audio workload 66% on its own
     SPU, and BatchJobList 77% busy and **87% interpreted**: ~13 s of every 20 s of interpreted SPU time, nearly all

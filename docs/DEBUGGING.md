@@ -215,6 +215,14 @@ Lessons that cost days; keep them.
     checkpoint would silently move every following run's start, so the harness keeps a copy of that save and
     restores it before each run; the frame dumps of each A/B arm are checked to show the same place at the start
     and end of the window.
+* **Before trusting a timing** (2026-10-28 lessons; the same exe went from 11.4 to 0.6 game frames/s on a busy host):
+  - Free space on the work drive: at 7 GB free (the frame dumps had grown to 91 GB) every run was ~25% slower,
+    boot included. The harness now warns under 20 GB; prune old `work/frames/<tag>` dirs.
+  - Host load with the game closed: the processor total should be ~10%. `Get-Process` CPU misses protected and
+    system processes; `Win32_PerfFormattedData_PerfProc_Process` and `..._PerfOS_Processor` (privileged time) show
+    them. A run-long log of both every 30 s beside each A/B (a PowerShell loop) tells a slow arm from a busy host.
+  - Compare the flips at 60 s (boot and intro, no gameplay): far below ~3600-4000 means the host, not the build.
+  - Frame dumps of both arms at the start and end of the window must show the same place.
 * **Harness instrumentation**: `work/ab_exe.sh` sets `SPURS_PM_PROF=60` (and `GOW_MAIN_PROF`), which times every SPU
   channel read/write with two `QueryPerformanceCounter` calls, ~5% of EDGE time. A/B comparisons stay valid; absolute
   numbers are a bit pessimistic. `NOPMPROF=1` runs without them (no `[pm-prof]`, so no EDGE ms/job).

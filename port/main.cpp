@@ -737,6 +737,12 @@ int main(int argc, char** argv)
      * 13.02 / 13.02 game frames/s against 12.21 / 12.39 (x103). Shorter
      * sleeps, like the main thread's 30 us polls, still spin. 0 restores it. */
     if (!getenv("PS3_USLEEP_WAIT_US")) _putenv_s("PS3_USLEEP_WAIT_US", "500");
+    /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,
+     * analysis/lift_reloc_blobs.py) stay interpreted. Lifted, they cut interpreted SPU
+     * time from 13.6 to 4.4 s per 20 s and the workload from 77% to 29% busy (x136), but
+     * the corridor frame rate did not move (x142: 11.04/10.63 vs 11.22/11.64 without
+     * them). SPU_RELOC_OFF=0 runs the lifts. */
+    if (!getenv("SPU_RELOC_OFF")) _putenv_s("SPU_RELOC_OFF", "1");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole
