@@ -731,6 +731,14 @@ int main(int argc, char** argv)
      * 13.02 / 13.02 game frames/s against 12.21 / 12.39 (x103). Shorter
      * sleeps, like the main thread's 30 us polls, still spin. 0 restores it. */
     if (!getenv("PS3_USLEEP_WAIT_US")) _putenv_s("PS3_USLEEP_WAIT_US", "500");
+    /* SPURS_MAXCONT=3=3,7=3: General6 (wid 3) and BatchJobList (wid 7) run on up to
+     * three SPUs at once; the title registers maxContention 1 for every workload,
+     * and the main thread waits on both lists each frame (polls 0x3E8910 and
+     * 0x464F84). Corridor, 360-690 s: 3=3 alone 8.01/8.21/8.12 vs 7.45/7.28/7.50
+     * (x126/x127); with 7=3 8.70/9.07/8.93/9.16 vs 8.31/8.18 (x128/x129); no hang,
+     * clean frames. Adding 9,10,11,13=3 fell to 5.75/6.04. SPURS_MAXCONT=off (any value
+     * without <wid>=<n> pairs) goes back. */
+    if (!getenv("SPURS_MAXCONT")) _putenv_s("SPURS_MAXCONT", "3=3,7=3");
 #pragma comment(lib, "winmm.lib")
     /* 1 ms timer resolution. The default granularity is about 15.6 ms, which
      * inflates every shorter wait the title makes and throttles the whole

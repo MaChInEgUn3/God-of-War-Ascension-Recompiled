@@ -799,6 +799,26 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.84: General6 and BatchJobList run on three SPUs each, +19% in the corridor (2026-10-28).**
+  - The main thread's longest waits in the corridor frame (x125: poll sites traced as `PS3_FTRACE` spans with a
+    temporary lift patch) are `0x464F84` (41 ms of a 125 ms frame, while wid 7 BatchJobList runs) and `0x3E8910`
+    (33 ms, General6), then `0x416A44` (15 ms) and `0x416654` (12 ms). During the `0x3E8910` wait only 2.15 SPUs are
+    busy, and every non-EDGE workload runs on exactly one SPU at a time: the title registers maxContention 1 for all
+    of them.
+  - `SPURS_MAXCONT=3=3,7=3` (now the port default) runs those two lists on up to three virtual SPUs, each with its own
+    spuNum (lanes 1-2 on worker threads). Corridor, 360-690 s:
+    - `3=3` alone vs off (x126, x127): 8.01 / 8.21 / 8.12 vs 7.45 / 7.28 / 7.50 game frames/s;
+    - `3=3,7=3` vs `3=3` (x128, x129): 8.70 / 9.07 / 8.93 / 9.16 vs 8.31 / 8.18;
+    - `3=6` (clamped to the instance's SPUs) is no better than `3=3` (8.55 / 8.07);
+    - adding `9,10,11,13=3` is much slower (5.75 / 6.04): a lane run creates its worker threads at every dispatch
+      and skips the rerun window, which costs more than it gives on short, frequent lists.
+  - No hang in any of the 14 runs; the frame dumps show the corridor and combat drawn as before. The lanes claim
+    jobs through the job list's GETLLAR / PUTLLC atomics; a lost update there would leave a count above zero and
+    hang the main thread's poll, which no run showed.
+  - 25-minute soak with the new default (x130, environment unset): 8.90 game frames/s at 360-690 s, 8.67 at
+    690-1100 s, 8.96 to the end; no gap between flips beyond the ~140 s load; frames clean.
+  - Next on the same path: persistent lane workers (no thread per dispatch, rerun kept), which may also make the
+    shorter lists worth a lane.
 - **M0.83: the lifted PPU code builds for x86-64-v3, +2.5%; the corridor frame is main-thread bound (2026-10-28).**
   - Frame timeline of the corridor (x117, `PS3_FTRACE` 420-480 s, re-lifted exe): median frame 123.9 ms. SPUs 0-3
     are busy ~60% of it, SPU 4 87% (wid 8, the audio workload, alone on it; not on the frame's path), the walker

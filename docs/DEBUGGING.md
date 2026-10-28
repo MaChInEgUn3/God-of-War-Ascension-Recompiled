@@ -437,7 +437,8 @@ Lessons that cost days; keep them.
   every flush, the thing to try for a rendering bug that might be ordering).
 * **SPURS scheduling knobs**: `SPURS_PM_RERUN_US` (port default 2000; the second argument of `work/ab_exe.sh`
   overrides it), `SPURS_KERN_SPUS` (port default `0,1,2,3,4,5`), `SPURS_EDGE_DIAG=<s>` with `SPURS_EDGE_WIDS`
-  (whether those workloads ever run side by side), `SPURS_MAXCONT="<wid>=<n>,..."` (lanes per workload, experiment),
+  (whether those workloads ever run side by side), `SPURS_MAXCONT="<wid>=<n>,..."` (run that workload on n virtual SPUs whatever its registered
+  maxContention; the port's default is `3=3,7=3`, General6 and BatchJobList, `SPURS_MAXCONT=off` disables it),
   `SPURS_LANES="<wid>[,<wid>...]=<n>[;...]"` (up to n kernel threads run that workload's module at once, each as
   the SPU it plays, only on SPUs the workload has a priority on; the port's default is `SPURS_LANES=15,16,17=3`, `SPURS_LANES=off` disables it),
   `SPURS_RERUN_YIELD=1` (end a rerun window when a workload this SPU ranks higher is ready; logs `[spurs-ry]`
