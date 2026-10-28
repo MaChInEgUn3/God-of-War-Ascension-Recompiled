@@ -807,6 +807,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - The main thread's 22.7% at `0x3E8900` is a poll of a u16 at `[[r30+0xC]+0xE0]` (loop `0x3E8910`) after the
     frame routine's calls; `0x416A44` and `0x464FA4` are other polls (main-prof ~8% and ~18%). Which writer clears
     them is not known yet.
+  - The `0x3E8900` poll, followed through (x119-x123): `[0x9397F8]` = `0x80FF8CA0`, the same in three dumps, so
+    the polled u16 is at `0x80FF8D80`. A 1 ms byte-change watch (`GOW_LLE_WATCH=1 GOW_LLE_DUMP_EA=80FF8D00`) shows it
+    set to N and counted down to 0 (~110 times a second): a job list's remaining-job count. `SPU_ATOM_EA=80FF8D80`
+    names the writer: PUTLLCs from the WWS policy module (image 10, pc `0x2628`). `SPU_ATOM_WIDS=60` puts every
+    atomic on that line in wid 3 (General6). So the main thread waits for General6 to finish its list, ~28 ms a
+    frame. General6 spends 61% of its time in job module `a67e`'s `4AB0` and 15% in `63B4` (earlier profile).
+    `GOW_GUARD=80FF8D80` reported no write at all on that page, though the PPU and the SPUs both write it.
   - `PPU_HOST_ARCH` (port CMake, default `-march=x86-64-v3` like `SPU_HOST_ARCH`, with `-ffp-contract=off` since FMA
     then exists): corridor A/B in exes g f f g f g (x118), 7.45 / 7.63 / 7.55 against 7.44 / 7.25 / 7.39 game
     frames/s, +2.5% mean, the new build ahead in all three pairs. `-DPPU_HOST_ARCH=` brings back the SSE2 baseline.

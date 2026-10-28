@@ -199,6 +199,12 @@ Lessons that cost days; keep them.
 * **SPU channel wakeups** (M0.82): `spu_ch_wake` passes through the waiter's `ch_wait_lock` before waking it, so a
   wake can no longer land between the waiter's test and its sleep and leave it on the 10 ms re-poll (upstream PR
   #619's first fix). `SPU_WAKE_LOCK=0` skips it.
+* **What a main-thread poll waits for** (M0.83): read the polled address off the lift (the base register's
+  constant), dump the pointer with `GOW_LLE_DUMP=<s> GOW_LLE_DUMP_EA=<hex>` (12 rows of 16 bytes, three times 5 s
+  apart), watch the target with `GOW_LLE_WATCH=1 GOW_LLE_DUMP_EA=<hex>` (every byte change of 0xC0 bytes, 1 ms
+  polling), then `SPU_ATOM_EA=<hex> SPU_ATOM_PUTONLY=1` (which SPU image/pc does the atomic store) and
+  `SPU_ATOM_WIDS=<s>` (which workload). `GOW_GUARD` saw no write on a heap page that both the PPU and the SPUs
+  write, so do not rely on it for these.
 * **Benchmark scene**: the corridor after the prison, reached at ~270 s with `PAD_STICK="128,128,255,128,170,700,400"`
   (right-stick flicks every 400 ms pass the dodge tutorial) plus `scripts/pad_masher.sh 170 700 <file>` feeding
   `PAD_FILE=<file>` (the attack tutorial); measure 360-690 s. The older 360-720 s numbers are the dodge-tutorial loop,
