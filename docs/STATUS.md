@@ -814,6 +814,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     bot ends up can differ between runs: compare A/B arms only while their frame dumps show the same place. All
     eight x131/x132 runs were at the door at both 360 s and 690 s (the dumps nearest those times, picked by file
     time).
+  - Frame timeline after the change (x134, poll sites as spans again, 420-480 s at the door, 10.65 game frames/s):
+    the main thread is blocked ~66 ms of a ~95 ms frame (41.4 s in 630 frames): `0x416A44` 10.7 s, `0x464F84`
+    9.1 s, `0x3E8910` 7.3 s, `0x416654` 7.3 s and a new one, `0x375A88`, 4.9 s (General6 busy on 2.3 SPUs meanwhile).
+    During every one of those waits 5.0-5.7 of the 6 SPU threads are busy, and `SPURS_PM_PROF` (x135) puts the
+    workloads at 497% of 600% with 2% idle: the SPU pool is now saturated, so more lanes cannot help. The lever is
+    SPU time per frame.
+  - Where that time goes (x135, `SPU_INTERP_MISS`): General6 95% busy and 0% interpreted (it is lifted; most of it is
+    job module a67e's `4AB0`), the three EDGE lists 62% each and 0% interpreted, the audio workload 66% on its own
+    SPU, and BatchJobList 77% busy and **87% interpreted**: ~13 s of every 20 s of interpreted SPU time, nearly all
+    the interpreter time left. Its code comes from four EBOOT blobs (`0x716730` 0x2450 bytes, `0x6D66B0` 0xB80,
+    `0x6AC8B0` 0x28E0, `0x6AF1B0` 0x32E0) that its jobs copy to a new 16-byte-aligned LS address at each load (x112:
+    299 loads, 299 different addresses), so a lift per placement cannot cover it; a position-independent lift can.
 - **M0.84: General6 and BatchJobList run on three SPUs each, +19% in the corridor (2026-10-28).**
   - The main thread's longest waits in the corridor frame (x125: poll sites traced as `PS3_FTRACE` spans with a
     temporary lift patch) are `0x464F84` (41 ms of a 125 ms frame, while wid 7 BatchJobList runs) and `0x3E8910`
@@ -872,7 +884,7 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     cores, interpreted time 37.5 -> 6.8 s per 20 s (what is left is wid 7). Frame rate, corridor A/B e d d e
     (x113): 7.44 / 7.08 against 6.93 / 7.03 game frames/s, +7.4% and +0.7%. A core of SPU time went away and the
     frame rate barely moved, so the SPUs are not what limits the corridor.
-  - wid 7's code is staged by the job itself: three EBOOT blobs (`0x716730`, `0x6D66B0`, `0x6AF1B0`, up to
+  - wid 7's code is staged by the job itself: EBOOT blobs (`0x716730`, `0x6D66B0`, `0x6AF1B0`, `0x6AC8B0`, up to
     `0x32E0` bytes) copied to LS addresses that change from job to job (299 placements in one run), so lifting one
     copy per placement does not scale. It is ~0.33 cores interpreted.
   - Upstream PR #619's lost-wakeup fix (toolkit b606ff7c, `SPU_WAKE_LOCK=0` skips it): corridor A/B w n n w (x116)
