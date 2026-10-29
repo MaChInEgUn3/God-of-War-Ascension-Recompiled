@@ -799,6 +799,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.87: SPU floats with flush-to-zero, quadword local-store access in one load, +4% in the corridor (2026-10-28).**
+  - Toolkit `SPU_FP_DAZ` (on whenever `SPU_FP_NATIVE` is): the SPU thread's MXCSR also sets FTZ and DAZ. SPU single
+    precision has no denormals (exponent 0 reads as zero, a result below the normal range is +0), so the native
+    `fa`/`fs`/`fm`/`fma` no longer check their inputs for denormals; the exact path still covers exponent 255 and
+    overflow. Double-precision helpers clear FTZ/DAZ with the rounding mode. `test_spu_fp_daz` (new): 480M lane results
+    of six ops against the exact path, 0 differ; without DAZ in MXCSR the same test reports 17.9M differences.
+  - Toolkit `SPU_LS_VEC` (SSSE3 x86 hosts): `spu_ls_read128`/`spu_ls_write128` are one 16-byte load or store and one
+    `pshufb` word swap. The old form stored four byte-swapped words and reloaded them as a quadword, which stalls on
+    store forwarding.
+  - a67e replay (job lab, 300 jobs, 300/300 identical): ~2.17 -> 2.12 ms per job with `SPU_LS_VEC`, then ~1.50 ms
+    with `SPU_FP_DAZ` (-29%).
+  - Corridor A/B (x159, 360-690 s, order old new new old, host quiet): previous build 11.14 / 10.90, new build
+    11.35 / 11.65 game frames/s (+4.4% on the means). Scenes match. The new build is the reference.
 - **M0.86: BatchJobList's position-independent code lifted (relocatable lifts); the wait moves to General6 (2026-10-28).**
   - Toolkit: `spu_lifter.py --reloc` lifts position-independent code once at a canonical base; every address the
     code derives from its own pc (links, `lqr`/`stqr`, transfer and return pcs) adds `ctx->reloc_delta`.
@@ -834,8 +847,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     promotion of that block gave no gain in replay.
   - Toolkit: `shufb` and the quadword byte rotates/shifts no longer swap bytes around `pshufb` (the index is remapped
     instead, SSE4.1 path). Exact: `test_spu_shufb` passes 200000 random cases. a67e replay 2.227 -> ~2.17 ms per job
-    (-2.6%). Corridor A/B (x156, new recipe, 360-690 s): previous build 11.58, new build 11.62 game frames/s (a second
-    pair ran under browser load and is not counted). Neutral to slightly positive; the new build is the reference.
+    (-2.6%). Corridor A/B (x156, new recipe, 360-690 s): previous build 11.58, new build 11.62 game frames/s (the second
+    pair is not counted: one run had a browser using about a core, the other ran during bursts of host system load). Neutral to slightly positive; the new build is the reference.
   - The walker (`ENG_PHASE_STATS`) now spends ~77% of its time in methods (was 67%).
 - **M0.85: the same two lists as kernel-thread lanes, ~10.8 game frames/s in the corridor (2026-10-28).**
   - `SPURS_LANES` (the mechanism the EDGE lists already used) lets up to n of the six kernel threads run a workload

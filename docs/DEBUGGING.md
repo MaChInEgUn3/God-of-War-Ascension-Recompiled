@@ -453,7 +453,9 @@ Lessons that cost days; keep them.
   `tail` (or `play`) to compare A/B pairs. Level entry time varies by run (120-330 s on the fast route).
 * **SPU float**: the port builds with `SPU_FP_NATIVE` (CMake `GOW_SPU_FP_NATIVE`, default on): single-precision
   SPU ops run as native instructions under round-toward-zero. `SPU_FP_CHECK=1` compares every one with the exact
-  path and prints `[spu-fp]` mismatches and a running count. Rebuild with `-DGOW_SPU_FP_NATIVE=OFF` to rule it out.
+  path and prints `[spu-fp]` mismatches and a running count. The same option sets flush-to-zero and
+  denormals-are-zero in the SPU thread's MXCSR (`SPU_FP_DAZ`, exact because SPU singles have no
+  denormals). Rebuild with `-DGOW_SPU_FP_NATIVE=OFF` to rule it out.
 * **Async Vulkan submission**: `VK_ASYNC=1` (port default) keeps up to 3 batches in flight (`VK_ASYNC=0` waits at
   every flush, the thing to try for a rendering bug that might be ordering).
 * **SPURS scheduling knobs**: `SPURS_PM_RERUN_US` (port default 2000; the second argument of `work/ab_exe.sh`
