@@ -1071,3 +1071,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   133613540 iterations (2 vertices each)`; 0 speculative recomputes, 0 entries left to v1 in game too.
   Check-mode rdtsc ~63 vs ~244 ticks per iteration. No in-game A/B yet: at -1.9% of job time it sits at the
   paired A/B's noise floor; it is measured with the lanes work instead.
+- 2026-10-29: the same recipe outside EDGE, on General6 (job module a67e, captured with
+  `SPU_JOB_CAPTURE_WIDS=3 SPU_JOB_CAPTURE_IMG=218`). Its hot block (`4930` falling into `4AB0`'s entry block) is
+  Perlin's improved 3D noise, four points per call; `port/gow_a67e_noise.c` reproduces it lane-exact
+  (`GOW_A67_NOISE`, default native, generator `port/gen_a67e_noise_lift.py`). Replay: 300/300 identical,
+  1.74 -> 0.92 ms per job (-47%). In game General6's thread time fell 77% -> 52% and the corridor frame rate stayed
+  the same (10.36 vs 10.35, STATUS M0.88): a faster job only pays when the frame waits for that workload.

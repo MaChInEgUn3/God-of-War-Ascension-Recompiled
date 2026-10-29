@@ -243,6 +243,20 @@ if(PORT_ENABLE_SPU)
                 COMMENT "Generating the 11430 loop from the edgefrag_7228c0_11150 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o11430.c" "${EDGE_BODYO1}")
         endif()
+        # General6's job module a67e: function 4930 (Perlin noise) native (gow_a67e_noise.c, switch
+        # GOW_A67_NOISE, default native). gen_a67e_noise_lift.py writes the lift with the switch beside the
+        # original (for its includes); that copy is compiled instead. Not committed.
+        set(A67_LIFT "${SPU_DIR}/jobmod_a67e549fa0ab_e41e8/spu_recomp.c")
+        if(EXISTS "${A67_LIFT}")
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            set(A67_SWITCHED "${SPU_DIR}/jobmod_a67e549fa0ab_e41e8/spu_recomp_noise.c")
+            add_custom_command(OUTPUT "${A67_SWITCHED}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_a67e_noise_lift.py" "${A67_LIFT}" "${A67_SWITCHED}"
+                DEPENDS "${A67_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_a67e_noise_lift.py"
+                COMMENT "Adding the native noise switch to the a67e lift")
+            list(REMOVE_ITEM SPU_SOURCES "${A67_LIFT}")
+            list(APPEND SPU_SOURCES "${A67_SWITCHED}" "${CMAKE_CURRENT_SOURCE_DIR}/gow_a67e_noise.c")
+        endif()
         # Generated beside the lift; each is present only once its generator
         # has been run, so each is included only if it is actually here.
         foreach(gen IN ITEMS spu_workloads.c jobmods_register.c edgefrags_register.c relocblobs_register.c taskset_policy_bytes.c)

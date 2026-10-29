@@ -799,6 +799,24 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.88: General6's Perlin noise as native code: the job is 47% faster, the frame rate does not move (2026-10-29).**
+  - The hot block of job module a67e (`4930`, falling into `4AB0`'s entry block) is Ken Perlin's improved noise in
+    3D, four points per call (point i in words 0-2 of r(3+i), result in word i of r3). The callers sum four octaves.
+    The tables are read from local store at run time (permutation at `0x8680`, gradients at `0x8580`).
+    `port/gow_a67e_noise.c` computes the four points side by side with the same `spu_helpers.h` float ops in the
+    same order, so every lane is bit-exact. `port/gen_a67e_noise_lift.py` puts a switch in front of the lifted
+    function (`GOW_A67_NOISE`: unset/1 native, 0 lifted, 3 check).
+  - Job lab (300 captured a67e jobs): native 300/300 identical in final registers, LS and outputs, median 0.92 ms
+    per job vs 1.74 ms lifted (-47%). Check mode in the lab: 300/300 jobs, no difference printed.
+  - In game (x165, `SPURS_PM_PROF`): General6's kernel-thread time fell from 77% to 52% of the window for the same
+    job count, and the host sampler on it now shows the noise at ~23% of its time (was ~45%).
+  - Corridor A/B (x164, 600 s runs, 360-590 s, order native/old/old/native): 10.36 vs 10.35 game frames/s in the
+    first pair. The second pair (8.98 old, 6.29 native) is not counted: other programs used one to two cores
+    through both of its runs (video encoding, an archive, a GPU stress test, a browser). The frame rate is
+    neutral: General6's compute is no longer what the frame waits for. The native path stays the default since it
+    is exact and frees a quarter of a host core.
+  - The main thread's sampled waits (`GOW_MAIN_PROF`) are unchanged by it: ~20% of its time at `0x375BF0`
+    (lr `0x375A88`), ~13% at `0x467B2C`, ~12% at `0x416A4C`, in both the old (x160) and the new (x165) build.
 - **M0.87: SPU floats with flush-to-zero, quadword local-store access in one load, +4% in the corridor (2026-10-28).**
   - Toolkit `SPU_FP_DAZ` (on whenever `SPU_FP_NATIVE` is): the SPU thread's MXCSR also sets FTZ and DAZ. SPU single
     precision has no denormals (exponent 0 reads as zero, a result below the normal range is +0), so the native
