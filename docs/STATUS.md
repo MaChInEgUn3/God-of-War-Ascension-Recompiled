@@ -821,6 +821,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     draws qualify and the declined ones (sparse index ranges, other layouts) carry most of the fetch time: CPU
     fetch 3.4 -> 2.6 s per 30 s while the raw copies raise the backend 5 -> 7 us per draw (x199/x200, busy host).
     No frame-rate gain. A gather path for deduplicated references would be needed before it pays.
+  - Tried, not kept: the main thread's job-slot scan (`0x416338`, called each round of its job-list polls)
+    sleeping ~0.5 ms every 64th call (a PPU trace-hook knob, both arms with the hook live; x201, s z z s):
+    11.44 / 11.74 against 11.94 / 11.00 game frames/s, thread CPU unchanged. Neutral.
+  - Vertex fetch conclusion: two exact rewrites (SIMD, GPU decode) left the CPU cost in place; it is the
+    walker's first touch of vertex data the SPU threads just wrote (cross-core misses), not the decode.
+    Next on the walker: raw indices with `vertexOffset = -lowest id` (index decode + range + index build,
+    ~2.7 s of every 30 s), then dirty register groups for the pipeline lookup.
+  - Production reference is unchanged by M0.94's experiments (runVz/runWa with the knobs off = runVw).
   - Ceiling on the walker path: with the causal share (~0.78) a vertex fetch rewrite (~5 us of ~24 per draw)
     gives ~+16%, ~14 game frames/s at a quiet host; beyond that the main thread's job-list polls bind.
 - **M0.93: draw recording without repeated state, descriptor sets reused (2026-10-30).**
