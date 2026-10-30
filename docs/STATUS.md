@@ -799,7 +799,7 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
-- **M0.89 (in progress): the RSX walker binds the frame again; two runtime knobs tried (2026-10-29).**
+- **M0.89: the RSX walker binds the frame again; range fetch and render-pass merging on by default (2026-10-29).**
   - Per-thread host CPU at speed (x168, `Get-Process` thread times over 400-430 s, quiet host): main thread 0.97
     cores (about half of its sampled guest time in the job-list polls `416338`, `466E38`, `416610`), RSX walker
     0.89, SPU kernel threads ~0.6 each. Frame timeline (x166, 420-450 s, one other program at ~0.7 cores): the walker
@@ -818,6 +818,23 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     vertex fetch 6.0 against 7.0-7.2 us per draw. The other three runs had a terminal using ~0.85 cores (and two
     of them stood elsewhere in the scene): 9.40 on, 9.19 off / 7.85 on. Not adopted until a clean pair confirms
     it. Its frame dumps look the same as the off runs (visual check, not pixel-compared).
+  - Second pair (x174): 10.07 on against 10.31 off, but the on run's walker cost 38.4 against 31.1 us per draw
+    (texture phase doubled: another part of the scene) with a browser at ~1 core; not comparable. Vertex fetch
+    fell in every pair (7.0-7.6 -> 6.0-7.1 us per draw).
+  - Toolkit `VK_PASS_MERGE=1` (M0.81, off until now) on top, A/B one exe (x175, range on in both arms):
+    backend recording 4.8 against 8.4-8.6 us per draw, the walker's whole method time 26.9 against 29.1-29.4 us
+    per draw (-8%). Same-scene pair (both at the door): 11.18 on against 11.04 off. The other two runs stood by
+    the statue; the merge one is void (terminal ~0.9 cores, texture phase doubled).
+  - Both are port defaults now (`VK_PASS_MERGE=1`, `RSX_REMAP_RANGE=1`, main.cpp; 0 goes back): they take ~10%
+    of the walker's time per draw and the frame dumps look the same, but the frame rate moves only +1-3%. The
+    walker and the main thread bind together: in x171 the main thread is busy ~55 ms of an 84 ms frame, so a
+    free walker would cap near ~16 game frames/s before the main thread's job-list polls bind.
+  - 20-minute soak with the new defaults (x176, environment unset): no hang, steady memory (2.2 GB private),
+    frame dumps right from the menus to the door. Its rate (7.8) is not counted: a terminal used 0.9-1.8 cores
+    for the whole run.
+  - Synchronous GPU waits on the walker (x171 trace, 20 s): `vk_eng_color_snapshot` 0.61 s, `vk_eng_readback`
+    0.54 s, `vk_eng_texture_create` 0.40 s, ~7.5% of its time. Next walker targets with the texture phase.
+  - Measuring: winsheet first; `methods` us per draw (ENG_PHASE_STATS) more than 10% apart voids a pair.
 - **M0.88: General6's Perlin noise as native code: the job is 47% faster, the frame rate does not move (2026-10-29).**
   - The hot block of job module a67e (`4930`, falling into `4AB0`'s entry block) is Ken Perlin's improved noise in
     3D, four points per call (point i in words 0-2 of r(3+i), result in word i of r3). The callers sum four octaves.

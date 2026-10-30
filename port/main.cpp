@@ -708,6 +708,15 @@ int main(int argc, char** argv)
      * lists run back to back on four kernel threads (below) it pays: tail 1.590/
      * 1.523/1.525/1.512 vs 1.502/1.435/1.456/1.415 (swapped 2+2), no hang. */
     if (!getenv("VK_ASYNC")) _putenv_s("VK_ASYNC", "1");
+    /* VK_PASS_MERGE=1 and RSX_REMAP_RANGE=1 (M0.89): a batched draw keeps its
+     * render pass open for the next compatible one, and a dense indexed draw
+     * takes its vertex id range instead of deduplicating references. In the
+     * corridor they cut the walker's backend recording ~8.5 -> ~4.8 us and its
+     * vertex fetch ~7.0 -> ~6.0 us per draw (~2400 draws a frame); the frame
+     * rate moved +1-3% (same-scene pairs, the walker co-binds with the main
+     * thread). Frame dumps look the same. Set either to 0 to go back. */
+    if (!getenv("VK_PASS_MERGE")) _putenv_s("VK_PASS_MERGE", "1");
+    if (!getenv("RSX_REMAP_RANGE")) _putenv_s("RSX_REMAP_RANGE", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

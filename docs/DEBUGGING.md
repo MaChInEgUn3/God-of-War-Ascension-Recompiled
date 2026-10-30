@@ -170,7 +170,7 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
-* **Vertex range instead of dedup** (toolkit, default off): `RSX_REMAP_RANGE=1` gives a draw on one base_index whose
+* **Vertex range instead of dedup** (toolkit default off, GoW:A port default on): `RSX_REMAP_RANGE=1` gives a draw on one base_index whose
   ids span at most half its references the whole id range (unique k = lowest id + k) instead of first-use dedup;
   unused vertices inside the range are fetched too (M0.89).
 * **Walker fast paths, off for A/B** (toolkit, all default on, each read once): `RSX_REMAP_FAST=0` dedups a draw's
@@ -197,7 +197,7 @@ Lessons that cost days; keep them.
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:
   `RSX_PIPE_FAST=0` (M0.81) brings back the per-draw linear pipeline scan and fragment-program walks, to check whether
   a pipeline mix-up comes from the index or the memo. `VK_DRAW_PROF=<s>` splits the Vulkan draw into lookup,
-  descriptors, copies, recording and flush per draw, and counts render passes; `VK_PASS_MERGE=1` (off) lets
+  descriptors, copies, recording and flush per draw, and counts render passes; `VK_PASS_MERGE=1` (toolkit default off, GoW:A port default on since M0.89) lets
   consecutive batched draws share one. `scripts/thrsnap.ps1` diffs `Get-Process` thread times between two moments of a run.
 * **Sub-millisecond sleeps** (M0.80): the port sets `PS3_USLEEP_WAIT_US=500`, so a guest `usleep` of 500-999 us
   waits on a high-resolution timer instead of spinning; `0` brings the spin back for every sub-ms sleep.
