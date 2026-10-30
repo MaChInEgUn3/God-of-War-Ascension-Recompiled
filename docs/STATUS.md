@@ -811,6 +811,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Check mode (`=2`, x185): ~4750 assembled textures, 0 texels differ from the guest-memory copy.
   - A/B, one exe (x186, 360-590 s, quiet host): texture re-uploads ~630 -> ~300 per 30 s; 12.32 on against
     11.95 / 11.94 off in the same spot (+3%); the second on run stood elsewhere (12.80).
+  - Tried, not adopted: `VK_DRAW_BATCH_MAX=512` (x187, one exe, m d d m): backend recording 3.9-4.1 against
+    5.0-5.6 us per draw, but the texture phase rose 4.6-4.9 -> 7.0-7.8; 12.05 / 11.86 against 12.40 / 12.02.
+    The default (128 with `VK_ASYNC`) stays.
+  - The bound after M0.92 (x188, runVr, timeline 420-440 s under PS3_FTRACE, so 11.5 rather than ~12.4 at speed;
+    thread CPU 400-425 s): the main thread waits ~4 ms a frame for the flip (21-31 ms before M0.89), the walker
+    drains 79 of an 87 ms frame with ~2 ms of GPU waits, five SPU kernel threads are ~90% busy. Thread CPU:
+    main 0.92, walker 0.84, SPU threads 0.81-0.83, sum ~6.3 cores on the 6-core host.
+  - Causal probe (x189, runVr, quiet host): `RSX_SLOW_PCT=25` (the walker busy-waits 25% of each pass) gives
+    10.55 against 12.48 game frames/s, -15.5% where a fully binding walker would give -20% (M0.80: -13%). The
+    walker is still the main bound; 12.48 is the production rate at the door at speed.
   - The old "SPU MLAA off: no gain" (M0.6x) was measured at ~2.3 fps with a patch that disables the SPU tasks,
     not these GCM copies; it says nothing about this path.
 - **M0.91: colour snapshots join the draw batch, +4-7% in the corridor (2026-10-30).**
