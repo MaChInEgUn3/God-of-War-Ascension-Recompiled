@@ -5634,7 +5634,7 @@ index ad213615..6f123dbe 100644
      const rsx_vertex_remap* remap, u32 occurrence);
  
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index b22e08f6..1f25743a 100644
+index b22e08f6..8d4d9d1c 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -5946,16 +5946,24 @@ index b22e08f6..1f25743a 100644
      VkMemoryBarrier mb = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                             .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
                             .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT };
-@@ -550,6 +716,8 @@ static void vk_cmd_after_everything(VkCommandBuffer cb)
+@@ -548,8 +714,16 @@ static void vk_cmd_after_everything(VkCommandBuffer cb)
+                           VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+ }
  
++/* Bumped whenever a command buffer starts or another path sets graphics
++ * state in it: vk_eng_draw's record of what is already bound (VK_STATE_SKIP)
++ * is trusted only within one epoch. */
++static u32 s_rec_epoch;
++
  static int vk_begin(void)
  {
++    s_rec_epoch++;
 +    if (s_eb_pending) vk_eng_flush();
 +    vk_pass_end();
      VK_CHECK(pvkResetCommandBuffer(s_vk.cmd, 0), "vkResetCommandBuffer");
      VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
-@@ -557,18 +725,42 @@ static int vk_begin(void)
+@@ -557,18 +731,42 @@ static int vk_begin(void)
      /* A present's copy may still be reading the surface this frame is about
       * to draw over: order everything here after it. Set only by a present,
       * which never runs alongside the walker's recording. */
@@ -6001,7 +6009,7 @@ index b22e08f6..1f25743a 100644
      return 0;
  }
  
-@@ -577,6 +769,7 @@ static int vk_submit_and_wait(void)
+@@ -577,6 +775,7 @@ static int vk_submit_and_wait(void)
  static void vk_barrier_image_on(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
                                  VkImageLayout old_layout)
  {
@@ -6009,7 +6017,7 @@ index b22e08f6..1f25743a 100644
      VkImageMemoryBarrier b = {
          .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
          .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
-@@ -763,6 +956,9 @@ static void vk_cb_bind_texture(void* ud, u32 unit, const rsx_texture_state* t)
+@@ -763,6 +962,9 @@ static void vk_cb_bind_texture(void* ud, u32 unit, const rsx_texture_state* t)
      if (unit >= RSX_MAX_TEXTURES || !t || !s_vk.device) return;
      if (!(t->control0 & 0x80000000u) || !t->offset) { vk_tex_off(unit); return; }
  
@@ -6019,7 +6027,23 @@ index b22e08f6..1f25743a 100644
      u32 w = (t->image_rect >> 16) & 0xFFFFu;
      u32 h =  t->image_rect        & 0xFFFFu;
      if (!w || !h || w > 4096u || h > 4096u) { vk_tex_off(unit); return; }
-@@ -1915,8 +2111,15 @@ static void vk_present_window(void)
+@@ -1560,6 +1762,7 @@ static int vk_guest_draw(const rsx_state* st, u32 prim, u32 first, u32 count)
+     VkRect2D sc = { { 0, 0 }, { s_vk.width, s_vk.height } };
+     pvkCmdSetViewport(s_vk.cmd, 0, 1, &vpt);
+     pvkCmdSetScissor(s_vk.cmd, 0, 1, &sc);
++    s_rec_epoch++;
+     pvkCmdBindDescriptorSets(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_g.pipe_layout,
+                              0, 1, &s_g.set, 0, NULL);
+     VkDeviceSize off = 0;
+@@ -1606,6 +1809,7 @@ static void vk_draw(u32 prim, u32 first, u32 count)
+     VkRect2D sc = { { 0, 0 }, { s_vk.width, s_vk.height } };
+     pvkCmdSetViewport(s_vk.cmd, 0, 1, &vp);
+     pvkCmdSetScissor(s_vk.cmd, 0, 1, &sc);
++    s_rec_epoch++;
+     pvkCmdBindDescriptorSets(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, s_vk.pipe_layout,
+                              0, 1, &s_vk.desc_set, 0, NULL);
+     pvkCmdPushConstants(s_vk.cmd, s_vk.pipe_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+@@ -1915,8 +2119,15 @@ static void vk_present_window(void)
  
  static void vk_dump_ppm(const unsigned char* rgba)
  {
@@ -6037,7 +6061,7 @@ index b22e08f6..1f25743a 100644
      fprintf(f, "P6\n%u %u\n255\n", s_vk.width, s_vk.height);
      for (size_t i = 0; i < (size_t)s_vk.width * s_vk.height; i++)
          fwrite(rgba + i * 4, 1, 3, f);
-@@ -2054,6 +2257,7 @@ typedef struct vk_eng_obj {
+@@ -2054,6 +2265,7 @@ typedef struct vk_eng_obj {
      u32      surface, remap, rsx_fmt;/* VIEW: what it is a view of          */
      u8       cube;                   /* TEXTURE: six layers, a CUBE view    */
      u8       snapshot;               /* COLOR: a feedback copy, never a target */
@@ -6045,7 +6069,7 @@ index b22e08f6..1f25743a 100644
  } vk_eng_obj;
  
  static vk_eng_obj s_eobj[VK_ENG_MAX_OBJ];
-@@ -2086,14 +2290,17 @@ static VkFormat vk_eng_format(rsx_be_format f, u32* bpp)
+@@ -2086,14 +2298,17 @@ static VkFormat vk_eng_format(rsx_be_format f, u32* bpp)
  }
  
  /* Colour formats the E2 passes render into: RGBA8 for ordinary and display
@@ -6066,7 +6090,7 @@ index b22e08f6..1f25743a 100644
      default:                            return -1;
      }
  }
-@@ -2117,6 +2324,22 @@ static vk_eng_obj* vk_eng_get(u32 handle, int kind)
+@@ -2117,6 +2332,22 @@ static vk_eng_obj* vk_eng_get(u32 handle, int kind)
      return (o->kind == kind) ? o : NULL;
  }
  
@@ -6089,7 +6113,7 @@ index b22e08f6..1f25743a 100644
  /* Copy `rows` rows of `w` texels from host memory into a w x h rectangle at
   * (x, y) of one level / layer of an image that is in GENERAL. */
  static int vk_eng_upload_region(VkImage img, u32 layer, u32 mip, u32 x, u32 y,
-@@ -2124,11 +2347,19 @@ static int vk_eng_upload_region(VkImage img, u32 layer, u32 mip, u32 x, u32 y,
+@@ -2124,11 +2355,19 @@ static int vk_eng_upload_region(VkImage img, u32 layer, u32 mip, u32 x, u32 y,
                                  const void* src, u32 row_bytes)
  {
      if (tight > row_bytes) tight = row_bytes;
@@ -6113,7 +6137,7 @@ index b22e08f6..1f25743a 100644
      int rc = vk_begin();
      if (!rc) {
          vk_barrier_image(img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
-@@ -2137,10 +2368,9 @@ static int vk_eng_upload_region(VkImage img, u32 layer, u32 mip, u32 x, u32 y,
+@@ -2137,10 +2376,9 @@ static int vk_eng_upload_region(VkImage img, u32 layer, u32 mip, u32 x, u32 y,
              .imageOffset = { (int32_t)x, (int32_t)y, 0 },
              .imageExtent = { w, h, 1 },
          };
@@ -6125,7 +6149,7 @@ index b22e08f6..1f25743a 100644
      return rc;
  }
  
-@@ -2237,11 +2467,14 @@ static void vk_eng_shutdown(void* user)
+@@ -2237,11 +2475,14 @@ static void vk_eng_shutdown(void* user)
      vk_eng2_shutdown(user);
      for (u32 i = 1; i < VK_ENG_MAX_OBJ; i++) vk_eng_release(user, i);
      vk_eng_snapshot_pool_drain();
@@ -6141,7 +6165,7 @@ index b22e08f6..1f25743a 100644
  }
  
  static u32 vk_eng_color_target_create(void* user, rsx_be_format fmt, u32 w, u32 h,
-@@ -2321,13 +2554,16 @@ static void vk_eng_clear_color(void* user, u32 surface, const float rgba[4])
+@@ -2321,13 +2562,16 @@ static void vk_eng_clear_color(void* user, u32 surface, const float rgba[4])
                        ((u32)(rgba[1] * 255.0f + 0.5f) <<  8) |
                         (u32)(rgba[2] * 255.0f + 0.5f);
      vk_eng_obj* o = vk_eng_get(surface, VK_ENG_COLOR);
@@ -6160,7 +6184,7 @@ index b22e08f6..1f25743a 100644
  }
  
  static void vk_eng_clear_depth_stencil(void* user, u32 depth, u32 flags,
-@@ -2338,20 +2574,36 @@ static void vk_eng_clear_depth_stencil(void* user, u32 depth, u32 flags,
+@@ -2338,20 +2582,36 @@ static void vk_eng_clear_depth_stencil(void* user, u32 depth, u32 flags,
      VkImageAspectFlags aspect = 0;
      if (flags & RSX_BE_CLEAR_DEPTH) aspect |= VK_IMAGE_ASPECT_DEPTH_BIT;
      if (flags & RSX_BE_CLEAR_STENCIL) aspect |= s_vk.depth_aspect & VK_IMAGE_ASPECT_STENCIL_BIT;
@@ -6199,7 +6223,7 @@ index b22e08f6..1f25743a 100644
      vk_eng_obj* o = vk_eng_get(surface, VK_ENG_COLOR);
      pthread_mutex_lock(&s_vk.present_mu);
      VkCommandBuffer cb = vk_present_record_begin();
-@@ -2396,32 +2648,95 @@ static void vk_eng_readback(void* user, u32 surface, u32 x, u32 y, u32 w, u32 h,
+@@ -2396,32 +2656,95 @@ static void vk_eng_readback(void* user, u32 surface, u32 x, u32 y, u32 w, u32 h,
      vk_eng_obj* o = vk_eng_get(surface, VK_ENG_COLOR);
      if (!o || !out || !out_pitch || !w || !h || x + w > o->w || y + h > o->h) return;
      const size_t tight = (size_t)w * o->bpp;
@@ -6232,9 +6256,8 @@ index b22e08f6..1f25743a 100644
              for (u32 row = 0; row < h; row++)
 -                memcpy((u8*)out + (size_t)row * out_pitch, (const u8*)st.ptr + (size_t)row * tight, tight);
 +                memcpy((u8*)out + (size_t)row * out_pitch, (const u8*)st->ptr + (size_t)row * tight, tight);
-         }
-     }
--    vk_destroy_buffer(&st);
++        }
++    }
 +}
 +
 +/* PS3RECOMP_VK_DUMP_SURFACES=<present#>,<dir>: at that present, write every
@@ -6292,7 +6315,7 @@ index b22e08f6..1f25743a 100644
 +                float v = c[k] * scale; v = v < 0 ? 0 : (v > 1 ? 1 : v);
 +                rgb[i * 3 + k] = (u8)(v * 255.0f + 0.5f);
 +            }
-+        }
+         }
 +        char path[1024];
 +        snprintf(path, sizeof path, "%s/surf_%05u_h%02u_%ux%u_f%d.ppm", dir, present_no, hd, w, h, (int)o->fmt);
 +        FILE* f = fopen(path, "wb");
@@ -6300,11 +6323,12 @@ index b22e08f6..1f25743a 100644
 +        VK_LOG("surface dump h%u %ux%u fmt %d: max %.4g, nonzero components %zu of %zu -> %s\n",
 +               hd, w, h, (int)o->fmt, mx, nz, (size_t)w * h * 3, path);
 +        free(raw); free(rgb);
-+    }
+     }
+-    vk_destroy_buffer(&st);
  }
  
  /* ---- E3: textures ---------------------------------------------------------
-@@ -2466,7 +2781,7 @@ static u32 vk_eng_texture_create(void* user, rsx_be_format fmt, u32 w, u32 h,
+@@ -2466,7 +2789,7 @@ static u32 vk_eng_texture_create(void* user, rsx_be_format fmt, u32 w, u32 h,
          pvkBindImageMemory(s_vk.device, o->im.img, o->im.mem, 0) != VK_SUCCESS ||
          vk_eng_make_view(o->im.img, vf, mips, vk_remap(remap, rsx_fmt), cube, &o->im.view))
          goto fail;
@@ -6313,7 +6337,7 @@ index b22e08f6..1f25743a 100644
      o->bpp = bc ? 0 : bpp; o->block = bc ? bpp : 0;
      /* UNDEFINED -> GENERAL for every level and face before the uploads arrive. */
      if (vk_begin()) goto fail;
-@@ -2484,7 +2799,7 @@ static void vk_eng_texture_upload(void* user, u32 texture, u32 face, u32 mip, u3
+@@ -2484,7 +2807,7 @@ static void vk_eng_texture_upload(void* user, u32 texture, u32 face, u32 mip, u3
  {
      (void)user;
      vk_eng_obj* o = vk_eng_get(texture, VK_ENG_TEXTURE);
@@ -6322,7 +6346,7 @@ index b22e08f6..1f25743a 100644
      /* A BC row is a row of 4x4 blocks; the engine's `rows` already counts them. */
      const size_t tight = o->block ? (size_t)((w + 3u) / 4u) * o->block : (size_t)w * o->bpp;
      vk_eng_upload_rows(o->im.img, face, mip, w, h, tight, rows, src, row_bytes);
-@@ -2543,10 +2858,13 @@ static void vk_eng_snapshot_recycle(vk_eng_obj* o)
+@@ -2543,10 +2866,13 @@ static void vk_eng_snapshot_recycle(vk_eng_obj* o)
      }
  }
  
@@ -6336,7 +6360,7 @@ index b22e08f6..1f25743a 100644
  }
  
  static u32 vk_eng_color_snapshot(void* user, u32 surface)
-@@ -2574,7 +2892,16 @@ static u32 vk_eng_color_snapshot(void* user, u32 surface)
+@@ -2574,7 +2900,16 @@ static u32 vk_eng_color_snapshot(void* user, u32 surface)
      }
      o->kind = VK_ENG_COLOR; o->snapshot = 1;
      o->fmt = t->fmt; o->bpp = t->bpp; o->w = t->w; o->h = t->h;
@@ -6354,7 +6378,7 @@ index b22e08f6..1f25743a 100644
      vk_barrier_image(o->im.img, VK_IMAGE_ASPECT_COLOR_BIT,
                       reused ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED);
      vk_barrier_image(t->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
-@@ -2587,6 +2914,10 @@ static u32 vk_eng_color_snapshot(void* user, u32 surface)
+@@ -2587,6 +2922,10 @@ static u32 vk_eng_color_snapshot(void* user, u32 surface)
                      o->im.img, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
      /* The copy, made visible to whatever samples it next. */
      vk_barrier_image(o->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
@@ -6365,7 +6389,7 @@ index b22e08f6..1f25743a 100644
      if (vk_submit_and_wait()) { vk_eng_release(user, hd); return 0; }
      return hd;
  }
-@@ -2637,12 +2968,24 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
+@@ -2637,12 +2976,24 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
          if (vk_submit_and_wait()) return 0;
      }
  
@@ -6395,7 +6419,7 @@ index b22e08f6..1f25743a 100644
      if (!rc) {
          vk_barrier_image(z->im.img, s_vk.depth_aspect, VK_IMAGE_LAYOUT_GENERAL);
          vk_barrier_image(t->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
-@@ -2659,11 +3002,343 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
+@@ -2659,11 +3010,343 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
          VkBufferImageCopy in = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
                                   .imageExtent = { w, h, 1 } };
          pvkCmdCopyBufferToImage(s_vk.cmd, st.buf, t->im.img, VK_IMAGE_LAYOUT_GENERAL, 1, &in);
@@ -6741,7 +6765,7 @@ index b22e08f6..1f25743a 100644
  /* The depth aspect of a D32_SFLOAT target copies out as 32-bit floats, which
   * is what the engine asks for; other depth formats report failure. */
  static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32 h,
-@@ -2675,10 +3350,8 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
+@@ -2675,10 +3358,8 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
          out_pitch < w * 4u || (s_vk.depth_format != VK_FORMAT_D32_SFLOAT &&
                                    s_vk.depth_format != VK_FORMAT_D32_SFLOAT_S8_UINT))
          return -1;
@@ -6754,7 +6778,7 @@ index b22e08f6..1f25743a 100644
      int rc = vk_begin();
      if (!rc) {
          vk_barrier_image(z->im.img, s_vk.depth_aspect, VK_IMAGE_LAYOUT_GENERAL);
-@@ -2686,24 +3359,60 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
+@@ -2686,24 +3367,60 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
              .imageSubresource = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1 },
              .imageOffset = { (int32_t)x, (int32_t)y, 0 }, .imageExtent = { w, h, 1 },
          };
@@ -6820,7 +6844,7 @@ index b22e08f6..1f25743a 100644
      return rc ? -1 : 0;
  }
  /* ---- E2: pipelines and draws ---------------------------------------------
-@@ -2748,6 +3457,7 @@ static struct {
+@@ -2748,6 +3465,7 @@ static struct {
      u32          scratch_w, scratch_h;
      u32          pipeline;
      u32          vs_bytes, ps_bytes;
@@ -6828,7 +6852,7 @@ index b22e08f6..1f25743a 100644
      u32          tex[RSX_BE_MAX_TEXTURES];
      rsx_be_sampler_desc samp[RSX_BE_MAX_TEXTURES];
      u32          tex_mask;
-@@ -2774,6 +3484,7 @@ static u32 s_esamp_count;
+@@ -2774,6 +3492,7 @@ static u32 s_esamp_count;
  
  static void vk_eng_drop_framebuffers(void)
  {
@@ -6836,7 +6860,7 @@ index b22e08f6..1f25743a 100644
      for (u32 i = 0; i < s_e2.fb_count; i++)
          if (s_e2.fb[i].fb) pvkDestroyFramebuffer(s_vk.device, s_e2.fb[i].fb, NULL);
      s_e2.fb_count = 0;
-@@ -2983,6 +3694,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
+@@ -2983,6 +3702,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
  static void vk_eng_pipeline_release(void* user, u32 pipeline)
  {
      (void)user;
@@ -6844,7 +6868,7 @@ index b22e08f6..1f25743a 100644
      if (!pipeline || pipeline > VK_ENG_MAX_PIPE || !s_epipe[pipeline - 1].used) return;
      vk_eng_pipe* P = &s_epipe[pipeline - 1];
      for (u32 t = 0; t < VK_ENG_TOPOLOGIES; t++)
-@@ -3068,10 +3780,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+@@ -3068,10 +3788,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
      if ((rs->color_mask >>  8) & 0xFFu) wm |= VK_COLOR_COMPONENT_G_BIT;
      if ((rs->color_mask >>  0) & 0xFFu) wm |= VK_COLOR_COMPONENT_B_BIT;
      if ((rs->color_mask >> 24) & 0xFFu) wm |= VK_COLOR_COMPONENT_A_BIT;
@@ -6873,7 +6897,7 @@ index b22e08f6..1f25743a 100644
              .srcColorBlendFactor = vk_gcm_blend_factor(rs->sf_rgb),
              .dstColorBlendFactor = vk_gcm_blend_factor(rs->df_rgb),
              .colorBlendOp = vk_gcm_blend_op(rs->eq_rgb),
-@@ -3115,29 +3844,41 @@ static void vk_eng2_shutdown(void* user)
+@@ -3115,29 +3852,41 @@ static void vk_eng2_shutdown(void* user)
      if (s_e2.split_pipe_layout) pvkDestroyPipelineLayout(s_vk.device, s_e2.split_pipe_layout, NULL);
      if (s_e2.split_pool)        pvkDestroyDescriptorPool(s_vk.device, s_e2.split_pool, NULL);
      if (s_e2.split_layout)      pvkDestroyDescriptorSetLayout(s_vk.device, s_e2.split_layout, NULL);
@@ -6921,7 +6945,7 @@ index b22e08f6..1f25743a 100644
      s_e2.ps_bytes = bytes;
  }
  static void vk_eng_bind_textures(void* user, const u32* textures,
-@@ -3296,21 +4037,256 @@ static VkImageView vk_eng_dummy_cube_view(void)
+@@ -3296,21 +4045,256 @@ static VkImageView vk_eng_dummy_cube_view(void)
      return s_eobj[s_e2.dummy_cube].im.view;
  }
  
@@ -7181,7 +7205,7 @@ index b22e08f6..1f25743a 100644
      for (u32 u = 0; u < RSX_MAX_TEXTURES; u++) {
          const int cube = (P->cube_mask >> u) & 1u;
          VkImageView v = ((s_e2.tex_mask >> u) & 1u) ? vk_eng_sample_view(s_e2.tex[u], cube)
-@@ -3342,14 +4318,57 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
+@@ -3342,14 +4326,57 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
                .dstBinding = RSX_SPIRV_TEXTURE_BINDING, .descriptorCount = RSX_MAX_TEXTURES,
                .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .pImageInfo = ii };
      }
@@ -7239,7 +7263,7 @@ index b22e08f6..1f25743a 100644
      if (!s_e2.pipeline || !vertices || !vertex_count || !stride) return;
      if (topology < RSX_TOPOLOGY_POINTS || topology > RSX_TOPOLOGY_TRIANGLE_STRIP) return;
      vk_eng_pipe* P = &s_epipe[s_e2.pipeline - 1];
-@@ -3379,26 +4398,112 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+@@ -3379,27 +4406,123 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
      VkRenderPass rp = vk_eng_render_pass(P->rt_fmt, n);
      VkFramebuffer fb = vk_eng_framebuffer(rp, s_eng_bound.rt, n, dview, dkey, w, h);
      if (!pipe || !rp || !fb) return;
@@ -7290,7 +7314,20 @@ index b22e08f6..1f25743a 100644
 +            vk_eng_flush();
 +        }
 +        if (batched && !set) batched = 0;
-+    }
+     }
+-    const VkDescriptorSet set = vk_eng_write_descriptors(P);
+-    if (!set) return;
+-
+-    if (vk_begin()) return;
+-    /* Everything submitted before is complete (each submission is waited
+-     * on); this orders memory for the surfaces this draw touches. */
+-    for (u32 i = 0; i < n; i++)
+-        vk_barrier_image(s_eobj[s_eng_bound.rt[i]].im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
+-    VkRenderPassBeginInfo rbi = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+-                                  .renderPass = rp, .framebuffer = fb,
+-                                  .renderArea = { { 0, 0 }, { w, h } } };
+-    pvkCmdBeginRenderPass(s_vk.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+-    pvkCmdBindPipeline(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
 +    dp[2] = dp[0] ? vk_dp_now() : 0;
 +    const int merge = batched && n <= 4u && vk_pass_merge();
 +    int keep = 0;                             /* record into the open pass */
@@ -7353,23 +7390,39 @@ index b22e08f6..1f25743a 100644
 +            for (u32 i = 0; i < n; i++) s_pass.rt[i] = s_eng_bound.rt[i];
 +            s_pass.depth = dkey;
 +        }
-     }
--    const VkDescriptorSet set = vk_eng_write_descriptors(P);
--    if (!set) return;
--
--    if (vk_begin()) return;
--    /* Everything submitted before is complete (each submission is waited
--     * on); this orders memory for the surfaces this draw touches. */
--    for (u32 i = 0; i < n; i++)
--        vk_barrier_image(s_eobj[s_eng_bound.rt[i]].im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
--    VkRenderPassBeginInfo rbi = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
--                                  .renderPass = rp, .framebuffer = fb,
--                                  .renderArea = { { 0, 0 }, { w, h } } };
--    pvkCmdBeginRenderPass(s_vk.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
-     pvkCmdBindPipeline(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
++    }
++    /* VK_STATE_SKIP=1: state this command buffer already holds from the
++     * previous draw (same epoch: no other path set any since) is not set again.
++     * Exact: dynamic state and the bound pipeline persist across render passes
++     * within one command buffer. */
++    static int s_skip = -1;
++    if (s_skip < 0) { const char* e = getenv("VK_STATE_SKIP"); s_skip = e ? atoi(e) : 0; }
++    static struct { VkCommandBuffer cmd; u32 epoch; VkPipeline pipe; VkViewport vp; VkRect2D sc;
++                    u32 sref; float db[2]; } s_rs;
++    const int same = s_skip && s_rs.cmd == s_vk.cmd && s_rs.epoch == s_rec_epoch;
++    if (!same) { memset(&s_rs, 0, sizeof s_rs); s_rs.cmd = s_vk.cmd; s_rs.epoch = s_rec_epoch; s_rs.sref = ~0u; }
++    if (!same || s_rs.pipe != pipe) { pvkCmdBindPipeline(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe); s_rs.pipe = pipe; }
      VkViewport vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
      if (s_e2.have_vp && s_e2.vp[2] > 0.0f && s_e2.vp[3] > 0.0f) {
-@@ -3421,16 +4526,22 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+         vp.x = s_e2.vp[0]; vp.y = s_e2.vp[1]; vp.width = s_e2.vp[2]; vp.height = s_e2.vp[3];
+@@ -3413,24 +4536,35 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+         sc.offset.x = (int32_t)x0; sc.offset.y = (int32_t)y0;
+         sc.extent.width = x1 > x0 ? x1 - x0 : 0; sc.extent.height = y1 > y0 ? y1 - y0 : 0;
+     }
+-    pvkCmdSetViewport(s_vk.cmd, 0, 1, &vp);
+-    pvkCmdSetScissor(s_vk.cmd, 0, 1, &sc);
+-    pvkCmdSetStencilReference(s_vk.cmd, VK_STENCIL_FACE_FRONT_AND_BACK, s_e2.stencil_ref & 0xFFu);
+-    if (s_vk.depth_bounds_ok)
++    if (!same || memcmp(&s_rs.vp, &vp, sizeof vp)) { pvkCmdSetViewport(s_vk.cmd, 0, 1, &vp); s_rs.vp = vp; }
++    if (!same || memcmp(&s_rs.sc, &sc, sizeof sc)) { pvkCmdSetScissor(s_vk.cmd, 0, 1, &sc); s_rs.sc = sc; }
++    if (!same || s_rs.sref != (s_e2.stencil_ref & 0xFFu)) {
++        pvkCmdSetStencilReference(s_vk.cmd, VK_STENCIL_FACE_FRONT_AND_BACK, s_e2.stencil_ref & 0xFFu);
++        s_rs.sref = s_e2.stencil_ref & 0xFFu;
++    }
++    if (s_vk.depth_bounds_ok && (!same || memcmp(s_rs.db, s_e2.depth_bounds, sizeof s_rs.db))) {
+         pvkCmdSetDepthBounds(s_vk.cmd, s_e2.depth_bounds[0], s_e2.depth_bounds[1]);
++        memcpy(s_rs.db, s_e2.depth_bounds, sizeof s_rs.db);
++    }
      pvkCmdBindDescriptorSets(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               P->cube_mask ? s_e2.split_pipe_layout : s_g.pipe_layout,
                               0, 1, &set, 0, NULL);
@@ -7398,7 +7451,7 @@ index b22e08f6..1f25743a 100644
  }
  
  static const rsx_draw_backend s_vk_engine_backend = {
-@@ -3466,7 +4577,14 @@ static const rsx_draw_backend s_vk_engine_backend = {
+@@ -3466,7 +4600,14 @@ static const rsx_draw_backend s_vk_engine_backend = {
      .present              = vk_eng_present,
      .readback             = vk_eng_readback,
      .depth_readback       = vk_eng_depth_readback,
@@ -7413,7 +7466,7 @@ index b22e08f6..1f25743a 100644
  };
  
  static rsx_backend s_vulkan_backend = {
-@@ -3685,6 +4803,18 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3685,6 +4826,18 @@ void rsx_vulkan_backend_shutdown(void)
          vk_destroy_image(&s_vk.color);
          vk_destroy_buffer(&s_vk.vertices);
          vk_destroy_buffer(&s_vk.readback);
@@ -7432,7 +7485,7 @@ index b22e08f6..1f25743a 100644
          if (s_vk.fence) pvkDestroyFence(s_vk.device, s_vk.fence, NULL);
          if (s_vk.pool)  pvkDestroyCommandPool(s_vk.device, s_vk.pool, NULL);
          if (s_vk.present_fence) pvkDestroyFence(s_vk.device, s_vk.present_fence, NULL);
-@@ -3693,7 +4823,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3693,7 +4846,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -7441,7 +7494,7 @@ index b22e08f6..1f25743a 100644
      free(s_vk.cpu_verts);
      pthread_mutex_destroy(&s_vk.queue_mu);
      pthread_mutex_destroy(&s_vk.present_mu);
-@@ -3757,5 +4887,3 @@ int rsx_vulkan_backend_depth_bounds(void)
+@@ -3757,5 +4910,3 @@ int rsx_vulkan_backend_depth_bounds(void)
  {
      return s_vk.eng_active && s_vk.depth_bounds_ok;
  }

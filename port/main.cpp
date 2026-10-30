@@ -737,6 +737,10 @@ int main(int argc, char** argv)
      * (=2): ~4750 assembled textures, 0 texels differ. */
     { const char* m = getenv("GOW_MLAA");
       if (!getenv("RSX_BLIT_SHADOW") && !(m && !strcmp(m, "lifted"))) _putenv_s("RSX_BLIT_SHADOW", "1"); }
+    /* VK_STATE_SKIP=1 (M0.93): a draw does not set again the pipeline and dynamic
+     * state its command buffer already holds. Recording ~1.9 -> ~1.45 us per draw;
+     * exact (state persists within a command buffer). */
+    if (!getenv("VK_STATE_SKIP")) _putenv_s("VK_STATE_SKIP", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

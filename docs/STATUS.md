@@ -799,6 +799,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.93: draw recording without repeated state (2026-10-30).**
+  - Where the walker's backend time goes now (x190, `VK_DRAW_PROF`, ~2500 draws a frame, 96% into an open render
+    pass): descriptor set 1.5 us per draw (allocation 0.3, uniform copies 0.3, view/sampler resolve 0.2, update
+    0.5), vertex/index copies 0.6, command recording 1.9, batch flush 1.0-1.1.
+  - Toolkit `VK_STATE_SKIP` (port default on): the pipeline, viewport, scissor, stencil reference and depth
+    bounds are set only when they differ from what the command buffer already holds. A/B, one exe (x191, k o o k):
+    recording 1.9-2.0 -> 1.4-1.5 us per draw; 12.31 / 12.45 against 12.35 / 12.29 game frames/s (within noise).
+    Exact, so it stays on.
+  - Next on the backend: one descriptor set reused while a draw's textures do not change (dynamic uniform
+    offsets), the 1.5 us above.
 - **M0.92: the MLAA input copies stay on the GPU (2026-10-30).**
   - With the new defaults the walker's largest remaining GPU wait was the readback before NV3089 blits (x182
     trace: ~1.05 s per 20 s). Logged blits (x183, `NV3089_GATE`, 5 s): every one is a 1:1 copy of the display
