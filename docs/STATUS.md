@@ -814,6 +814,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     draw; on 13.50 / 13.25, off 13.68 / 13.19 / 13.18 game frames/s (x209 g1 void: methods +10%). At the 0.78
     causal factor a 2% shorter walker predicts ~+1.6%, below this A/B's noise; the walker's share is re-measured
     next.
+  - Follow-up (same day): the causal probe on runWg (x211, `RSX_SLOW_PCT=25`) gives 11.45 against 13.25 game
+    frames/s (-13.6%), so the walker is still the main bound (factor ~0.68). A host profile of the walker thread
+    (x212, `PS3_SAMPLE_HOST`, exe code only; driver time is not visible) puts ~31% of its samples in the FIFO
+    walk and the two method decoders (`gcm_rsx_process_fifo_unlocked` 14%, `rsx_process_method` 7.7%,
+    `rsx_draw_engine_method` 5.9%, `rsx_dispatch_method` 3.4%), ~33% in vertex fetch (`rsx_vertex_fetch_many`
+    20%, `rsx_vertex_remap_build` 7.9%, element decode 4.4%) and ~10% in texture hashing.
+  - Part of that FIFO share was the harness: `ENG_PHASE_STATS` timed every method with two clock reads. Toolkit
+    ce506acf counts methods only and prints the walker's CPU time per draw instead (`cpu:` line).
+  - Tried, not kept: a packet fast path in the FIFO walk (`GCM_FIFO_FAST`: one IO translation per packet, the
+    debug knobs tested once, same calls in the same order). Walker CPU per draw (x215, busy host) 25.48 / 25.59
+    on against 26.09 / 25.33 off: no measurable change.
   - Same counters, texture hashing: 1.42 s per 30 s on the walker, sparse checks 0.73 s (~245 textures a frame,
     ~7 us each, cache misses on large textures) and full hashes 0.69 s (~7 GB per 30 s).
 - **M0.95: the fp constant block is not cleared per draw, +6% (2026-10-30).**
