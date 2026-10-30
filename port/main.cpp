@@ -745,6 +745,10 @@ int main(int argc, char** argv)
      * with the previous draw's views and samplers binds its descriptor set again
      * (most draws): descriptors ~1.5 -> ~0.9 us per draw. */
     if (!getenv("VK_UB_DYNAMIC")) _putenv_s("VK_UB_DYNAMIC", "1");
+    /* RSX_FP_NOCLEAR=1 (M0.95): the fragment program's inline-constant block
+     * (32 KB) is not cleared twice per draw, only its count; every reader stops
+     * at the count. Pipeline lookup 3.5 -> 2.0 us per draw, corridor +6%. */
+    if (!getenv("RSX_FP_NOCLEAR")) _putenv_s("RSX_FP_NOCLEAR", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

@@ -799,6 +799,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.95: the fp constant block is not cleared per draw, +6% (2026-10-30).**
+  - `rsx_fp_collect_constants` and `eng_pipeline_get` each cleared the whole 32 KB inline-constant block on every
+    draw; every reader stops at its count and every slot below it is written whole. Toolkit `RSX_FP_NOCLEAR`
+    resets only the count; port default on.
+  - A/B, one exe (x205, g o o g, quiet host): pipeline lookup 3.5 -> 2.0 us per draw, walker 24.2 -> 22.2 us per
+    draw; 13.52 / 12.83 against 12.14 / 12.74 game frames/s.
+  - Next: the pipeline cache with register write generations (`work/dirty_groups_design.md`); first count the
+    fp-memo hit rate, distinct fragment-program addresses per frame and how often the texture and vertex-program
+    groups stay unchanged between draws.
 - **M0.94: the main thread's flip polls sleep, +6-11% on a busy host (2026-10-30).**
   - After M0.89-M0.93 the CPU is the limit: x171 and x188 stood at the same spot, and the SPU kernel threads'
     busy time per frame grew 64 -> 79 ms for the same workload shares, i.e. they share cores with a busier main
