@@ -723,6 +723,11 @@ int main(int argc, char** argv)
      * a re-upload each). Check mode (=2) over ~20000 conversions: 0 texels
      * differ. The walker's store time fell ~1.45 s -> ~0.02 s per 30 s. */
     if (!getenv("RSX_C2RG16")) _putenv_s("RSX_C2RG16", "1");
+    /* VK_SNAP_BATCH=1 (M0.91): the copy a draw makes of a target it samples
+     * while drawing into it joins the open batch instead of a submit and a
+     * wait for the GPU (~3 ms each, ~11 a second). Walker snapshot time
+     * ~0.95 s -> ~6 ms per 30 s; corridor A/B +6.8% (same scene) and +4%. */
+    if (!getenv("VK_SNAP_BATCH")) _putenv_s("VK_SNAP_BATCH", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

@@ -799,6 +799,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.91: colour snapshots join the draw batch, +4-7% in the corridor (2026-10-30).**
+  - A draw that samples a target it is drawing into gets a copy of it (`color_snapshot`, ~11 a second in the lit
+    passes). Each copy was submitted on its own with a wait for the GPU (~2.7 ms). Toolkit `VK_SNAP_BATCH`
+    (5d905815) records it into the open batch after a full barrier; port default on.
+  - A/B, one exe (x180/x181, 360-590 s): walker snapshot time ~0.95 s -> ~6 ms per 30 s; walker 24.9 against
+    27.1 us per draw and 11.33 against 10.61 game frames/s in the same-scene pair (+6.8%, a terminal at ~0.9
+    cores in both runs); 9.86 against 9.48 in the second pair (+4%, the two runs stood in different places).
+    Frame dumps look the same.
 - **M0.90: colour targets read in another format converted on the GPU (2026-10-29).**
   - Two half-resolution A8R8G8B8 targets (640x360 at `0x024A0000`, 320x180 at `0x029F0000`) are sampled as linear
     Y16_X16_FLOAT (~2-3 reads a frame). Each read went through guest memory: a readback that waits for the GPU
