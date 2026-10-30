@@ -170,6 +170,9 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **Colour target read as Y16_X16_FLOAT** (toolkit default off, GoW:A port default on): `RSX_C2RG16=1` regroups it on
+  the GPU instead of storing it to guest memory; `=2` does both and prints `[c2rg16] 60s: ... checked N, M with
+  differences` (M0.90).
 * **Vertex range instead of dedup** (toolkit default off, GoW:A port default on): `RSX_REMAP_RANGE=1` gives a draw on one base_index whose
   ids span at most half its references the whole id range (unique k = lowest id + k) instead of first-use dedup;
   unused vertices inside the range are fetched too (M0.89).

@@ -717,6 +717,12 @@ int main(int argc, char** argv)
      * thread). Frame dumps look the same. Set either to 0 to go back. */
     if (!getenv("VK_PASS_MERGE")) _putenv_s("VK_PASS_MERGE", "1");
     if (!getenv("RSX_REMAP_RANGE")) _putenv_s("RSX_REMAP_RANGE", "1");
+    /* RSX_C2RG16=1 (M0.90): the two half-resolution colour targets the frame
+     * reads as Y16_X16_FLOAT (~2-3 reads a frame) are regrouped on the GPU
+     * instead of stored to guest memory (a wait for the GPU, a CPU convert and
+     * a re-upload each). Check mode (=2) over ~20000 conversions: 0 texels
+     * differ. The walker's store time fell ~1.45 s -> ~0.02 s per 30 s. */
+    if (!getenv("RSX_C2RG16")) _putenv_s("RSX_C2RG16", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

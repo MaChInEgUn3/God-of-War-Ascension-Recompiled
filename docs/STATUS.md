@@ -799,6 +799,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.90: colour targets read in another format converted on the GPU (2026-10-29).**
+  - Two half-resolution A8R8G8B8 targets (640x360 at `0x024A0000`, 320x180 at `0x029F0000`) are sampled as linear
+    Y16_X16_FLOAT (~2-3 reads a frame). Each read went through guest memory: a readback that waits for the GPU
+    (~2.9 ms), a CPU convert and a re-upload. Toolkit `RSX_C2RG16` (bc1d7ea9) regroups the bytes on the GPU (image
+    -> buffer -> compute pass -> R16G16F texture) inside the open batch; each target keeps two converted shapes.
+  - Check mode (`RSX_C2RG16=2`, x177/x178): ~20000 conversions, 0 texels differ from the guest-memory path.
+  - A/B, one exe (x179, 360-590 s): the walker's store time 1.45 s -> 0.02 s per 30 s, texture phase 7.2 against
+    8.5 us per draw; 9.66 / 9.46 on against 9.51 off (the fourth run void). A terminal used ~0.9 cores through all
+    four runs, so the absolute rates are low. Port default on (`RSX_C2RG16=1`, main.cpp).
+  - RPCS3's RSX code, read for ideas only (GPL-2.0; nothing copied): per-draw work is skipped unless the
+    registers it depends on changed (dirty groups), textures are cached per unit with guest page write
+    protection instead of hashing, vertices go to the GPU raw and the vertex shader decodes them, descriptor
+    sets and constants are reused. Those four are the next walker steps, in that order.
 - **M0.89: the RSX walker binds the frame again; range fetch and render-pass merging on by default (2026-10-29).**
   - Per-thread host CPU at speed (x168, `Get-Process` thread times over 400-430 s, quiet host): main thread 0.97
     cores (about half of its sampled guest time in the job-list polls `416338`, `466E38`, `416610`), RSX walker
