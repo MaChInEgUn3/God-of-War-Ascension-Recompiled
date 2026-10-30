@@ -172,6 +172,9 @@ Lessons that cost days; keep them.
   the constants being read back out of write-combined memory (M0.62).
 * **Draw state not set twice** (toolkit default off, GoW:A port default on): `VK_STATE_SKIP=1` keeps the pipeline and
   dynamic state a command buffer already holds from the previous draw (M0.93).
+* **Descriptor sets reused** (toolkit default off, GoW:A port default on): `VK_UB_DYNAMIC=1` makes the uniform
+  bindings dynamic and binds the previous set again when views and samplers match; `VK_DRAW_PROF` prints `sets
+  reused` (M0.93).
 * **NV3089 copies kept on the GPU** (toolkit default off, GoW:A port default on while MLAA is HLE): `RSX_BLIT_SHADOW=1`
   copies an unscaled blit out of a colour surface into a GPU strip and assembles strips into the texture that
   reads them; guest memory is not written. `=2` keeps the guest copy and prints `[blit-shadow] 60s: ... checked N, M

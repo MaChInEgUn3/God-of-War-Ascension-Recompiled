@@ -741,6 +741,10 @@ int main(int argc, char** argv)
      * state its command buffer already holds. Recording ~1.9 -> ~1.45 us per draw;
      * exact (state persists within a command buffer). */
     if (!getenv("VK_STATE_SKIP")) _putenv_s("VK_STATE_SKIP", "1");
+    /* VK_UB_DYNAMIC=1 (M0.93): uniform slices bound as dynamic offsets, so a draw
+     * with the previous draw's views and samplers binds its descriptor set again
+     * (most draws): descriptors ~1.5 -> ~0.9 us per draw. */
+    if (!getenv("VK_UB_DYNAMIC")) _putenv_s("VK_UB_DYNAMIC", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads
