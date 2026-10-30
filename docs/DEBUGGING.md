@@ -172,6 +172,9 @@ Lessons that cost days; keep them.
   the constants being read back out of write-combined memory (M0.62).
 * **Draw state not set twice** (toolkit default off, GoW:A port default on): `VK_STATE_SKIP=1` keeps the pipeline and
   dynamic state a command buffer already holds from the previous draw (M0.93).
+* **Vertex decode on the GPU** (toolkit, default off): `RSX_VTX_GPU=1` decodes consecutive-element draws with a
+  compute pass; `=2` also fetches on the CPU and compares (`vtx-gpu 60s: ... checked N, M differ`), and
+  `[vtx-gpu] 60s declined: ...` counts why draws stay on the CPU (M0.94).
 * **Descriptor sets reused** (toolkit default off, GoW:A port default on): `VK_UB_DYNAMIC=1` makes the uniform
   bindings dynamic and binds the previous set again when views and samplers match; `VK_DRAW_PROF` prints `sets
   reused` (M0.93).

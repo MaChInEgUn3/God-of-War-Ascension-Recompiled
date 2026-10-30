@@ -815,6 +815,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Tried, not kept: an SSE4.1 `rsx_vertex_fetch_many` (bit-exact against `rsx_vertex_fetch_one` over the new
     8000-plan test, 3x faster than the scalar loop under gcc, 25% under clang) left the in-game fetch time at
     ~4.0 us per draw (x196, exe A/B, clang-cl already vectorizes the scalar loop). The strengthened test stays.
+  - Tried, kept off: toolkit `RSX_VTX_GPU` (53d1d2aa): draws whose references are consecutive elements inside
+    each attribute's stable range decode their vertices on the GPU (raw guest bytes in a ring, a compute pass in
+    a prologue command buffer ahead of each batch). Exact (check mode: ~270k draws, 0 differ), but only ~55% of
+    draws qualify and the declined ones (sparse index ranges, other layouts) carry most of the fetch time: CPU
+    fetch 3.4 -> 2.6 s per 30 s while the raw copies raise the backend 5 -> 7 us per draw (x199/x200, busy host).
+    No frame-rate gain. A gather path for deduplicated references would be needed before it pays.
   - Ceiling on the walker path: with the causal share (~0.78) a vertex fetch rewrite (~5 us of ~24 per draw)
     gives ~+16%, ~14 game frames/s at a quiet host; beyond that the main thread's job-list polls bind.
 - **M0.93: draw recording without repeated state, descriptor sets reused (2026-10-30).**
