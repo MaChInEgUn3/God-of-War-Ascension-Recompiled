@@ -828,6 +828,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     walker's first touch of vertex data the SPU threads just wrote (cross-core misses), not the decode.
     Next on the walker: raw indices with `vertexOffset = -lowest id` (index decode + range + index build,
     ~2.7 s of every 30 s), then dirty register groups for the pipeline lookup.
+  - Tried, not kept: index buffer and references straight from the raw index run (triangle list, one run, no
+    restart: `id - lowest`, refs lowest..highest; check mode 88k draws, 0 differ). Only ~7% of draws qualify
+    (~1750 of ~26k a second): 10.31 / 10.19 against 10.15 / 11.69 (x204). Most draws are strips, several runs
+    or arrays.
   - Production reference is unchanged by M0.94's experiments (runVz/runWa with the knobs off = runVw).
   - Ceiling on the walker path: with the causal share (~0.78) a vertex fetch rewrite (~5 us of ~24 per draw)
     gives ~+16%, ~14 game frames/s at a quiet host; beyond that the main thread's job-list polls bind.
