@@ -251,7 +251,7 @@ index 7fa8cab9..252b32bd 100644
                    hs->connected = 1; }
        /* PAD_SWEEP=<seconds per step>: walk the sticks through a fixed set of
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516f..5b3d1cb7 100644
+index 19a8516f..44521606 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -13,6 +13,7 @@
@@ -1038,7 +1038,7 @@ index 19a8516f..5b3d1cb7 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,184 +1935,540 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,184 +1935,565 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1283,7 +1283,8 @@ index 19a8516f..5b3d1cb7 100644
 +            for (int i = 0; i < nw; i++) s_n[ws[i]] = (u8)(n > 0 ? n : 0);
 +            while (*e && *e != ';') e++;
 +            if (*e == ';') e++;
-+        }
+         }
+-    ReleaseSRWLockExclusive(&s_workload_registry_lock);
 +        s_init = 1;
 +    }
 +    return wid < SPURS_MAXW ? s_n[wid] : 0;
@@ -1322,12 +1323,37 @@ index 19a8516f..5b3d1cb7 100644
 +     * (one workload's output is another's input) do not each wait a timer tick. */
 +    int pass_sleep = 1, pass_greedy = getenv("SPURS_PASS_GREEDY") ? 1 : 0;
 +    { const char* e = getenv("SPURS_PASS_SLEEP"); if (e) pass_sleep = atoi(e); }
++    /* SPURS_PASS_SLEEP_US=<us> (default 0, off): the pause is <us> on a
++     * high-resolution waitable timer instead. Sleep(1) lasts ~1.5-2 ms even at
++     * 1 ms timer resolution, and a job the PPU queues just after an empty pass
++     * waits that long for a kernel thread (GoW:A: each kernel thread naps ~33%
++     * of the time while the main thread spins on its job lists). */
++    int pass_sleep_us = 0;
++    { const char* e = getenv("SPURS_PASS_SLEEP_US"); if (e) pass_sleep_us = atoi(e); }
++#ifdef _WIN32
++#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
++#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
++#endif
++    HANDLE pass_timer = pass_sleep_us > 0
++        ? CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS) : NULL;
++    if (!pass_timer) pass_sleep_us = 0;
++#endif
++    if (pass_sleep_us > 0) pass_sleep = 1;
 +    int pass_found_work = 0;
 +    for (;;) {
 +        if (!(pass_greedy && pass_found_work) && pass_sleep > 0) {
 +            /* PS3_FTRACE: the pause between passes, on the thread's SPU row. */
 +            const uint64_t ft_p0 = PS3_FT_ON() ? ps3_ft_now() : 0;
-+            Sleep((DWORD)pass_sleep);
++            if (pass_sleep_us > 0) {
++#ifdef _WIN32
++                LARGE_INTEGER due; due.QuadPart = -((LONGLONG)pass_sleep_us * 10);
++                if (SetWaitableTimer(pass_timer, &due, 0, NULL, NULL, FALSE))
++                    WaitForSingleObject(pass_timer, INFINITE);
++#else
++                usleep((useconds_t)pass_sleep_us);
++#endif
++            } else
++                Sleep((DWORD)pass_sleep);
 +            if (ft_p0) {
 +                extern int spurs_ft_kidx(void);
 +                const uint64_t ft_p1 = ps3_ft_now();
@@ -1695,8 +1721,7 @@ index 19a8516f..5b3d1cb7 100644
 +            else { s_idle[wid] = 0; pass_found_work = 1; }
 +            InterlockedDecrement(&s_wid_busy[wid]);
 +            }
-         }
--    ReleaseSRWLockExclusive(&s_workload_registry_lock);
++        }
 +    }
  }
  
@@ -1726,7 +1751,7 @@ index 19a8516f..5b3d1cb7 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1860,30 +2476,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1860,30 +2501,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
              printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
          _n++;
      }
@@ -1766,7 +1791,7 @@ index 19a8516f..5b3d1cb7 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2503,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2528,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -1827,7 +1852,7 @@ index 19a8516f..5b3d1cb7 100644
      return CELL_OK;
  }
  
-@@ -3095,6 +3740,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3765,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -1870,7 +1895,7 @@ index 19a8516f..5b3d1cb7 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3783,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3808,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1879,7 +1904,7 @@ index 19a8516f..5b3d1cb7 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +3804,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +3829,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -1910,7 +1935,7 @@ index 19a8516f..5b3d1cb7 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4108,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4133,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
@@ -4860,7 +4885,7 @@ index 131cc0d8..71c0b6cf 100644
       * has to be walked texel by texel; so does anything the host cannot take
       * as stored. */
 diff --git a/libs/video/rsx_vertex_compact.c b/libs/video/rsx_vertex_compact.c
-index 7fa5f314..2aa22f96 100644
+index 7fa5f314..cf05a38b 100644
 --- a/libs/video/rsx_vertex_compact.c
 +++ b/libs/video/rsx_vertex_compact.c
 @@ -262,53 +262,137 @@ void rsx_vertex_fetch_plan_prepare(
@@ -5034,7 +5059,7 @@ index 7fa5f314..2aa22f96 100644
  
  static u64 rsx_vertex_remap_hash(u64 value)
  {
-@@ -320,6 +404,81 @@ static u64 rsx_vertex_remap_hash(u64 value)
+@@ -320,6 +404,116 @@ static u64 rsx_vertex_remap_hash(u64 value)
      return value;
  }
  
@@ -5052,6 +5077,22 @@ index 7fa5f314..2aa22f96 100644
 +        s_remap_fast = (e && e[0] == '0') ? 0 : 1;
 +    }
 +    return s_remap_fast;
++}
++
++static int s_remap_range = -1;
++
++void rsx_vertex_remap_set_range(int on)
++{
++    s_remap_range = on;
++}
++
++static int rsx_vertex_remap_range_on(void)
++{
++    if (s_remap_range < 0) {
++        const char* e = getenv("RSX_REMAP_RANGE");
++        s_remap_range = (e && e[0] == '1') ? 1 : 0;
++    }
++    return s_remap_range;
 +}
 +
 +/* A draw's references usually share one base_index and name vertex ids from
@@ -5081,6 +5122,25 @@ index 7fa5f314..2aa22f96 100644
 +    const u64 range = (u64)hi - lo + 1u;
 +    if (range > (u64)count * 2u + 1024u || range > (1u << 26))
 +        return 0;
++
++    /* RSX_REMAP_RANGE=1: a draw whose ids span at most about half as many
++     * vertices as it has references (a mesh, each vertex shared by several
++     * triangles) takes the whole range lo..hi in order instead of the
++     * vertices in first-use order: unique k is id lo + k and each
++     * occurrence maps to id - lo. No lookup per reference; the vertices of
++     * the range no reference names are fetched too (at most the range,
++     * which is at most about half the references). */
++    if (rsx_vertex_remap_range_on() && range <= count && range * 2u <= (u64)count + 128u) {
++        u32* const occ = remap->occurrence_to_unique;
++        for (u32 occurrence = 0; occurrence < count; occurrence++)
++            occ[occurrence] = refs[occurrence].vertex_id - lo;
++        for (u32 k = 0; k < (u32)range; k++) {
++            refs[k].vertex_id = lo + k;
++            refs[k].base_index = base;
++        }
++        *unique_count = (u32)range;
++        return 1;
++    }
 +    if (range > remap->dense_capacity) {
 +        u32* d = (u32*)realloc(remap->dense, (size_t)range * sizeof(u32));
 +        if (!d)
@@ -5116,7 +5176,7 @@ index 7fa5f314..2aa22f96 100644
  int rsx_vertex_remap_build(
      rsx_vertex_remap* remap, rsx_vertex_ref* refs, u32 count,
      u32* unique_count)
-@@ -339,6 +498,10 @@ int rsx_vertex_remap_build(
+@@ -339,6 +533,10 @@ int rsx_vertex_remap_build(
          remap->occurrence_capacity = count;
      }
  
@@ -5127,7 +5187,7 @@ index 7fa5f314..2aa22f96 100644
      if (count > UINT_MAX / 2u)
          return 0;
      u32 slot_capacity = 16u;
-@@ -367,8 +530,13 @@ int rsx_vertex_remap_build(
+@@ -367,8 +565,13 @@ int rsx_vertex_remap_build(
          }
      }
  
@@ -5142,7 +5202,7 @@ index 7fa5f314..2aa22f96 100644
      for (u32 occurrence = 0; occurrence < count; occurrence++) {
          const rsx_vertex_ref ref = refs[occurrence];
          const u64 key = ((u64)ref.base_index << 32) | ref.vertex_id;
-@@ -408,6 +576,7 @@ void rsx_vertex_remap_destroy(rsx_vertex_remap* remap)
+@@ -408,6 +611,7 @@ void rsx_vertex_remap_destroy(rsx_vertex_remap* remap)
          return;
      free(remap->occurrence_to_unique);
      free(remap->slots);
@@ -5151,7 +5211,7 @@ index 7fa5f314..2aa22f96 100644
  }
  
 diff --git a/libs/video/rsx_vertex_compact.h b/libs/video/rsx_vertex_compact.h
-index ad213615..4a15236c 100644
+index ad213615..6f123dbe 100644
 --- a/libs/video/rsx_vertex_compact.h
 +++ b/libs/video/rsx_vertex_compact.h
 @@ -44,6 +44,12 @@ typedef struct rsx_vertex_remap {
@@ -5167,7 +5227,7 @@ index ad213615..4a15236c 100644
  } rsx_vertex_remap;
  
  typedef struct rsx_vertex_fetch_attr {
-@@ -116,13 +122,31 @@ void rsx_vertex_fetch_plan_prepare(
+@@ -116,13 +122,33 @@ void rsx_vertex_fetch_plan_prepare(
  int rsx_vertex_fetch_one(
      const rsx_vertex_fetch_plan* plan, const rsx_vertex_ref* ref, u8* out);
  
@@ -5196,6 +5256,8 @@ index ad213615..4a15236c 100644
 +/* Force the lookup (tests): 1 the direct/per-draw path, 0 the previous one,
 + * -1 back to RSX_REMAP_FAST. */
 +void rsx_vertex_remap_set_fast(int fast);
++/* RSX_REMAP_RANGE: 1 on, 0 off, -1 back to the environment (tests). */
++void rsx_vertex_remap_set_range(int on);
 +
  u32 rsx_vertex_remap_index(
      const rsx_vertex_remap* remap, u32 occurrence);
@@ -7368,7 +7430,7 @@ index b2f93a7b..4e0af415 100644
      test_decode_g8b8_swizzled();
      test_decode_compressed_is_verbatim();
 diff --git a/libs/video/tests/test_vertex_fetch_plan.c b/libs/video/tests/test_vertex_fetch_plan.c
-index 79f3cc66..0cf2e38a 100644
+index 79f3cc66..a26d05ef 100644
 --- a/libs/video/tests/test_vertex_fetch_plan.c
 +++ b/libs/video/tests/test_vertex_fetch_plan.c
 @@ -6,7 +6,9 @@
@@ -7382,7 +7444,7 @@ index 79f3cc66..0cf2e38a 100644
   *
   * Build (from the repo root):
   *   clang -std=gnu17 -O2 -Wall -Wextra -Wno-unused-parameter -I include -I libs/video \
-@@ -128,12 +130,81 @@ static void random_plan(rsx_vertex_fetch_plan* plan, int use_inline,
+@@ -128,12 +130,95 @@ static void random_plan(rsx_vertex_fetch_plan* plan, int use_inline,
      }
  }
  
@@ -7391,7 +7453,7 @@ index 79f3cc66..0cf2e38a 100644
 + * that stale direct-table entries and a table grown by an earlier big draw
 + * are exercised: draws on one base_index over a compact id range (the direct
 + * table), mixed base_index, wide and extreme id ranges, big then small. */
-+static int remap_cases, remap_dense_like;
++static int remap_cases, remap_dense_like, remap_range_taken;
 +static void test_remap(void)
 +{
 +    enum { CASES = 3000, MAXN = 6000 };
@@ -7444,6 +7506,20 @@ index 79f3cc66..0cf2e38a 100644
 +            occ_ok &= rsx_vertex_remap_index(&fast_remap, i) == occ_ref[i] &&
 +                      rsx_vertex_remap_index(&slow_remap, i) == occ_ref[i];
 +        CHECK(occ_ok, "remap case %d kind %u: occurrence map differs", c, kind);
++        /* RSX_REMAP_RANGE: any unique order, but every occurrence must name its own vertex. */
++        memcpy(fast_refs, src, count * sizeof *src);
++        u32 u_range = 0;
++        rsx_vertex_remap_set_fast(1); rsx_vertex_remap_set_range(1);
++        const int ok_range = rsx_vertex_remap_build(&fast_remap, fast_refs, count, &u_range);
++        rsx_vertex_remap_set_range(0);
++        int range_ok = ok_range && u_range <= count;
++        for (u32 i = 0; i < count && range_ok; i++) {
++            const u32 k = rsx_vertex_remap_index(&fast_remap, i);
++            range_ok = k < u_range && fast_refs[k].vertex_id == src[i].vertex_id &&
++                       fast_refs[k].base_index == src[i].base_index;
++        }
++        CHECK(range_ok, "remap case %d kind %u: range mode names another vertex", c, kind);
++        if (ok_range && u_range != n_uniq) remap_range_taken++;
 +        remap_cases++;
 +        if (kind == 0 || kind == 1) remap_dense_like++;
 +    }
@@ -7465,7 +7541,7 @@ index 79f3cc66..0cf2e38a 100644
  
      for (int n = 0; n < PLANS; n++) {
          for (int l = 0; l < 2; l++)
-@@ -152,6 +223,21 @@ int main(void)
+@@ -152,6 +237,21 @@ int main(void)
          ref = plan;
          rsx_vertex_fetch_plan_prepare(&plan, refs, count);
          ref_prepare(&ref, refs, count);
@@ -7487,7 +7563,7 @@ index 79f3cc66..0cf2e38a 100644
          for (u32 at = 0; at < RSX_DSP_NUM_VERTEX_ATTR; at++) {
              CHECK(plan.attr[at].stable_base == ref.attr[at].stable_base &&
                    plan.attr[at].stable_first == ref.attr[at].stable_first &&
-@@ -167,9 +253,10 @@ int main(void)
+@@ -167,9 +267,10 @@ int main(void)
          }
      }
  
@@ -7495,9 +7571,9 @@ index 79f3cc66..0cf2e38a 100644
 -           PLANS, stable, divided, fails);
 -    if (stable < PLANS || divided < 100) {
 +    printf("test_vertex_fetch_plan: %d plans, %d stable ranges (%d divided), %d fetched, "
-+           "%d remap cases (%d compact), %d failure(s)\n",
-+           PLANS, stable, divided, fetched, remap_cases, remap_dense_like, fails);
-+    if (stable < PLANS || divided < 100 || fetched < PLANS / 2 || remap_dense_like < 500) {
++           "%d remap cases (%d compact, %d by range), %d failure(s)\n",
++           PLANS, stable, divided, fetched, remap_cases, remap_dense_like, remap_range_taken, fails);
++    if (stable < PLANS || divided < 100 || fetched < PLANS / 2 || remap_dense_like < 500 || remap_range_taken < 100) {
          printf("FAIL: too few cases exercised a path\n");
          return 1;
      }

@@ -799,6 +799,25 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.89 (in progress): the RSX walker binds the frame again; two runtime knobs tried (2026-10-29).**
+  - Per-thread host CPU at speed (x168, `Get-Process` thread times over 400-430 s, quiet host): main thread 0.97
+    cores (about half of its sampled guest time in the job-list polls `416338`, `466E38`, `416610`), RSX walker
+    0.89, SPU kernel threads ~0.6 each. Frame timeline (x166, 420-450 s, one other program at ~0.7 cores): the walker
+    drains the FIFO for the whole frame (117 ms per 111 ms frame, 11.8 ms of it waiting on synchronous GPU
+    submits), and the main thread waits 29 ms per frame at `0x375A88` for the flip counter.
+  - The kernel threads nap ~33% of the time between empty passes (`Sleep(1)`, median 1.7 ms). Toolkit
+    `SPURS_PASS_SLEEP_US` (abfaa4bc) waits on a high-resolution timer: with 200 the nap is ~0.53 ms but the threads
+    still nap ~28% (they have no work). A/B, one exe (x170, 360-590 s): 11.55 / 11.46 against 11.44 (the fourth
+    run had a terminal using ~0.7 cores): no change. Default off. `SPURS_PASS_SLEEP=0` (x169) makes every kernel
+    thread spin at ~0.94 cores; that run had ~1.6 cores of other load and is not counted.
+  - Walker profile (x168, 50 ms sampler): `rsx_vertex_remap_build` 19.6%, `rsx_vertex_fetch_many` 12%, FIFO decode
+    8%, texture content hash 5.5%. `ENG_PHASE_STATS`: ~2400 draws per frame, ~28 us each (backend recording ~8.5,
+    vertex fetch ~7.5, textures ~7, pipeline lookup ~3.5).
+  - Toolkit `RSX_REMAP_RANGE` (4e04a0a9, default off): a dense indexed draw takes its id range instead of
+    deduplicating references. A/B, one exe (x172/x173, 360-590 s): clean pair 11.97 on against 11.21 / 10.91 off,
+    vertex fetch 6.0 against 7.0-7.2 us per draw. The other three runs had a terminal using ~0.85 cores (and two
+    of them stood elsewhere in the scene): 9.40 on, 9.19 off / 7.85 on. Not adopted until a clean pair confirms
+    it. Its frame dumps look the same as the off runs (visual check, not pixel-compared).
 - **M0.88: General6's Perlin noise as native code: the job is 47% faster, the frame rate does not move (2026-10-29).**
   - The hot block of job module a67e (`4930`, falling into `4AB0`'s entry block) is Ken Perlin's improved noise in
     3D, four points per call (point i in words 0-2 of r(3+i), result in word i of r3). The callers sum four octaves.

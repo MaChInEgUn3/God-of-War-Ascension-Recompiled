@@ -137,6 +137,8 @@ Lessons that cost days; keep them.
 * **SPURS kernel pacing**: `SPURS_PASS_SLEEP=<ms>` (default 1) is the pause between kernel passes;
   `SPURS_PASS_GREEDY=1` (GoW:A port default) skips it after a pass that found work; `SPURS_IDLE_MAX=<n>` caps the
   idle back-off (log2 passes, default 4).
+  `SPURS_PASS_SLEEP_US=<us>` (default off) waits the pause on a high-resolution timer instead of `Sleep(1)` (~1.7 ms);
+  200 gives ~0.53 ms, the timer's floor on Windows 11 (M0.89: no frame-rate change in GoW:A).
   `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default: `SPURS_KERN_SPUS=0,1,5`, i.e. 3 threads with audio on SPU 5) runs n host kernel threads per instance, with a per-wid
   claim; thread k plays SPU k and skips workloads whose priority on SPU k is 0 when another thread may run them,
   before it consumes their readyCount or signal bit (`priority per SPU` is printed at registration). `SPURS_KERN_SPUS=<a,b,...>` sets the SPU each thread plays (and the thread count); each thread
@@ -168,6 +170,9 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **Vertex range instead of dedup** (toolkit, default off): `RSX_REMAP_RANGE=1` gives a draw on one base_index whose
+  ids span at most half its references the whole id range (unique k = lowest id + k) instead of first-use dedup;
+  unused vertices inside the range are fetched too (M0.89).
 * **Walker fast paths, off for A/B** (toolkit, all default on, each read once): `RSX_REMAP_FAST=0` dedups a draw's
   vertex references through the old hash table (every draw hashed, probing a table sized for the largest draw seen)
   instead of the direct table / per-draw table; `RSX_VP_HASH_CACHE=0` re-hashes the vertex program byte by byte for
