@@ -772,8 +772,12 @@ int main(int argc, char** argv)
      * polls with ~800 us sleeps at an above-normal host priority and held a
      * logical processor all the time (0.76-0.90 cores); off it, the game ran
      * 13.02 / 13.02 game frames/s against 12.21 / 12.39 (x103). Shorter
-     * sleeps, like the main thread's 30 us polls, still spin. 0 restores it. */
-    if (!getenv("PS3_USLEEP_WAIT_US")) _putenv_s("PS3_USLEEP_WAIT_US", "500");
+     * sleeps, like the main thread's 30 us polls, still spin. 0 restores it.
+     * M0.94: 20, so the main thread's 30 us flip polls also sleep (~0.5 ms
+     * timer floor) instead of spinning: with the walker no longer making it
+     * wait long, those spins took a core the SPU threads needed. Same-spot
+     * pair (x193, a terminal at ~0.9 cores in both): 11.53 against 10.35. */
+    if (!getenv("PS3_USLEEP_WAIT_US")) _putenv_s("PS3_USLEEP_WAIT_US", "20");
     /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,
      * analysis/lift_reloc_blobs.py) stay interpreted. Lifted, they cut interpreted SPU
      * time from 13.6 to 4.4 s per 20 s and the workload from 77% to 29% busy (x136), but

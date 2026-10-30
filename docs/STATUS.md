@@ -799,6 +799,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.94: the main thread's flip polls sleep, +6-11% on a busy host (2026-10-30).**
+  - After M0.89-M0.93 the CPU is the limit: x171 and x188 stood at the same spot, and the SPU kernel threads'
+    busy time per frame grew 64 -> 79 ms for the same workload shares, i.e. they share cores with a busier main
+    thread and walker. The main thread's 30 us flip polls (`0x375A88`, ~17% of its samples) spun on the
+    runtime's yield loop because `PS3_USLEEP_WAIT_US=500` only puts sleeps of 500 us or more on the timer.
+  - Port default now `PS3_USLEEP_WAIT_US=20`: those polls wait on the high-resolution timer (~0.5 ms floor).
+    A/B (x193, runVv, a terminal at ~0.9 cores through all runs): same-spot pair 11.53 against 10.35 game
+    frames/s (+11%); the first on run 10.99 at the same spot (the first off run stood elsewhere, void).
+  - Ceiling on the walker path: with the causal share (~0.78) a vertex fetch rewrite (~5 us of ~24 per draw)
+    gives ~+16%, ~14 game frames/s at a quiet host; beyond that the main thread's job-list polls bind.
 - **M0.93: draw recording without repeated state, descriptor sets reused (2026-10-30).**
   - Where the walker's backend time goes now (x190, `VK_DRAW_PROF`, ~2500 draws a frame, 96% into an open render
     pass): descriptor set 1.5 us per draw (allocation 0.3, uniform copies 0.3, view/sampler resolve 0.2, update
