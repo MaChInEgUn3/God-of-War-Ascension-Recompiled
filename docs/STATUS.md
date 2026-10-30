@@ -812,6 +812,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     0.76 s. Decoding on the GPU removes the 3.15 s; uploading the raw (byte-swapped) indices with the draw's
     lowest id as Vulkan's vertexOffset would also remove most of the range and index-buffer work (~5.8 of the
     walker's 21.4 s of methods).
+  - Tried, not kept: an SSE4.1 `rsx_vertex_fetch_many` (bit-exact against `rsx_vertex_fetch_one` over the new
+    8000-plan test, 3x faster than the scalar loop under gcc, 25% under clang) left the in-game fetch time at
+    ~4.0 us per draw (x196, exe A/B, clang-cl already vectorizes the scalar loop). The strengthened test stays.
   - Ceiling on the walker path: with the causal share (~0.78) a vertex fetch rewrite (~5 us of ~24 per draw)
     gives ~+16%, ~14 game frames/s at a quiet host; beyond that the main thread's job-list polls bind.
 - **M0.93: draw recording without repeated state, descriptor sets reused (2026-10-30).**

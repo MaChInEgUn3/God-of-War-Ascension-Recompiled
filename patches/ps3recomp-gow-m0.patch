@@ -8231,10 +8231,10 @@ index b2f93a7b..4e0af415 100644
      test_decode_g8b8_swizzled();
      test_decode_compressed_is_verbatim();
 diff --git a/libs/video/tests/test_vertex_fetch_plan.c b/libs/video/tests/test_vertex_fetch_plan.c
-index 79f3cc66..a26d05ef 100644
+index 79f3cc66..0678f74e 100644
 --- a/libs/video/tests/test_vertex_fetch_plan.c
 +++ b/libs/video/tests/test_vertex_fetch_plan.c
-@@ -6,7 +6,9 @@
+@@ -6,7 +6,16 @@
   * vertex type, strides and offsets, frequency dividers in both modes, guest
   * memory that is partly unmapped, INLINE_ARRAY streams -- with random index
   * references, some past the 20-bit element wrap: every attribute's stable
@@ -8242,10 +8242,33 @@ index 79f3cc66..a26d05ef 100644
 + * range (base, first, last) must be what the old walk gave, and
 + * rsx_vertex_fetch_many must produce exactly the bytes and the result of
 + * rsx_vertex_fetch_one over the same references.
++ *
++ * fetch_many's x86 path again, bit for bit, on what it is most likely to get
++ * wrong: consecutive-reference draws (RSX_REMAP_RANGE's), NaN payloads,
++ * signalling NaNs, denormals, -0 and half specials, and every stable range
++ * copied to the very end of a buffer followed by an unmapped page (POSIX),
++ * so a load past the bytes _prepare had mapped faults. Also: F16C against
++ * the HALF decode on all 65536 inputs, and a rough ns/vertex figure.
   *
   * Build (from the repo root):
   *   clang -std=gnu17 -O2 -Wall -Wextra -Wno-unused-parameter -I include -I libs/video \
-@@ -128,12 +130,95 @@ static void random_plan(rsx_vertex_fetch_plan* plan, int use_inline,
+@@ -21,6 +30,15 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <time.h>
++#if defined(__unix__) || defined(__APPLE__)
++#include <sys/mman.h>
++#include <unistd.h>
++#define GUARD_PAGES 1
++#endif
++#if defined(__F16C__)
++#include <immintrin.h>
++#endif
+ 
+ static int fails;
+ #define CHECK(c, ...) do { if (!(c)) { fails++; if (fails <= 20) { \
+@@ -128,12 +146,309 @@ static void random_plan(rsx_vertex_fetch_plan* plan, int use_inline,
      }
  }
  
@@ -8329,6 +8352,220 @@ index 79f3cc66..a26d05ef 100644
 +    rsx_vertex_remap_destroy(&slow_remap);
 +}
 +
++/* Big-endian words the decoders could get wrong, mixed with random ones:
++ * quiet and signalling NaNs (payloads randomised), denormals, +-0, +-inf,
++ * half denormals / NaNs / infinities in either half, s16 extremes. */
++static void fill_special(u8* p, u32 bytes)
++{
++    static const u32 words[] = {
++        0x7FC00000u, 0x7F800001u, 0xFFBFFFFFu, 0x7FFFFFFFu, 0xFFC00001u,
++        0x00000001u, 0x807FFFFFu, 0x00400000u, 0x80000000u, 0x00000000u,
++        0x7F800000u, 0xFF800000u, 0x3F800000u, 0x00010001u, 0x83FF0200u,
++        0x7C017E00u, 0xFC00FFFFu, 0x7C00FDFFu, 0x7FFF8000u, 0x80017FFEu,
++        0xFFFF0000u, 0x00FF7F80u,
++    };
++    for (u32 i = 0; i + 4 <= bytes; i += 4) {
++        u32 w = rnd() % 3 ? words[rnd() % (sizeof words / sizeof words[0])] : rnd();
++        if ((w & 0x7F800000u) == 0x7F800000u && (w & 0x007FFFFFu) && rnd() % 2)
++            w ^= rnd() & 0x003FFFFFu;
++        p[i] = (u8)(w >> 24); p[i + 1] = (u8)(w >> 16);
++        p[i + 2] = (u8)(w >> 8); p[i + 3] = (u8)w;
++    }
++}
++
++/* Every guest_ptr answer is a copy of the bytes asked for, placed so that
++ * it ends where an unmapped page begins: _prepare's stable ranges get a slot
++ * each, the one-vertex fallback a passing one. The copy is the same for
++ * fetch_one and fetch_many, so they must still agree exactly; a read past
++ * min_bytes faults. Without mmap, the slots are plain heap (no fault). */
++enum { SLOT_BYTES = GUEST, SLOT_TRANSIENT = RSX_DSP_NUM_VERTEX_ATTR,
++       SLOT_INLINE = SLOT_TRANSIENT + 1, SLOTS = SLOT_INLINE + 1 };
++static u8* slot_end[SLOTS];
++static u32 slot_prepare;
++static int in_prepare;
++
++static void guard_init(void)
++{
++    for (u32 s = 0; s < SLOTS; s++) {
++#if GUARD_PAGES
++        const size_t page = (size_t)sysconf(_SC_PAGESIZE);
++        const size_t data = ((size_t)SLOT_BYTES + page - 1) / page * page;
++        u8* m = (u8*)mmap(NULL, data + page, PROT_READ | PROT_WRITE,
++                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++        if (m == MAP_FAILED || mprotect(m + data, page, PROT_NONE)) {
++            printf("FAIL: guard page setup\n");
++            exit(1);
++        }
++        slot_end[s] = m + data;
++#else
++        slot_end[s] = (u8*)malloc(SLOT_BYTES) + SLOT_BYTES;
++#endif
++    }
++}
++
++static const u8* guarded_ptr(void* user, u32 location, u32 offset, u32 min_bytes)
++{
++    (void)user;
++    const u32 loc = location & 1u;
++    if ((u64)offset + min_bytes > mapped_end[loc] || min_bytes > SLOT_BYTES) return NULL;
++    const u32 s = in_prepare ? slot_prepare++ % RSX_DSP_NUM_VERTEX_ATTR : SLOT_TRANSIENT;
++    u8* dst = slot_end[s] - min_bytes;
++    memcpy(dst, guest[loc] + offset, min_bytes);
++    return dst;
++}
++
++static int exact_plans, exact_consecutive, exact_fast, exact_inline;
++static void test_fetch_many_exact(void)
++{
++    enum { PLANS = 8000, MAXV = 256 };
++    static rsx_vertex_ref refs[MAXV];
++    static u8 one[MAXV * 256], many[MAXV * 256];
++    guard_init();
++    fill_special(guest[0], GUEST);
++    fill_special(guest[1], GUEST);
++    for (int n = 0; n < PLANS; n++) {
++        for (int l = 0; l < 2; l++)
++            mapped_end[l] = (rnd() % 4 == 0) ? rnd() % GUEST : GUEST;
++        rsx_vertex_fetch_plan plan;
++        const int use_inline = rnd() % 6 == 0;
++        random_plan(&plan, use_inline, NULL, 0);
++        plan.guest_ptr = guarded_ptr;
++        if (use_inline) {
++            /* The stream ends at the guard page; often exactly on a vertex. */
++            const u32 istride = plan.inline_stride;
++            u32 verts = 1 + rnd() % MAXV;
++            if ((u64)verts * istride + istride > SLOT_BYTES)
++                verts = SLOT_BYTES / istride - 1;
++            const u32 bytes = verts * istride + (rnd() % 2 ? rnd() % istride : 0);
++            u8* data = slot_end[SLOT_INLINE] - bytes;
++            fill_special(data, bytes);
++            plan.inline_data = data;
++            plan.inline_bytes = bytes;
++            exact_inline++;
++        }
++
++        const u32 count = 1 + rnd() % MAXV;
++        const u32 kind = rnd() % 5;
++        const u32 base = (rnd() % 4 == 0) ? rnd() % 64u : 0;
++        /* Some consecutive runs straddle the 20-bit element wrap. */
++        const u32 start = (rnd() % 6 == 0) ? 0x000FFFFFu - rnd() % 300u : rnd() % 512u;
++        for (u32 i = 0; i < count; i++) {
++            u32 id;
++            switch (kind) {
++            case 0: case 1: id = start + i; break;                   /* RSX_REMAP_RANGE */
++            case 2: id = start + count - 1 - i; break;               /* descending */
++            case 3: id = start + i + (rnd() % 16 == 0 ? rnd() % 4 : 0); break;
++            default: id = start + rnd() % (count + 16); break;
++            }
++            refs[i].vertex_id = id;
++            refs[i].base_index = base;
++        }
++        if (kind <= 1) exact_consecutive++;
++
++        in_prepare = 1;
++        slot_prepare = 0;
++        rsx_vertex_fetch_plan_prepare(&plan, refs, count);
++        in_prepare = 0;
++        for (u32 slot = 0; slot < plan.layout.count; slot++) {
++            const rsx_vertex_fetch_attr* f = &plan.attr[plan.layout.attrs[slot]];
++            if (f->stable_base && f->desc.type != RSX_VTX_TYPE_HALF &&
++                f->desc.type != RSX_VTX_TYPE_CMP32)
++                exact_fast++;
++        }
++
++        const u32 stride = plan.layout.stride;
++        int ok_one = 1;
++        memset(one, 0xCD, sizeof one);
++        memset(many, 0xCD, sizeof many);
++        for (u32 i = 0; i < count && ok_one; i++)
++            ok_one = rsx_vertex_fetch_one(&plan, &refs[i], one + (size_t)i * stride);
++        const int ok_many = rsx_vertex_fetch_many(&plan, refs, count, many);
++        CHECK(ok_one == ok_many, "exact plan %d: fetch_many %d, fetch_one %d", n, ok_many, ok_one);
++        CHECK(!ok_one || !memcmp(one, many, (size_t)count * stride),
++              "exact plan %d (kind %u): fetch_many vertices differ from fetch_one", n, kind);
++        exact_plans++;
++    }
++}
++
++/* F16C (vcvtph2ps) against the HALF decode on every input. A mismatch is
++ * expected -- the decode flushes half denormals to zero and leaves NaNs
++ * unquieted -- and is why fetch_many keeps HALF scalar. */
++static void report_f16c(void)
++{
++#if defined(__F16C__)
++    int differ = 0, denormal = 0, snan = 0;
++    for (u32 h = 0; h < 65536u; h++) {
++        const u8 be[2] = { (u8)(h >> 8), (u8)h };
++        float ref[4];
++        rsx_vertex_decode_element(RSX_VTX_TYPE_HALF, 1, be, ref);
++        const float hw = _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128((int)h)));
++        if (memcmp(&ref[0], &hw, sizeof hw)) {
++            differ++;
++            if (!(h & 0x7C00u)) denormal++;
++            else if ((h & 0x7C00u) == 0x7C00u && !(h & 0x0200u)) snan++;
++        }
++    }
++    printf("F16C: differs from the HALF decode on %d of 65536 inputs "
++           "(%d denormal, %d signalling NaN): HALF stays scalar\n", differ, denormal, snan);
++#else
++    printf("F16C: not enabled in this build (no __F16C__), check skipped\n");
++#endif
++}
++
++/* Rough ns/vertex: 3000 consecutive vertices, FLOAT3 + UNORM8x4 + FLOAT2
++ * interleaved 24 bytes apart -- a typical skinned-free mesh draw. */
++static u8 bench_mem[3000 * 24];
++static const u8* bench_ptr(void* user, u32 location, u32 offset, u32 min_bytes)
++{
++    (void)user; (void)location;
++    return (u64)offset + min_bytes <= sizeof bench_mem ? bench_mem + offset : NULL;
++}
++
++static double now_ns(void)
++{
++    struct timespec ts;
++    timespec_get(&ts, TIME_UTC);
++    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
++}
++
++static void bench(void)
++{
++    enum { VERTS = 3000, REPS = 2000 };
++    static rsx_vertex_ref refs[VERTS];
++    static u8 out[VERTS * 48];
++    static const u32 attrs[3] = { 0, 3, 8 }, types[3] = {
++        RSX_VTX_TYPE_FLOAT, RSX_VTX_TYPE_UNORM8, RSX_VTX_TYPE_FLOAT };
++    static const u32 sizes[3] = { 3, 4, 2 }, offsets[3] = { 0, 12, 16 };
++    rsx_vertex_fetch_plan plan;
++    memset(&plan, 0, sizeof plan);
++    rsx_vertex_layout_plan_init(&plan.layout, (1u << 0) | (1u << 3) | (1u << 8));
++    plan.guest_ptr = bench_ptr;
++    for (u32 k = 0; k < 3; k++) {
++        rsx_vertex_fetch_attr* f = &plan.attr[attrs[k]];
++        f->desc.type = types[k];
++        f->desc.size = sizes[k];
++        f->desc.stride = 24;
++        f->desc.offset = offsets[k];
++        f->elem_size = rsx_vertex_attrib_size(types[k], sizes[k]);
++        f->stride = 24;
++    }
++    for (u32 i = 0; i < sizeof bench_mem; i++) bench_mem[i] = (u8)rnd();
++    for (u32 i = 0; i < VERTS; i++) { refs[i].vertex_id = i; refs[i].base_index = 0; }
++    rsx_vertex_fetch_plan_prepare(&plan, refs, VERTS);
++    double best = 1e30;
++    for (int round = 0; round < 5; round++) {
++        const double t0 = now_ns();
++        for (int r = 0; r < REPS / 5; r++)
++            rsx_vertex_fetch_many(&plan, refs, VERTS, out);
++        const double t = (now_ns() - t0) / ((double)(REPS / 5) * VERTS);
++        if (t < best) best = t;
++    }
++    volatile u8 sink = out[rnd() % sizeof out];
++    (void)sink;
++    printf("bench: fetch_many FLOAT3+UNORM8x4+FLOAT2, %d consecutive vertices: %.2f ns/vertex\n",
++           VERTS, best);
++}
++
  int main(void)
  {
 +    test_remap();
@@ -8342,7 +8579,7 @@ index 79f3cc66..a26d05ef 100644
  
      for (int n = 0; n < PLANS; n++) {
          for (int l = 0; l < 2; l++)
-@@ -152,6 +237,21 @@ int main(void)
+@@ -152,6 +467,21 @@ int main(void)
          ref = plan;
          rsx_vertex_fetch_plan_prepare(&plan, refs, count);
          ref_prepare(&ref, refs, count);
@@ -8364,17 +8601,25 @@ index 79f3cc66..a26d05ef 100644
          for (u32 at = 0; at < RSX_DSP_NUM_VERTEX_ATTR; at++) {
              CHECK(plan.attr[at].stable_base == ref.attr[at].stable_base &&
                    plan.attr[at].stable_first == ref.attr[at].stable_first &&
-@@ -167,9 +267,10 @@ int main(void)
+@@ -167,9 +497,18 @@ int main(void)
          }
      }
  
 -    printf("test_vertex_fetch_plan: %d plans, %d stable ranges (%d divided), %d failure(s)\n",
 -           PLANS, stable, divided, fails);
 -    if (stable < PLANS || divided < 100) {
++    test_fetch_many_exact();
++    report_f16c();
++    bench();
++
 +    printf("test_vertex_fetch_plan: %d plans, %d stable ranges (%d divided), %d fetched, "
-+           "%d remap cases (%d compact, %d by range), %d failure(s)\n",
-+           PLANS, stable, divided, fetched, remap_cases, remap_dense_like, remap_range_taken, fails);
-+    if (stable < PLANS || divided < 100 || fetched < PLANS / 2 || remap_dense_like < 500 || remap_range_taken < 100) {
++           "%d remap cases (%d compact, %d by range), %d exact plans (%d consecutive, "
++           "%d inline, %d fast attributes), %d failure(s)\n",
++           PLANS, stable, divided, fetched, remap_cases, remap_dense_like, remap_range_taken,
++           exact_plans, exact_consecutive, exact_inline, exact_fast, fails);
++    if (stable < PLANS || divided < 100 || fetched < PLANS / 2 || remap_dense_like < 500 ||
++        remap_range_taken < 100 || exact_consecutive < 2000 || exact_inline < 500 ||
++        exact_fast < 5000) {
          printf("FAIL: too few cases exercised a path\n");
          return 1;
      }
