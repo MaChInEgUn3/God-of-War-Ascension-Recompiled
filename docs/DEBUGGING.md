@@ -170,6 +170,11 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **Pipeline answer reused** (toolkit default off, GoW:A port default on): `RSX_PIPE_CACHE=1` returns the previous
+  draw's pipeline when every input of the lookup repeats; `=2` also runs the full lookup on each hit and prints
+  `[pipe-cache-check] hit differs` lines. With `ENG_PHASE_STATS` the `[eng-stats]   pipe:` line counts memo
+  outcomes, inputs equal to the previous draw's, distinct fragment-program addresses, cache hits/checks, and the
+  `tex:` line gains `p.get`, `p.fill`, `p.reseed`, `h.sparse` and `h.full` (M0.96).
 * **Draw state not set twice** (toolkit default off, GoW:A port default on): `VK_STATE_SKIP=1` keeps the pipeline and
   dynamic state a command buffer already holds from the previous draw (M0.93).
 * **Vertex decode on the GPU** (toolkit, default off): `RSX_VTX_GPU=1` decodes consecutive-element draws with a

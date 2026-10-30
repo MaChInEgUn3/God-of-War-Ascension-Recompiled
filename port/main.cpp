@@ -749,6 +749,10 @@ int main(int argc, char** argv)
      * (32 KB) is not cleared twice per draw, only its count; every reader stops
      * at the count. Pipeline lookup 3.5 -> 2.0 us per draw, corridor +6%. */
     if (!getenv("RSX_FP_NOCLEAR")) _putenv_s("RSX_FP_NOCLEAR", "1");
+    /* RSX_PIPE_CACHE=1 (M0.96): a draw whose pipeline inputs all equal the
+     * previous draw's (~78% here) reuses its answer. Exact (=2 check: 3.3M hits,
+     * 0 differ); pipeline lookup 2.25 -> 1.5 us per draw, frame rate unchanged. */
+    if (!getenv("RSX_PIPE_CACHE")) _putenv_s("RSX_PIPE_CACHE", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads
