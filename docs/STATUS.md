@@ -799,7 +799,7 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
-- **M0.96: the pipeline lookup reuses the previous draw's answer; exact, frame rate unchanged (2026-10-30).**
+- **M0.96: the pipeline lookup reuses the previous draw's answer; exact, frame-rate gain below noise (2026-10-30).**
   - Counters first (x206/x207, runWe, per 30 s, ~920k draws): `eng_pipeline_get` 1.9 us per draw, ~85% of the
     pipe phase. The key repeats the previous draw's on 84% of draws (0x08E4 83%, texture registers 83%, 0x1EA0 88%).
     The fp memo hits its last slot 83%, another slot 6%, misses 10%; only a quarter of the misses are the same
@@ -811,8 +811,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     targets, render state less ALPHA_REF) returns the previous answer; the fp memo still compares the program
     bytes in full. Check mode (x208, 300 s): 3.3M hits, 0 differ; ~78% of draws hit.
   - A/B, one exe (x209 g o o g + x210 o g, quiet host): pipe 2.25 -> 1.50 us per draw, walker -0.4..0.6 us per
-    draw; on 13.50 / 13.25, off 13.68 / 13.19 / 13.18 game frames/s (x209 g1 void: methods +10%). The walker is
-    no longer the only bound; the saving waits for the main thread and SPU side.
+    draw; on 13.50 / 13.25, off 13.68 / 13.19 / 13.18 game frames/s (x209 g1 void: methods +10%). At the 0.78
+    causal factor a 2% shorter walker predicts ~+1.6%, below this A/B's noise; the walker's share is re-measured
+    next.
   - Same counters, texture hashing: 1.42 s per 30 s on the walker, sparse checks 0.73 s (~245 textures a frame,
     ~7 us each, cache misses on large textures) and full hashes 0.69 s (~7 GB per 30 s).
 - **M0.95: the fp constant block is not cleared per draw, +6% (2026-10-30).**
