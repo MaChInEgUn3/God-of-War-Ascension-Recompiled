@@ -799,7 +799,7 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
-- **M0.97: the vtable decoder only sees its side-effect methods; walker -3-4% (2026-10-30).**
+- **M0.97: the vtable decoder only sees its side-effect methods (2026-10-30).**
   - Host profile of the walker at 1 ms (x217, runWh, per-method clocks gone, exe code only): vertex fetch ~33%
     (`rsx_vertex_fetch_many` 19.7%, `rsx_vertex_remap_build` 8.5%), FIFO walk and decoders ~32%
     (`gcm_rsx_process_fifo_unlocked` 14.5%, `rsx_process_method` 9.5%, `rsx_dispatch_method` 4.4%,
@@ -809,7 +809,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     0x180) and semaphores (0x1A4, 0x1D6C-0x1D74). Toolkit `GCM_LEGACY_SKIP` (ef4a4df7, port default on) sends
     it only those.
   - A/B (x219, runWj, busy host: another process at ~1-1.5 cores): walker CPU per draw 26.23 / 25.25 on against
-    27.36 / 26.44 off; game frames/s 10.52 / 9.90 against 8.07 / 10.27 (o1 contaminated: tex 13 us per draw).
+    26.44 off (o1, 27.36, is contaminated: tex 13 us per draw). The -2.6% equals the run-to-run spread; the change
+    stands on its exactness and on removing the decoder's ~9.5% of the walker's exe samples by construction. The
+    production build with M0.96 + M0.97 still needs a quiet-host baseline.
   - `RSX_PIPE_CACHE=2` through the corridor (x216, 600 s): ~10M hits, 0 differ.
   - Tried, not kept: `s_fifo_getoff` on its own cache line (it shares one with the pump's locked flags): walker
     CPU per draw 26.70 / 25.50 against 25.43 / 25.75 (x218). Guest memory under `MEM_WRITE_WATCH` to replace
