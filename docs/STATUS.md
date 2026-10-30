@@ -799,6 +799,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.92: the MLAA input copies stay on the GPU (2026-10-30).**
+  - With the new defaults the walker's largest remaining GPU wait was the readback before NV3089 blits (x182
+    trace: ~1.05 s per 20 s). Logged blits (x183, `NV3089_GATE`, 5 s): every one is a 1:1 copy of the display
+    buffer (three, in local memory) into main memory at offset `0xAB0000`, pitch 5120, in two strips (1024 and
+    256 columns), ~2 a frame: the input of the SPU MLAA. Its taskset is served by HLE (M0.17), which never reads
+    those pixels, and the frame then samples that memory as one 1280x720 linear A8R8G8B8 texture.
+  - Toolkit `RSX_BLIT_SHADOW` (d1571122): such a blit is copied on the GPU into a strip texture keyed by its
+    destination (backend op `image_copy`, batched); a texture fully covered by strips gets them assembled on the
+    GPU. Guest memory is not written. Port default on only while MLAA is HLE (`GOW_MLAA=lifted` leaves it off).
+  - Check mode (`=2`, x185): ~4750 assembled textures, 0 texels differ from the guest-memory copy.
+  - A/B, one exe (x186, 360-590 s, quiet host): texture re-uploads ~630 -> ~300 per 30 s; 12.32 on against
+    11.95 / 11.94 off in the same spot (+3%); the second on run stood elsewhere (12.80).
+  - The old "SPU MLAA off: no gain" (M0.6x) was measured at ~2.3 fps with a patch that disables the SPU tasks,
+    not these GCM copies; it says nothing about this path.
 - **M0.91: colour snapshots join the draw batch, +4-7% in the corridor (2026-10-30).**
   - A draw that samples a target it is drawing into gets a copy of it (`color_snapshot`, ~11 a second in the lit
     passes). Each copy was submitted on its own with a wait for the GPU (~2.7 ms). Toolkit `VK_SNAP_BATCH`

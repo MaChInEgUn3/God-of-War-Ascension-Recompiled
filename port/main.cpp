@@ -728,6 +728,15 @@ int main(int argc, char** argv)
      * wait for the GPU (~3 ms each, ~11 a second). Walker snapshot time
      * ~0.95 s -> ~6 ms per 30 s; corridor A/B +6.8% (same scene) and +4%. */
     if (!getenv("VK_SNAP_BATCH")) _putenv_s("VK_SNAP_BATCH", "1");
+    /* RSX_BLIT_SHADOW=1 (M0.92): the frame copies the game makes with NV3089 for
+     * its SPU MLAA (two strips of the display buffer into main memory, ~2 a
+     * frame) stay on the GPU and the texture that reads them back is put
+     * together there; guest memory is not written. Only while the MLAA
+     * taskset is served by HLE (gow_mlaa_hle.c), which never reads those
+     * pixels: GOW_MLAA=lifted runs the real SPU tasks, which do. Check mode
+     * (=2): ~4750 assembled textures, 0 texels differ. */
+    { const char* m = getenv("GOW_MLAA");
+      if (!getenv("RSX_BLIT_SHADOW") && !(m && !strcmp(m, "lifted"))) _putenv_s("RSX_BLIT_SHADOW", "1"); }
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

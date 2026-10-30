@@ -2150,7 +2150,7 @@ index 734a2b78..d0b99dfe 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index efad9b92..2cf49fb4 100644
+index efad9b92..af80f341 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -22,6 +22,7 @@
@@ -2273,7 +2273,7 @@ index efad9b92..2cf49fb4 100644
  /* Backlog past which the drain stops honouring one-flip-per-tick and
   * catches up instead. Sized well above a frame's command list so a
   * title that keeps up never sees this path. */
-@@ -1119,6 +1157,18 @@ static void nv3089_blit(void)
+@@ -1119,6 +1157,19 @@ static void nv3089_blit(void)
          u32 src2 = cellGcmResolveLocated(sl, s_nv3089.in_off);
          u32 dst2 = cellGcmResolveLocated(1, s_nv309e.offset);
          u32 u0b = s_nv3089.in_uv & 0xFFFF, v0b = s_nv3089.in_uv >> 16;
@@ -2289,10 +2289,11 @@ index efad9b92..2cf49fb4 100644
 +            const char* e = getenv("GCM_BLIT_OOB");
 +            if (!(e && atoi(e))) return;
 +        }
++        rsx_draw_engine_blit_shadow_drop(RSX_LOCATION_LOCAL, s_nv309e.offset, out_w * 4u, out_w * 4u, out_h);
          nv3089_engine_read(in_pitch, out_w, out_h);
          /* Copy words verbatim through raw pointers rather than vm_read32/
           * vm_write32: this moves ~500k pixels per blit and several blits run per
-@@ -1171,6 +1221,29 @@ static void nv3089_blit(void)
+@@ -1171,6 +1222,29 @@ static void nv3089_blit(void)
      int dst_local = (s_gcm2d.dst_dma  != 0xFEED0001u);
      u32 src = cellGcmResolveLocated(src_local, s_nv3089.in_off);
      u32 dst = cellGcmResolveLocated(dst_local, s_gcm2d.dst_offset);
@@ -2322,7 +2323,29 @@ index efad9b92..2cf49fb4 100644
      u32 u0 = s_nv3089.in_uv & 0xFFFF, v0 = s_nv3089.in_uv >> 16;   /* 12.4 start */
      /* Clip to SET_CLIP_POINT/SIZE (destination coordinates). A title tiling a
       * resolve in 512x512 blocks relies on it to stop at the surface edge:
-@@ -1401,6 +1474,39 @@ static volatile u32 s_ref_qhead = 0, s_ref_qtail = 0;   /* single producer+consu
+@@ -1189,6 +1263,21 @@ static void nv3089_blit(void)
+     u32 dbpp = (s_gcm2d.color_fmt == 4u /* R5G6B5 */) ? 2u
+              : (s_gcm2d.color_fmt == 1u /* Y8 */)     ? 1u : 4u;
+     u32 bpp = (sbpp == dbpp) ? sbpp : 4u;
++    /* RSX_BLIT_SHADOW (rsx_draw_engine.c): an unscaled, unclipped 32-bit copy
++     * out of an engine surface into memory no surface covers stays on the GPU;
++     * any other write here drops the shadows it lands on. */
++    { const u32 dloc = dst_local ? RSX_LOCATION_LOCAL : RSX_LOCATION_MAIN;
++      const u32 doff = s_gcm2d.dst_offset + out_y * dst_pitch + out_x * bpp;
++      int taken = 0;
++      if (bpp == 4 && s_nv3089.ds_dx == 0x100000u && s_nv3089.dt_dy == 0x100000u &&
++          out_x >= cx0 && out_y >= cy0 && (u64)out_x + out_w <= cx1 && (u64)out_y + out_h <= cy1) {
++          const u32 sx0 = (u32)(nv3089_origin(u0) >> 20), sy0 = (u32)(nv3089_origin(v0) >> 20);
++          taken = rsx_draw_engine_blit_shadow(src_local ? RSX_LOCATION_LOCAL : RSX_LOCATION_MAIN,
++                                              s_nv3089.in_off + sy0 * in_pitch + sx0 * 4u, in_pitch,
++                                              dloc, doff, dst_pitch, out_w, out_h);
++          if (taken == 1) return;
++      }
++      if (!taken) rsx_draw_engine_blit_shadow_drop(dloc, doff, dst_pitch, out_w * bpp, out_h); }
+     if (bpp == 4) nv3089_engine_read(in_pitch, out_w, out_h);
+     /* NV3089_ROWCOPY (default 1): an unscaled blit copies a row at a time.
+      * The per-pixel loop pays a vm_read32 and a vm_write32 per pixel -- the
+@@ -1401,6 +1490,39 @@ static volatile u32 s_ref_qhead = 0, s_ref_qtail = 0;   /* single producer+consu
   * a title spinning on ctrl->ref waits forever with no indication why. Tokyo
   * Jungle did exactly this -- get left the 1 MB ring for IO 0x00F00000, which it
   * never mapped, while put sat at 0x604. Stop at the bad word and say so. */
@@ -2362,7 +2385,7 @@ index efad9b92..2cf49fb4 100644
  static void gcm_fifo_bad_branch(const char* kind, u32 target, u32 word)
  {
      static int n = 0;
-@@ -1451,7 +1557,11 @@ static int s_spu_blk_w = 0;
+@@ -1451,7 +1573,11 @@ static int s_spu_blk_w = 0;
  /* EA -> IO through the mapping list (range lookup; the by-ea helper is exact). */
  static u32 gcm_ea2io_range(u32 ea, u32* room)
  {
@@ -2375,7 +2398,7 @@ index efad9b92..2cf49fb4 100644
          IoMapping* m = &s_io_mappings[i];
          if (!m->active || !m->size) continue;
          if (ea >= m->ea && ea < m->ea + m->size) {
-@@ -1558,6 +1668,282 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
+@@ -1558,6 +1684,282 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
      *getoff = land;
  }
  
@@ -2658,7 +2681,7 @@ index efad9b92..2cf49fb4 100644
  static void gcm_fifo_dump_around(u32 getoff)
  {
      /* Only ever called on a recovery (bad branch, stuck get), and capped, so
-@@ -1703,13 +2089,47 @@ void cellGcm_ref_on_poll(void)
+@@ -1703,13 +2105,47 @@ void cellGcm_ref_on_poll(void)
          SetEvent(s_gcm_kick_ev);       /* dry: ask the present thread to walk */
  }
  
@@ -2706,7 +2729,7 @@ index efad9b92..2cf49fb4 100644
      ReleaseSRWLockExclusive(&s_gcm_fifo_lock);
      if (ft_t0) {
          const uint64_t t1 = ps3_ft_now();
-@@ -1750,7 +2170,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1750,7 +2186,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * that does read the context (the ring-recycle heuristic) is separately guarded
       * by s_gcm_ctx_out_ea, which stays 0 on that path. */
      if (!s_gcm_context_ea && !s_gcm_syscall_mode) return;
@@ -2715,7 +2738,7 @@ index efad9b92..2cf49fb4 100644
  
      /* Walk the FIFO exactly like the RSX: chase the guest-written `put` (an IO
       * offset in the control register), decoding method headers and following
-@@ -1841,6 +2261,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1841,6 +2277,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
            fflush(stderr);
        } }
  
@@ -2723,7 +2746,7 @@ index efad9b92..2cf49fb4 100644
      int budget = 0x100000;                    /* words per tick cap */
      /* GCM_DRAINDBG also reports WHY each pass stopped. A drain that ends far
       * short of `put` every tick is the signature of a FIFO that can never
-@@ -1874,6 +2295,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1874,6 +2311,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
              break;
          }
          u32 w = vm_read32(ea);
@@ -2731,7 +2754,7 @@ index efad9b92..2cf49fb4 100644
          /* Only remember offsets BELOW put -- those are positions in the
           * ring the title is writing. A park in another region is where the
           * walker gave up, not how far it got through the ring. */
-@@ -1911,6 +2333,17 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1911,6 +2349,17 @@ static void gcm_rsx_process_fifo_unlocked(void)
                    nop = hdr = jmp = cal = ret = 0; t0 = now;
                } } }
          u32 type = w >> 29;
@@ -2749,7 +2772,7 @@ index efad9b92..2cf49fb4 100644
  
          if ((w & 0xFFFF0000u) == 0xFEAD0000u) {
              /* lv1 driver flip: statically-linked libgcm cellGcmSetFlip writes
-@@ -1955,12 +2388,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1955,12 +2404,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
               * "Command Buffer Overflow" forever. Past the threshold keep
               * draining -- the intermediate presents are frames we are too far
               * behind to show anyway. No-op for a title that is keeping up. */
@@ -2773,7 +2796,7 @@ index efad9b92..2cf49fb4 100644
                  { why = "flip"; break; }
              continue;
          }
-@@ -1970,7 +2411,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1970,7 +2427,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
                                 s_fifo_getoff, w & 0x1FFFFFFCu, put); }
              { u32 tgt = w & 0x1FFFFFFCu;
@@ -2782,7 +2805,7 @@ index efad9b92..2cf49fb4 100644
                /* A JUMP to its own address is the "park the RSX here" idiom:
                 * the title leaves it at the write head so the GPU stops if it
                 * catches up, and overwrites it when the next segment is
-@@ -1979,6 +2420,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1979,6 +2436,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
                if (tgt == s_fifo_getoff) {
@@ -2791,7 +2814,7 @@ index efad9b92..2cf49fb4 100644
                    /* Parked. If the title has meanwhile moved `put` somewhere
                     * else, it has switched to its other segment and left this
                     * park standing -- it only patches a park when it reuses that
-@@ -1996,10 +2439,16 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1996,10 +2455,16 @@ static void gcm_rsx_process_fifo_unlocked(void)
                     * patch time to arrive, and resync only for a park that
                     * has stood with the same put for longer than any title
                     * takes between the two stores. */
@@ -2811,7 +2834,7 @@ index efad9b92..2cf49fb4 100644
                        const unsigned long long now = ps3_ms_now();
                        if (park_off != s_fifo_getoff || park_put != put) {
                            park_off = s_fifo_getoff; park_put = put; park_since = now;
-@@ -2014,6 +2463,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2014,6 +2479,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
                    break;
                }
                if (tgt < s_fifo_getoff) s_fifo_back_jumps++;
@@ -2820,7 +2843,7 @@ index efad9b92..2cf49fb4 100644
                s_fifo_getoff = tgt;
                /* get is the RSX's fetch pointer: a title polling it sees the
                 * GPU leave a segment as soon as the JUMP out of it is taken.
-@@ -2025,7 +2476,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2025,7 +2492,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          }
          if ((w & 3) == 2) {                    /* CALL: offset | 2 */
              { u32 tgt = w & 0x1FFFFFFCu;
@@ -2829,7 +2852,7 @@ index efad9b92..2cf49fb4 100644
                s_fifo_calloff = s_fifo_getoff + 4;
                s_fifo_getoff  = tgt; }
              continue;
-@@ -2078,8 +2529,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2078,8 +2545,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      u32 m = (type == 0) ? method + i * 4 : method;
                      u32 v = vm_read32(dea);
                      u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
@@ -2846,7 +2869,7 @@ index efad9b92..2cf49fb4 100644
                      /* PS3_FTRACE: an acquire this walker sat on is satisfied now. */
                      if (m == 0x68u && s_ft_sema_t0 && vm_read32(la) == v) {
                          ps3_ft_span(PS3_FT_SEMA, 0, s_sema_offset, v, s_ft_sema_t0, ps3_ft_now());
-@@ -2133,7 +2590,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2133,7 +2606,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
              }
          }
                  }
@@ -2875,7 +2898,7 @@ index efad9b92..2cf49fb4 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -2292,26 +2769,79 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2292,26 +2785,79 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * publication (gcm_ref_publish below) instead of letting a
                       * later fence in the same batch overwrite it. */
                      if (m == 0x50) gcm_ref_push_at(g_rsx_last_reference, s_fifo_getoff);
@@ -2960,7 +2983,7 @@ index efad9b92..2cf49fb4 100644
                          } else if (idx < CELL_GCM_MAX_REPORT_COUNT) {
                              s_report_data[idx].timestamp = ts;
                              s_report_data[idx].value = val;
-@@ -2392,12 +2922,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2392,12 +2938,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * for good that way in about one New Marais run in five ("stuck-get" at a
       * self-jump with no "jump-park" before it). */
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -2991,7 +3014,7 @@ index efad9b92..2cf49fb4 100644
  
      /* Publish progress: get chases put; ref advances at most ONE queued fence
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
-@@ -2794,8 +3341,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2794,8 +3357,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * Rewinding it to `begin` in mid-frame cut the frame short, dropping the
       * fence release in its tail, and the title then waited for it forever. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -3008,7 +3031,7 @@ index efad9b92..2cf49fb4 100644
      if (runtime_ring && end - (cur + 4) < GCM_FLIP_WRAP_BYTES && io_begin != 0xFFFFFFFFu &&
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
-@@ -3094,9 +3648,75 @@ static u32 gcm_io_alloc(u32 size)
+@@ -3094,9 +3664,75 @@ static u32 gcm_io_alloc(u32 size)
      return 0xFFFFFFFFu;
  }
  
@@ -3084,7 +3107,7 @@ index efad9b92..2cf49fb4 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -3151,6 +3771,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3151,6 +3787,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -3092,7 +3115,7 @@ index efad9b92..2cf49fb4 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -3159,6 +3780,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3159,6 +3796,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -3100,7 +3123,7 @@ index efad9b92..2cf49fb4 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -3194,7 +3816,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -3194,7 +3832,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -3113,7 +3136,7 @@ index efad9b92..2cf49fb4 100644
  s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
  {
      /* RPCS3 cellGcmSys.cpp accepts exactly STRICT_ORDERING (not an arbitrary
-@@ -3202,8 +3828,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
+@@ -3202,8 +3844,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
       * order after its acquire fence; there is no relaxed DMA mapping path to
       * select here. Preserve that path rather than pretending to enable a new
       * ordering mode by storing an unused flag. */
@@ -3126,7 +3149,7 @@ index efad9b92..2cf49fb4 100644
      if ((ea | io | size) & 0xFFFFFu || !size)
          return CELL_GCM_ERROR_INVALID_ALIGNMENT;
      const u64 ea_end = (u64)ea + size;
-@@ -3242,8 +3871,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -3242,8 +3887,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -3157,7 +3180,7 @@ index efad9b92..2cf49fb4 100644
      IoMapping* mapping = find_mapping_by_io(io);
      if (!mapping)
          return CELL_GCM_ERROR_FAILURE;
-@@ -3688,6 +4339,7 @@ void cellGcmTerminate(void)
+@@ -3688,6 +4355,7 @@ void cellGcmTerminate(void)
      memset(&s_config, 0, sizeof(s_config));
      memset(&s_control, 0, sizeof(s_control));
      memset(s_io_mappings, 0, sizeof(s_io_mappings));
@@ -3263,7 +3286,7 @@ index 6be29e4d..a7f89c3a 100644
      }
  
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b3..b044a666 100644
+index f99986b3..6c01e058 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -44,6 +44,7 @@ extern u32 ppu_vm_size;
@@ -4005,7 +4028,7 @@ index f99986b3..b044a666 100644
      }
      dc.n_verts = dc.n_refs;
  }
-@@ -2071,6 +2436,219 @@ static u32 eng_color_feedback_failure(u32 unit, const eng_surface* s,
+@@ -2071,6 +2436,415 @@ static u32 eng_color_feedback_failure(u32 unit, const eng_surface* s,
      return ENG_INVALID;
  }
  
@@ -4128,6 +4151,202 @@ index f99986b3..b044a666 100644
 +    return z->argb[k].tex;
 +}
 +
++/* RSX_BLIT_SHADOW=1: an unscaled NV3089 blit out of an A8R8G8B8 colour target
++ * into memory no engine surface covers is copied on the GPU, into a "strip"
++ * texture keyed by its destination rectangle, instead of being read back into
++ * guest memory (a wait for the GPU) and copied there by the CPU. A later
++ * texture that samples that memory as linear A8R8G8B8 and is fully covered by
++ * strips gets them assembled into one texture on the GPU. Guest memory is NOT
++ * written: anything else that reads it (a CPU/SPU consumer, a save thumbnail)
++ * sees stale bytes -- so it is only for titles whose copies feed nothing but
++ * textures (GoW:A's MLAA input, with the MLAA tasks served by HLE). Another
++ * NV3089 write over a strip drops it (rsx_draw_engine_blit_shadow_drop).
++ * RSX_BLIT_SHADOW=2 keeps the guest-memory copy too and compares every
++ * assembled texture with the bytes the copy left there. */
++static int eng_blit_shadow_mode(void)
++{
++    static int s = -1;
++    if (s < 0) { const char* e = getenv("RSX_BLIT_SHADOW"); s = e ? atoi(e) : 0; }
++    return s;
++}
++
++#define ENG_STRIPS 8u
++#define ENG_STRIP_COMPS 4u
++static struct { u32 loc, off, pitch, w, h, tex; u64 serial; } s_strip[ENG_STRIPS];
++static struct { u32 loc, off, pitch, w, h, format, remap, tex; u64 serial; } s_comp[ENG_STRIP_COMPS];
++static u32 s_strip_next, s_comp_next;
++static u64 s_strip_serial;
++static struct { unsigned blits, hits, built, cmp, bad, dropped; time_t t; } s_bs;
++
++static void eng_blit_shadow_tick(void)
++{
++    const time_t now = time(NULL);
++    if (!s_bs.t) s_bs.t = now;
++    if (now - s_bs.t < 60) return;
++    fprintf(stderr, "[blit-shadow] 60s: %u blits shadowed, %u texture hits, %u assembled, %u dropped;"
++            " checked %u, %u with differences\n",
++            s_bs.blits, s_bs.hits, s_bs.built, s_bs.dropped, s_bs.cmp, s_bs.bad);
++    memset(&s_bs, 0, sizeof s_bs);
++    s_bs.t = now;
++}
++
++static int eng_ranges_overlap(u32 a0, u32 an, u32 b0, u32 bn)
++{
++    return (u64)a0 < (u64)b0 + bn && (u64)b0 < (u64)a0 + an;
++}
++
++/* Bytes [off, off + pitch * (h - 1) + w * 4) of a strip or a request. */
++static u32 eng_rect_bytes(u32 pitch, u32 w, u32 h) { return pitch * (h - 1u) + w * 4u; }
++
++/* Do two rectangles of guest bytes (off, pitch, width in bytes, rows) share
++ * a byte? With one pitch, by columns and rows: side-by-side strips of the
++ * same rows interleave in address but never touch. */
++static int eng_rects_overlap(u32 a, u32 ap, u32 aw, u32 ah, u32 b, u32 bp, u32 bw, u32 bh)
++{
++    if (!eng_ranges_overlap(a, ap * (ah - 1u) + aw, b, bp * (bh - 1u) + bw)) return 0;
++    if (ap != bp || !ap) return 1;
++    const u32 ac = a % ap, bc = b % bp, ar = a / ap, br = b / bp;
++    return ac < bc + bw && bc < ac + aw && ar < br + bh && br < ar + ah;
++}
++
++void rsx_draw_engine_blit_shadow_drop(u32 loc, u32 off, u32 pitch, u32 wbytes, u32 h)
++{
++    if (!eng_blit_shadow_mode() || !wbytes || !h) return;
++    for (u32 i = 0; i < ENG_STRIPS; i++)
++        if (s_strip[i].tex && s_strip[i].loc == loc &&
++            eng_rects_overlap(s_strip[i].off, s_strip[i].pitch, s_strip[i].w * 4u, s_strip[i].h,
++                              off, pitch, wbytes, h)) {
++            g.be->texture_release(g.be->user, s_strip[i].tex);
++            memset(&s_strip[i], 0, sizeof s_strip[i]);
++            s_bs.dropped++;
++        }
++}
++
++int rsx_draw_engine_blit_shadow(u32 sloc, u32 soff, u32 spitch, u32 dloc, u32 doff, u32 dpitch,
++                                u32 w, u32 h)
++{
++    const int mode = eng_blit_shadow_mode();
++    if (!mode || !g.ready || !g.be->image_copy || !w || !h) return 0;
++    eng_blit_shadow_tick();
++    u32 xb = 0, y = 0, dxb = 0, dy = 0;
++    const u32 slot = eng_surface_at(sloc, soff, spitch, &xb, &y);
++    if (slot == ENG_INVALID || g.surfaces[slot].fmt != RSX_BE_FMT_R8G8B8A8 || (xb & 3u)) return 0;
++    const eng_surface* s = &g.surfaces[slot];
++    const u32 x = xb / 4u;
++    if ((u64)x + w > s->w || (u64)y + h > s->h || (u64)w * 4u > dpitch) return 0;
++    if (eng_surface_at(dloc, doff, dpitch, &dxb, &dy) != ENG_INVALID) return 0;   /* a surface: the old path */
++    u32 k = 0;
++    while (k < ENG_STRIPS && !(s_strip[k].tex && s_strip[k].loc == dloc && s_strip[k].off == doff &&
++                               s_strip[k].pitch == dpitch && s_strip[k].w == w && s_strip[k].h == h)) k++;
++    if (k == ENG_STRIPS) {
++        rsx_draw_engine_blit_shadow_drop(dloc, doff, dpitch, w * 4u, h);   /* other shapes over these bytes */
++        k = s_strip_next++ % ENG_STRIPS;
++        if (s_strip[k].tex) { g.be->texture_release(g.be->user, s_strip[k].tex); s_bs.dropped++; }
++        memset(&s_strip[k], 0, sizeof s_strip[k]);
++        const u32 tex = g.be->texture_create(g.be->user, RSX_BE_FMT_R8G8B8A8, w, h, 1, 1, 0xAAE4u, 0xA5u);
++        if (!tex) return 0;
++        s_strip[k].loc = dloc; s_strip[k].off = doff; s_strip[k].pitch = dpitch;
++        s_strip[k].w = w; s_strip[k].h = h; s_strip[k].tex = tex;
++    }
++    if (g.be->image_copy(g.be->user, s->handle, x, y, s_strip[k].tex, 0, 0, w, h, NULL) != 0) {
++        g.be->texture_release(g.be->user, s_strip[k].tex);
++        memset(&s_strip[k], 0, sizeof s_strip[k]);
++        return 0;
++    }
++    s_strip[k].serial = ++s_strip_serial;
++    s_bs.blits++;
++    return mode == 1 ? 1 : 2;
++}
++
++/* A linear A8R8G8B8 texture fully covered by strips: their contents put
++ * together on the GPU, rebuilt when a strip was copied again. 0 = not one. */
++static u32 eng_shadow_texture(const rsx_dsp_texture* t, u32 base_fmt)
++{
++    if (!eng_blit_shadow_mode() || base_fmt != 0x85u || !(t->format & 0x20u) || t->cubemap ||
++        t->dimension != 2 || t->mipmaps > 1 || !t->width || !t->height || !t->pitch ||
++        (u64)t->width * 4u > t->pitch)
++        return 0;
++    const u32 span = eng_rect_bytes(t->pitch, t->width, t->height);
++    u32 idx[ENG_STRIPS], n = 0;
++    u64 area = 0, newest = 0;
++    for (u32 i = 0; i < ENG_STRIPS; i++) {
++        if (!s_strip[i].tex || s_strip[i].loc != t->location || s_strip[i].pitch != t->pitch ||
++            s_strip[i].off < t->offset || s_strip[i].off - t->offset >= span)
++            continue;
++        const u32 d = s_strip[i].off - t->offset;
++        if ((d % t->pitch) & 3u || (d % t->pitch) / 4u + s_strip[i].w > t->width ||
++            d / t->pitch + s_strip[i].h > t->height)
++            return 0;               /* a strip only partly inside: not this texture's */
++        idx[n++] = i;
++        area += (u64)s_strip[i].w * s_strip[i].h;
++        if (s_strip[i].serial > newest) newest = s_strip[i].serial;
++    }
++    if (n && area != (u64)t->width * t->height) {
++        static unsigned logs; if (logs++ < 4)
++            fprintf(stderr, "[blit-shadow] texture %u:0x%08X %ux%u pitch %u: %u strip(s) cover %llu of %u texels\n",
++                    t->location, t->offset, t->width, t->height, t->pitch, n, (unsigned long long)area,
++                    t->width * t->height);
++    }
++    if (!n || area != (u64)t->width * t->height) return 0;     /* strips never overlap: equal area = covered */
++    const u32 remap = t->remap & 0xFFFFu;
++    u32 c = 0;
++    while (c < ENG_STRIP_COMPS && !(s_comp[c].tex && s_comp[c].loc == t->location && s_comp[c].off == t->offset &&
++                                    s_comp[c].pitch == t->pitch && s_comp[c].w == t->width &&
++                                    s_comp[c].h == t->height && s_comp[c].format == t->format &&
++                                    s_comp[c].remap == remap)) c++;
++    if (c == ENG_STRIP_COMPS) {
++        c = s_comp_next++ % ENG_STRIP_COMPS;
++        if (s_comp[c].tex) g.be->texture_release(g.be->user, s_comp[c].tex);
++        memset(&s_comp[c], 0, sizeof s_comp[c]);
++        const u32 tex = g.be->texture_create(g.be->user, RSX_BE_FMT_R8G8B8A8, t->width, t->height,
++                                             1, 1, remap, t->format);
++        if (!tex) return 0;
++        s_comp[c].loc = t->location; s_comp[c].off = t->offset; s_comp[c].pitch = t->pitch;
++        s_comp[c].w = t->width; s_comp[c].h = t->height; s_comp[c].format = t->format;
++        s_comp[c].remap = remap; s_comp[c].tex = tex;
++        { static unsigned logs; if (logs++ < 4)
++            fprintf(stderr, "[blit-shadow] texture %u:0x%08X %ux%u pitch %u fmt 0x%02X remap 0x%04X from %u strip(s)\n",
++                    t->location, t->offset, t->width, t->height, t->pitch, t->format, remap, n); }
++    }
++    s_bs.hits++;
++    if (s_comp[c].serial == newest) return s_comp[c].tex;
++    const int check = eng_blit_shadow_mode() == 2;
++    u32* gpu = check ? (u32*)malloc((size_t)t->width * t->height * 4u) : NULL;
++    for (u32 j = 0; j < n; j++) {
++        const u32 i = idx[j], d = s_strip[i].off - t->offset;
++        if (g.be->image_copy(g.be->user, s_strip[i].tex, 0, 0, s_comp[c].tex, (d % t->pitch) / 4u, d / t->pitch,
++                             s_strip[i].w, s_strip[i].h, j + 1 == n ? gpu : NULL) != 0) {
++            free(gpu);
++            return 0;
++        }
++    }
++    s_comp[c].serial = newest;
++    s_bs.built++;
++    if (gpu) {
++        /* The guest-memory copy also ran: the bytes the upload would decode,
++         * guest A,R,G,B to host R,G,B,A. */
++        unsigned bad = 0, first = ~0u; u32 want = 0;
++        for (u32 yy = 0; yy < t->height && bad < 1u << 30; yy++) {
++            const u8* row = eng_guest_ptr(NULL, t->location, t->offset + yy * t->pitch, t->width * 4u);
++            if (!row) { bad = 1u << 30; break; }
++            for (u32 xx = 0; xx < t->width; xx++) {
++                u32 v; memcpy(&v, row + xx * 4u, 4);
++                v = (v >> 8) | (v << 24);
++                if (v != gpu[yy * t->width + xx]) {
++                    if (first == ~0u) { first = yy * t->width + xx; want = v; }
++                    bad++;
++                }
++            }
++        }
++        s_bs.cmp++; if (bad) s_bs.bad++;
++        if (bad && s_bs.bad <= 4)
++            fprintf(stderr, "[blit-shadow-check] 0x%08X %ux%u: %u texels differ, first %u: gpu 0x%08X guest 0x%08X\n",
++                    t->offset, t->width, t->height, bad, first, first != ~0u ? gpu[first] : 0u, want);
++        free(gpu);
++    }
++    return s_comp[c].tex;
++}
++
 +/* RSX_C2RG16=1: an A8R8G8B8 colour target sampled as linear Y16_X16_FLOAT
 + * (GoW:A reads two half-resolution targets that way, ~2 a frame) is
 + * regrouped on the GPU (backend color_to_rg16f) instead of being stored into
@@ -4225,7 +4444,7 @@ index f99986b3..b044a666 100644
  static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
                                u32 current_zslot, u32 tex_used,
                                u32 textures[RSX_BE_MAX_TEXTURES],
-@@ -2117,10 +2695,22 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2117,10 +2891,22 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
              /* DEPTH24_D8 keeps the backend's own snapshot when it has one;
               * anything else goes through guest memory. */
              if (base_fmt == RSX_TEX_FMT_DEPTH24_D8 && current_zslot != (u32)zsrc) {
@@ -4249,7 +4468,7 @@ index f99986b3..b044a666 100644
                  textures[u] = eng_texture_slot(t.location, t.offset, t.format,
                                                 t.width, t.height, t.mipmaps, t.pitch,
                                                 (int)t.cubemap, t.remap & 0xFFFFu,
-@@ -2138,7 +2728,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2138,7 +2924,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
              while (k < n_targets && target_slots[k] != (u32)surface_at) k++;
              if (k == n_targets) return eng_color_feedback_failure(u, s, &t);
              if (!feedback[k]) {
@@ -4259,7 +4478,7 @@ index f99986b3..b044a666 100644
                  if (!copy) return eng_color_feedback_failure(u, s, &t);
                  if (s->feedback) g.be->texture_release(g.be->user, s->feedback);
                  s->feedback = feedback[k] = copy;
-@@ -2154,10 +2746,17 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2154,10 +2942,17 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
              }
              continue;
          }
@@ -4278,7 +4497,16 @@ index f99986b3..b044a666 100644
              textures[u] = eng_texture_slot(t.location, t.offset, t.format,
                                             t.width, t.height, t.mipmaps, t.pitch,
                                             (int)t.cubemap, t.remap & 0xFFFFu,
-@@ -2176,7 +2775,9 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+@@ -2172,11 +2967,18 @@ static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
+             textures[u] = view ? view : g.surfaces[sampled].handle;
+             continue;
+         }
++        if (zsrc < 0) {
++            u32 sh;
++            { ENG_ST_BEGIN(); sh = eng_shadow_texture(&t, base_fmt); ENG_ST_END(ST_S2G); }
++            if (sh) { textures[u] = sh; continue; }
++        }
+         if (base_fmt == RSX_TEX_FMT_DEPTH24_D8) {
              for (u32 i = 0; i < g.n_zdepths; i++)
                  if (g.zdepths[i].location == t.location &&
                      g.zdepths[i].offset == t.offset && current_zslot != i) {
@@ -4288,7 +4516,7 @@ index f99986b3..b044a666 100644
                      if (snap) textures[u] = snap;
                      break;
                  }
-@@ -2449,16 +3050,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -2449,16 +3251,91 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
      }
      if (s_pd.draws_log) {
          fprintf(s_pd.draws_log, "pass %03u draw %u: pipe %u cmask %08X blend %u %X/%X"
@@ -4383,7 +4611,7 @@ index f99986b3..b044a666 100644
          fprintf(s_pd.draws_log, "\n");
      }
      if (s_pd.draws++) return;
-@@ -2506,6 +3182,46 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
+@@ -2506,6 +3383,46 @@ static void pd_note(const u32* targets, u32 n_targets, u32 zslot,
  /* Called on every present: arm on the first frame heavy enough when no delay
   * was asked for, and while capturing, close the pass in progress and write
   * the presented surface. */
@@ -4430,7 +4658,7 @@ index f99986b3..b044a666 100644
  static void pd_present(u32 presented)
  {
      if (s_pd.state == 0) pd_capturing();
-@@ -2527,14 +3243,105 @@ static void pd_present(u32 presented)
+@@ -2527,14 +3444,105 @@ static void pd_present(u32 presented)
      }
  }
  
@@ -4539,7 +4767,7 @@ index f99986b3..b044a666 100644
  
      const u32 prim = g.rsx.current_primitive;
      /* Everything that becomes triangles -- lists, strips, fans, quads, quad
-@@ -2549,33 +3356,34 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2549,33 +3557,34 @@ static void sink_end(void* user, const rsx_dispatch* r)
      int scratch = 0;
      const int rebuild = eng_topology_rebuild(prim, 0, &scratch) != 0;
      if (!rebuild) {
@@ -4580,7 +4808,7 @@ index f99986b3..b044a666 100644
      const u32 target = targets[0];
  
      rsx_dsp_surface sf;
-@@ -2596,7 +3404,8 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2596,7 +3605,8 @@ static void sink_end(void* user, const rsx_dispatch* r)
                                            eng_surface_format(sf.color_format),
                                            n_targets, &pipeline_is_fixed, &tex_used,
                                            &fp_hash);
@@ -4590,7 +4818,7 @@ index f99986b3..b044a666 100644
      if (fp_hash && eng_debug_fp(fp_hash, pipeline)) return;
  
      /* Textures before any pipeline or target binding: a cache refresh can
-@@ -2614,9 +3423,10 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2614,9 +3624,10 @@ static void sink_end(void* user, const rsx_dispatch* r)
      if (tex_mask == ENG_INVALID) return;
      const u32 vtex_mask = sink_bind_vertex_textures(eng_vtex_mask(), vtextures,
                                                      vsamplers);
@@ -4602,7 +4830,7 @@ index f99986b3..b044a666 100644
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
              dc.refs_remapped ? dc.ref_remap.occurrence_to_unique : NULL,
-@@ -2659,7 +3469,13 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2659,7 +3670,13 @@ static void sink_end(void* user, const rsx_dispatch* r)
          memcpy(g.fp_cb, g.fp_constants.values, g.fp_constants.count * 16u);
      { float* alpha = (float*)(g.fp_cb + nslots * 16u);
        alpha[0] = rsx_fp_alpha_ref(rs.alpha_ref_raw, rs.alpha_ref_format);
@@ -4617,7 +4845,7 @@ index f99986b3..b044a666 100644
  
      pd_note(targets, n_targets, zslot, &rs, pipeline, tex_mask);
  
-@@ -2722,8 +3538,71 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2722,8 +3739,71 @@ static void sink_end(void* user, const rsx_dispatch* r)
      }
  
      const u32 uploaded = indexed ? dc.n_verts : n_draw;
@@ -4689,7 +4917,7 @@ index f99986b3..b044a666 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
-@@ -2787,6 +3666,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2787,6 +3867,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -4703,7 +4931,7 @@ index f99986b3..b044a666 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2818,9 +3704,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2818,9 +3905,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -4737,7 +4965,7 @@ index f99986b3..b044a666 100644
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
-@@ -2945,6 +3854,33 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+@@ -2945,6 +4055,33 @@ void rsx_draw_engine_method(u32 method, u32 arg)
       * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
       * preserve them with the wider mask. */
      u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
@@ -4772,10 +5000,10 @@ index f99986b3..b044a666 100644
  }
  
 diff --git a/libs/video/rsx_draw_engine.h b/libs/video/rsx_draw_engine.h
-index 4dec1d63..b6e808f6 100644
+index 4dec1d63..78f7835c 100644
 --- a/libs/video/rsx_draw_engine.h
 +++ b/libs/video/rsx_draw_engine.h
-@@ -236,6 +236,26 @@ typedef struct rsx_draw_backend {
+@@ -236,6 +236,33 @@ typedef struct rsx_draw_backend {
       * 0 rejects the consuming draw; NULL retains the legacy guest-upload route. */
      u32 (*color_snapshot)(void* user, u32 surface);
  
@@ -4799,10 +5027,17 @@ index 4dec1d63..b6e808f6 100644
 +     * wait for the GPU. Same return and `check` contract as depth_to_argb8
 +     * (check: the first half in the low 16 bits of each word). */
 +    int  (*color_to_rg16f)(void* user, u32 surface, u32 texture, u32* check);
++    /* Optional: copy a w x h rectangle between two 32-bit colour images of
++     * the same format (src a colour target or a texture, dst a single-level
++     * 2D texture), ordered after every draw already handed over, with no
++     * wait for the GPU. Returns 0 on success. `check`, normally NULL, also
++     * receives dst's whole first level (R in the low byte) after a wait. */
++    int  (*image_copy)(void* user, u32 src, u32 sx, u32 sy, u32 dst, u32 dx, u32 dy,
++                       u32 w, u32 h, u32* check);
      /* Optional. 3D textures (SET_TEXTURE_FORMAT dimension 3, CONTROL3 depth):
       * a volume of `depth` slices per level, each slice one upload of decoded
       * rows. A backend that leaves these NULL gets the first slice as a 2D
-@@ -244,6 +264,12 @@ typedef struct rsx_draw_backend {
+@@ -244,6 +271,12 @@ typedef struct rsx_draw_backend {
                                u32 depth, u32 mips, u32 remap, u32 rsx_fmt);
      void (*texture_upload_3d)(void* user, u32 texture, u32 z, u32 mip,
                                u32 w, u32 h, const void* src, u32 row_bytes);
@@ -4815,7 +5050,7 @@ index 4dec1d63..b6e808f6 100644
  } rsx_draw_backend;
  
  /* ---- the engine --------------------------------------------------------- */
-@@ -251,6 +277,13 @@ typedef struct rsx_draw_backend {
+@@ -251,6 +284,13 @@ typedef struct rsx_draw_backend {
  /* Register the backend the engine drives. Passing NULL unregisters it. */
  void rsx_draw_engine_set_backend(const rsx_draw_backend* backend);
  
@@ -4829,6 +5064,22 @@ index 4dec1d63..b6e808f6 100644
  /* Is the engine the path this run takes? True when PS3RECOMP_RSX_ENGINE names
   * "dispatch" (or the backend asked for it by default) and a backend has been
   * registered. Read once and cached, so it is cheap in the FIFO walker. */
+@@ -305,6 +345,15 @@ void rsx_draw_engine_note_flip(u32 buffer_id);
+  * pitch, `w` and `h` in 32-bit pixels. Only 8-bit-per-channel surfaces laid
+  * out with the same pitch take part; anything else is left alone. */
+ void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32 h);
++/* RSX_BLIT_SHADOW (rsx_draw_engine.c): an unscaled blit out of an A8R8G8B8
++ * surface into memory no surface covers, copied on the GPU instead of into
++ * guest memory. Returns 1 when the caller must skip its guest-memory copy,
++ * 2 when it shadowed the blit but the copy still runs (check mode), 0 when
++ * it did not take it. */
++int rsx_draw_engine_blit_shadow(u32 sloc, u32 soff, u32 spitch, u32 dloc, u32 doff, u32 dpitch,
++                                u32 w, u32 h);
++/* Another write over a rectangle of guest bytes: drop the shadows it touches. */
++void rsx_draw_engine_blit_shadow_drop(u32 loc, u32 off, u32 pitch, u32 wbytes, u32 h);
+ void rsx_draw_engine_guest_wrote(u32 location, u32 offset, u32 pitch, u32 w, u32 h);
+ 
+ /* --- test hooks ---------------------------------------------------------- */
 diff --git a/libs/video/rsx_fp_decompiler.c b/libs/video/rsx_fp_decompiler.c
 index 5ce72ef6..832603cd 100644
 --- a/libs/video/rsx_fp_decompiler.c
@@ -5383,7 +5634,7 @@ index ad213615..6f123dbe 100644
      const rsx_vertex_remap* remap, u32 occurrence);
  
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index b22e08f6..cee9f039 100644
+index b22e08f6..1f25743a 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -5981,8 +6232,9 @@ index b22e08f6..cee9f039 100644
              for (u32 row = 0; row < h; row++)
 -                memcpy((u8*)out + (size_t)row * out_pitch, (const u8*)st.ptr + (size_t)row * tight, tight);
 +                memcpy((u8*)out + (size_t)row * out_pitch, (const u8*)st->ptr + (size_t)row * tight, tight);
-+        }
-+    }
+         }
+     }
+-    vk_destroy_buffer(&st);
 +}
 +
 +/* PS3RECOMP_VK_DUMP_SURFACES=<present#>,<dir>: at that present, write every
@@ -6040,7 +6292,7 @@ index b22e08f6..cee9f039 100644
 +                float v = c[k] * scale; v = v < 0 ? 0 : (v > 1 ? 1 : v);
 +                rgb[i * 3 + k] = (u8)(v * 255.0f + 0.5f);
 +            }
-         }
++        }
 +        char path[1024];
 +        snprintf(path, sizeof path, "%s/surf_%05u_h%02u_%ux%u_f%d.ppm", dir, present_no, hd, w, h, (int)o->fmt);
 +        FILE* f = fopen(path, "wb");
@@ -6048,8 +6300,7 @@ index b22e08f6..cee9f039 100644
 +        VK_LOG("surface dump h%u %ux%u fmt %d: max %.4g, nonzero components %zu of %zu -> %s\n",
 +               hd, w, h, (int)o->fmt, mx, nz, (size_t)w * h * 3, path);
 +        free(raw); free(rgb);
-     }
--    vk_destroy_buffer(&st);
++    }
  }
  
  /* ---- E3: textures ---------------------------------------------------------
@@ -6144,7 +6395,7 @@ index b22e08f6..cee9f039 100644
      if (!rc) {
          vk_barrier_image(z->im.img, s_vk.depth_aspect, VK_IMAGE_LAYOUT_GENERAL);
          vk_barrier_image(t->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
-@@ -2659,11 +3002,294 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
+@@ -2659,11 +3002,343 @@ static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
          VkBufferImageCopy in = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
                                   .imageExtent = { w, h, 1 } };
          pvkCmdCopyBufferToImage(s_vk.cmd, st.buf, t->im.img, VK_IMAGE_LAYOUT_GENERAL, 1, &in);
@@ -6438,10 +6689,59 @@ index b22e08f6..cee9f039 100644
 +    return rc ? -1 : 0;
 +}
 +
++/* A w x h rectangle copied between two 32-bit colour images (a colour target
++ * or a single-level 2D texture, either side), joining the open batch after
++ * every command already in it: no wait for the GPU. `check`, normally NULL,
++ * also receives the destination's whole first level (R in the low byte, dst
++ * w * h words) after waiting for the GPU. */
++static int vk_eng_image_copy(void* user, u32 src, u32 sx, u32 sy, u32 dst, u32 dx, u32 dy,
++                             u32 w, u32 h, u32* check)
++{
++    (void)user;
++    vk_eng_obj* s = (src < VK_ENG_MAX_OBJ && (s_eobj[src].kind == VK_ENG_COLOR ||
++                                              s_eobj[src].kind == VK_ENG_TEXTURE)) ? &s_eobj[src] : NULL;
++    vk_eng_obj* d = vk_eng_get(dst, VK_ENG_TEXTURE);
++    if (!s || !d || !w || !h || s->fmt != d->fmt || s->bpp != 4u || d->cube || s->cube ||
++        (u64)sx + w > s->w || (u64)sy + h > s->h || (u64)dx + w > d->w || (u64)dy + h > d->h)
++        return -1;
++    const int batch = vk_eb_active();
++    int rc = (batch && s_eb_pending) ? 0 : vk_begin();
++    if (rc) return -1;
++    vk_cmd_after_everything(s_vk.cmd);
++    vk_barrier_image(s->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
++    vk_barrier_image(d->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
++    VkImageCopy c = {
++        .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .srcOffset = { (int32_t)sx, (int32_t)sy, 0 },
++        .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }, .dstOffset = { (int32_t)dx, (int32_t)dy, 0 },
++        .extent = { w, h, 1 },
++    };
++    pvkCmdCopyImage(s_vk.cmd, s->im.img, VK_IMAGE_LAYOUT_GENERAL, d->im.img, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
++    vk_barrier_image(d->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
++    vk_buffer* st = NULL;
++    const VkDeviceSize bytes = (VkDeviceSize)d->w * d->h * 4u;
++    if (check && (st = vk_stage_get(&s_rb_stage, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT))) {
++        VkBufferImageCopy bc = { .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
++                                 .imageExtent = { d->w, d->h, 1 } };
++        pvkCmdCopyImageToBuffer(s_vk.cmd, d->im.img, VK_IMAGE_LAYOUT_GENERAL, st->buf, 1, &bc);
++        VkMemoryBarrier m3 = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
++                               .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT };
++        pvkCmdPipelineBarrier(s_vk.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
++                              0, 1, &m3, 0, NULL, 0, NULL);
++    }
++    if (batch && !st) {
++        if (++s_eb_pending >= vk_eb_max()) vk_eng_flush();
++    } else {
++        if (batch) ++s_eb_pending;
++        rc = batch ? (vk_eng_idle(), 0) : vk_submit_and_wait();
++        if (!rc && st) { vk_invalidate(st); memcpy(check, st->ptr, (size_t)bytes); }
++    }
++    return rc ? -1 : 0;
++}
++
  /* The depth aspect of a D32_SFLOAT target copies out as 32-bit floats, which
   * is what the engine asks for; other depth formats report failure. */
  static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32 h,
-@@ -2675,10 +3301,8 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
+@@ -2675,10 +3350,8 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
          out_pitch < w * 4u || (s_vk.depth_format != VK_FORMAT_D32_SFLOAT &&
                                    s_vk.depth_format != VK_FORMAT_D32_SFLOAT_S8_UINT))
          return -1;
@@ -6454,7 +6754,7 @@ index b22e08f6..cee9f039 100644
      int rc = vk_begin();
      if (!rc) {
          vk_barrier_image(z->im.img, s_vk.depth_aspect, VK_IMAGE_LAYOUT_GENERAL);
-@@ -2686,24 +3310,60 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
+@@ -2686,24 +3359,60 @@ static int vk_eng_depth_readback(void* user, u32 depth, u32 x, u32 y, u32 w, u32
              .imageSubresource = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1 },
              .imageOffset = { (int32_t)x, (int32_t)y, 0 }, .imageExtent = { w, h, 1 },
          };
@@ -6520,7 +6820,7 @@ index b22e08f6..cee9f039 100644
      return rc ? -1 : 0;
  }
  /* ---- E2: pipelines and draws ---------------------------------------------
-@@ -2748,6 +3408,7 @@ static struct {
+@@ -2748,6 +3457,7 @@ static struct {
      u32          scratch_w, scratch_h;
      u32          pipeline;
      u32          vs_bytes, ps_bytes;
@@ -6528,7 +6828,7 @@ index b22e08f6..cee9f039 100644
      u32          tex[RSX_BE_MAX_TEXTURES];
      rsx_be_sampler_desc samp[RSX_BE_MAX_TEXTURES];
      u32          tex_mask;
-@@ -2774,6 +3435,7 @@ static u32 s_esamp_count;
+@@ -2774,6 +3484,7 @@ static u32 s_esamp_count;
  
  static void vk_eng_drop_framebuffers(void)
  {
@@ -6536,7 +6836,7 @@ index b22e08f6..cee9f039 100644
      for (u32 i = 0; i < s_e2.fb_count; i++)
          if (s_e2.fb[i].fb) pvkDestroyFramebuffer(s_vk.device, s_e2.fb[i].fb, NULL);
      s_e2.fb_count = 0;
-@@ -2983,6 +3645,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
+@@ -2983,6 +3694,7 @@ static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* p
  static void vk_eng_pipeline_release(void* user, u32 pipeline)
  {
      (void)user;
@@ -6544,7 +6844,7 @@ index b22e08f6..cee9f039 100644
      if (!pipeline || pipeline > VK_ENG_MAX_PIPE || !s_epipe[pipeline - 1].used) return;
      vk_eng_pipe* P = &s_epipe[pipeline - 1];
      for (u32 t = 0; t < VK_ENG_TOPOLOGIES; t++)
-@@ -3068,10 +3731,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
+@@ -3068,10 +3780,27 @@ static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
      if ((rs->color_mask >>  8) & 0xFFu) wm |= VK_COLOR_COMPONENT_G_BIT;
      if ((rs->color_mask >>  0) & 0xFFu) wm |= VK_COLOR_COMPONENT_B_BIT;
      if ((rs->color_mask >> 24) & 0xFFu) wm |= VK_COLOR_COMPONENT_A_BIT;
@@ -6573,7 +6873,7 @@ index b22e08f6..cee9f039 100644
              .srcColorBlendFactor = vk_gcm_blend_factor(rs->sf_rgb),
              .dstColorBlendFactor = vk_gcm_blend_factor(rs->df_rgb),
              .colorBlendOp = vk_gcm_blend_op(rs->eq_rgb),
-@@ -3115,29 +3795,41 @@ static void vk_eng2_shutdown(void* user)
+@@ -3115,29 +3844,41 @@ static void vk_eng2_shutdown(void* user)
      if (s_e2.split_pipe_layout) pvkDestroyPipelineLayout(s_vk.device, s_e2.split_pipe_layout, NULL);
      if (s_e2.split_pool)        pvkDestroyDescriptorPool(s_vk.device, s_e2.split_pool, NULL);
      if (s_e2.split_layout)      pvkDestroyDescriptorSetLayout(s_vk.device, s_e2.split_layout, NULL);
@@ -6621,7 +6921,7 @@ index b22e08f6..cee9f039 100644
      s_e2.ps_bytes = bytes;
  }
  static void vk_eng_bind_textures(void* user, const u32* textures,
-@@ -3296,21 +3988,256 @@ static VkImageView vk_eng_dummy_cube_view(void)
+@@ -3296,21 +4037,256 @@ static VkImageView vk_eng_dummy_cube_view(void)
      return s_eobj[s_e2.dummy_cube].im.view;
  }
  
@@ -6881,7 +7181,7 @@ index b22e08f6..cee9f039 100644
      for (u32 u = 0; u < RSX_MAX_TEXTURES; u++) {
          const int cube = (P->cube_mask >> u) & 1u;
          VkImageView v = ((s_e2.tex_mask >> u) & 1u) ? vk_eng_sample_view(s_e2.tex[u], cube)
-@@ -3342,14 +4269,57 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
+@@ -3342,14 +4318,57 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
                .dstBinding = RSX_SPIRV_TEXTURE_BINDING, .descriptorCount = RSX_MAX_TEXTURES,
                .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .pImageInfo = ii };
      }
@@ -6939,7 +7239,7 @@ index b22e08f6..cee9f039 100644
      if (!s_e2.pipeline || !vertices || !vertex_count || !stride) return;
      if (topology < RSX_TOPOLOGY_POINTS || topology > RSX_TOPOLOGY_TRIANGLE_STRIP) return;
      vk_eng_pipe* P = &s_epipe[s_e2.pipeline - 1];
-@@ -3379,26 +4349,112 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+@@ -3379,26 +4398,112 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
      VkRenderPass rp = vk_eng_render_pass(P->rt_fmt, n);
      VkFramebuffer fb = vk_eng_framebuffer(rp, s_eng_bound.rt, n, dview, dkey, w, h);
      if (!pipe || !rp || !fb) return;
@@ -7069,7 +7369,7 @@ index b22e08f6..cee9f039 100644
      pvkCmdBindPipeline(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
      VkViewport vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
      if (s_e2.have_vp && s_e2.vp[2] > 0.0f && s_e2.vp[3] > 0.0f) {
-@@ -3421,16 +4477,22 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+@@ -3421,16 +4526,22 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
      pvkCmdBindDescriptorSets(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               P->cube_mask ? s_e2.split_pipe_layout : s_g.pipe_layout,
                               0, 1, &set, 0, NULL);
@@ -7098,13 +7398,14 @@ index b22e08f6..cee9f039 100644
  }
  
  static const rsx_draw_backend s_vk_engine_backend = {
-@@ -3466,7 +4528,13 @@ static const rsx_draw_backend s_vk_engine_backend = {
+@@ -3466,7 +4577,14 @@ static const rsx_draw_backend s_vk_engine_backend = {
      .present              = vk_eng_present,
      .readback             = vk_eng_readback,
      .depth_readback       = vk_eng_depth_readback,
 +    .stencil_readback     = vk_eng_stencil_readback,
 +    .depth_to_argb8       = vk_eng_depth_to_argb8,
 +    .color_to_rg16f       = vk_eng_color_to_rg16f,
++    .image_copy           = vk_eng_image_copy,
      .color_target_write   = vk_eng_color_target_write,
 +    /* Batched uploads record behind vk_cmd_after_everything; unbatched ones
 +     * submit after the open batch is flushed. */
@@ -7112,7 +7413,7 @@ index b22e08f6..cee9f039 100644
  };
  
  static rsx_backend s_vulkan_backend = {
-@@ -3685,6 +4753,18 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3685,6 +4803,18 @@ void rsx_vulkan_backend_shutdown(void)
          vk_destroy_image(&s_vk.color);
          vk_destroy_buffer(&s_vk.vertices);
          vk_destroy_buffer(&s_vk.readback);
@@ -7131,7 +7432,7 @@ index b22e08f6..cee9f039 100644
          if (s_vk.fence) pvkDestroyFence(s_vk.device, s_vk.fence, NULL);
          if (s_vk.pool)  pvkDestroyCommandPool(s_vk.device, s_vk.pool, NULL);
          if (s_vk.present_fence) pvkDestroyFence(s_vk.device, s_vk.present_fence, NULL);
-@@ -3693,7 +4773,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3693,7 +4823,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -7140,7 +7441,7 @@ index b22e08f6..cee9f039 100644
      free(s_vk.cpu_verts);
      pthread_mutex_destroy(&s_vk.queue_mu);
      pthread_mutex_destroy(&s_vk.present_mu);
-@@ -3757,5 +4837,3 @@ int rsx_vulkan_backend_depth_bounds(void)
+@@ -3757,5 +4887,3 @@ int rsx_vulkan_backend_depth_bounds(void)
  {
      return s_vk.eng_active && s_vk.depth_bounds_ok;
  }

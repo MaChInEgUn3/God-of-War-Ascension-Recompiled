@@ -170,6 +170,10 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **NV3089 copies kept on the GPU** (toolkit default off, GoW:A port default on while MLAA is HLE): `RSX_BLIT_SHADOW=1`
+  copies an unscaled blit out of a colour surface into a GPU strip and assembles strips into the texture that
+  reads them; guest memory is not written. `=2` keeps the guest copy and prints `[blit-shadow] 60s: ... checked N, M
+  with differences`; `NV3089_GATE=<file>` logs every blit's geometry while the file exists (M0.92).
 * **Colour snapshots in the batch** (toolkit default off, GoW:A port default on): `VK_SNAP_BATCH=1` records the copy
   of a target a draw samples while drawing into it into the open batch, with no wait for the GPU (M0.91).
 * **Colour target read as Y16_X16_FLOAT** (toolkit default off, GoW:A port default on): `RSX_C2RG16=1` regroups it on
