@@ -753,6 +753,10 @@ int main(int argc, char** argv)
      * previous draw's (~78% here) reuses its answer. Exact (=2 check: 3.3M hits,
      * 0 differ); pipeline lookup 2.25 -> 1.5 us per draw, frame rate unchanged. */
     if (!getenv("RSX_PIPE_CACHE")) _putenv_s("RSX_PIPE_CACHE", "1");
+    /* GCM_LEGACY_SKIP=1 (M0.97): the vtable decoder's state feeds nothing while
+     * the engine draws, so it only sees the reference, notify and semaphore
+     * methods. Walker CPU per draw -3-4% (A/B on a busy host). */
+    if (!getenv("GCM_LEGACY_SKIP")) _putenv_s("GCM_LEGACY_SKIP", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

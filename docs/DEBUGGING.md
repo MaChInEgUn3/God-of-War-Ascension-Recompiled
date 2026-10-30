@@ -174,6 +174,9 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **Vtable decoder skipped** (toolkit default off, GoW:A port default on): `GCM_LEGACY_SKIP=1` passes only 0x50,
+  0x104, 0x180, 0x1A4 and 0x1D6C-0x1D74 to `rsx_process_method` while the engine draws and no vtable backend is
+  registered; its first-N logs (`[RSX] CLEAR_SURFACE`, draw logs) stop. `RSX_TRACE` turns it off (M0.97).
 * **Pipeline answer reused** (toolkit default off, GoW:A port default on): `RSX_PIPE_CACHE=1` returns the previous
   draw's pipeline when every input of the lookup repeats; `=2` also runs the full lookup on each hit and prints
   `[pipe-cache-check] hit differs` lines. With `ENG_PHASE_STATS` the `[eng-stats]   pipe:` line counts memo

@@ -799,6 +799,22 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.97: the vtable decoder only sees its side-effect methods; walker -3-4% (2026-10-30).**
+  - Host profile of the walker at 1 ms (x217, runWh, per-method clocks gone, exe code only): vertex fetch ~33%
+    (`rsx_vertex_fetch_many` 19.7%, `rsx_vertex_remap_build` 8.5%), FIFO walk and decoders ~32%
+    (`gcm_rsx_process_fifo_unlocked` 14.5%, `rsx_process_method` 9.5%, `rsx_dispatch_method` 4.4%,
+    `rsx_draw_engine_method` 3.3%), texture hashing ~12%, `sink_end_draw` 7%.
+  - With the engine drawing, no vtable backend is registered, so `rsx_process_method`'s `rsx_state` feeds only
+    backend calls that never happen. Its effects outside that state are the reference (0x50), notifies (0x104,
+    0x180) and semaphores (0x1A4, 0x1D6C-0x1D74). Toolkit `GCM_LEGACY_SKIP` (ef4a4df7, port default on) sends
+    it only those.
+  - A/B (x219, runWj, busy host: another process at ~1-1.5 cores): walker CPU per draw 26.23 / 25.25 on against
+    27.36 / 26.44 off; game frames/s 10.52 / 9.90 against 8.07 / 10.27 (o1 contaminated: tex 13 us per draw).
+  - `RSX_PIPE_CACHE=2` through the corridor (x216, 600 s): ~10M hits, 0 differ.
+  - Tried, not kept: `s_fifo_getoff` on its own cache line (it shares one with the pump's locked flags): walker
+    CPU per draw 26.70 / 25.50 against 25.43 / 25.75 (x218). Guest memory under `MEM_WRITE_WATCH` to replace
+    texture hashing: a microbenchmark puts the first write to each page after a reset at ~1 us and a 64 MB
+    stream at 3x the plain time, more than the hashing costs.
 - **M0.96: the pipeline lookup reuses the previous draw's answer; exact, frame-rate gain below noise (2026-10-30).**
   - Counters first (x206/x207, runWe, per 30 s, ~920k draws): `eng_pipeline_get` 1.9 us per draw, ~85% of the
     pipe phase. The key repeats the previous draw's on 84% of draws (0x08E4 83%, texture registers 83%, 0x1EA0 88%).
@@ -810,7 +826,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     the texture unit words the masks come from, vertex program bytes, fp memo slot and fill serial, layout,
     targets, render state less ALPHA_REF) returns the previous answer; the fp memo still compares the program
     bytes in full. Check mode (x208, 300 s): 3.3M hits, 0 differ; ~78% of draws hit.
-  - A/B, one exe (x209 g o o g + x210 o g, quiet host): pipe 2.25 -> 1.50 us per draw, walker -0.4..0.6 us per
+  - A/B, one exe (x209 g o o g + x210 o g, quiet host, pre-ce506acf harness with per-method clocks): pipe
+    2.25 -> 1.50 us per draw, walker -0.4..0.6 us per
     draw; on 13.50 / 13.25, off 13.68 / 13.19 / 13.18 game frames/s (x209 g1 void: methods +10%). At the 0.78
     causal factor a 2% shorter walker predicts ~+1.6%, below this A/B's noise; the walker's share is re-measured
     next.
