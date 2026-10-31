@@ -179,6 +179,8 @@ Lessons that cost days; keep them.
   before and prints `[draw-repeat-check] repeat differs: ...`. `VK_CB_REUSE=1` reuses the previous draw's uniform
   slices (`VK_DRAW_PROF` counts them). With `ENG_PHASE_STATS` the pipe line counts mergeable and repeat draws, and
   under `=2` a `repeat misses` line lists the registers that broke repeats and the texture paths (M0.98).
+  The `fetch repeats in a frame` line counts vertex fetches whose inputs (layout, array and index registers, ranges)
+  match an earlier fetch of the same frame, and of those the ones with the same output (GoW:A: 0.002%).
 * **Vtable decoder skipped** (toolkit default off, GoW:A port default on): `GCM_LEGACY_SKIP=1` passes only 0x50,
   0x104, 0x180, 0x1A4 and 0x1D6C-0x1D74 to `rsx_process_method` while the engine draws and no vtable backend is
   registered; its first-N logs (`[RSX] CLEAR_SURFACE`, draw logs) stop. `RSX_TRACE` turns it off (M0.97).
@@ -380,6 +382,8 @@ Lessons that cost days; keep them.
 * **FIFO walker latency**: `GCM_PARK_SPIN_US=<us>` (port default 4000, 0 = off): when the walker stops on a
   self-JUMP park, the frame loop yield-polls that word instead of sleeping its 4 ms tick, so each EDGE segment
   patch is followed at once.
+  `GOW_IDLE_WAIT=<n>` (port, default 0) picks the frame loop's wait when no park applies: 0 = `Sleep(4)`, 1 = the
+  toolkit's FIFO kick wait (wakes on the next put), 2 = `Sleep(1)`. Untested beyond one run (STATUS, x243).
 * **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
   then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on

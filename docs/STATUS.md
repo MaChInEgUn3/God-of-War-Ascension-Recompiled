@@ -831,6 +831,59 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     and index copies; removing the second pass over vertex data (fetch into the ring slice directly) is not the
     big lever. The walker's remaining split: vertex fetch ~33%, FIFO walk and decoders ~30%, texture hashing
     ~10%, the rest spread thin.
+  - Next probes, predictions written before running (2026-10-31). The walker probe (`RSX_SLOW_PCT=25`, -13.6%)
+    explains a factor ~0.68 of frame time; the main thread's top samples are waits (SPU job lists, HighestPrio6
+    progress, flip), so they say where it waits, not what it waits on.
+    - `SPU_SLOW_PCT=25` (new, toolkit `spurs_policy.c`): each SPURS module run that found work is followed by a
+      wait of 25% of its own time. Prediction: a fall of 10% or more means lifted SPU code is a co-bound and the
+      main-thread waits are its symptom; under 3% means the remainder is GPU, present or sync, and the walker's
+      fetch is the only CPU lever left. A run can contain its own waits, so a large fall is an upper bound.
+    - Fetch repeats (stats only, `[eng-stats]   fetch repeats in a frame`): fetches whose inputs (layout, vertex
+      array offset and format registers, index array, base index, ranges) match an earlier fetch of the same
+      frame, and of those, the ones with the same output bytes. Predicted saving of a fetch cache is that share of
+      vertices times the fetch's ~28% of walker time (fetch plus remap), less the cost of proving the source
+      unchanged. Under ~20% of vertices: drop the idea without an A/B.
+    - Result x232 (2026-10-31, same corridor scene in all four runs, author idle): runWg 11.84 / 11.55, production
+      (runWn, probe off) 11.15, `SPU_SLOW_PCT=25` 8.99 (-19.4%). That is the probe's ceiling (25/125 = 20%), and
+      it is NOT evidence that SPU code is the bound: the wait spins (`SwitchToThread` returns at once when nothing
+      else is runnable) on up to six SPU threads of a 12-thread host the game already keeps at 80-100%, so it
+      takes cycles from the walker and main thread; and it scales with each run's wall time, waits included.
+      Walker (0.68) plus SPU (0.97) shares above 1 say the same. Next: measure job time against module-run time
+      (`SPURS_PM_PROF`), and only then a probe that sleeps and scales by job time.
+    - The comparisons of 2026-10-31 (x232-x239: production against runWg, the M0.96-M0.98 defaults off, a
+      bisect, `GCM_PARK_PAUSE`, `GOW_IDLE_WAIT`) are NOT conclusive. Correlating each run's 360-590 s window with
+      the host CPU log: every run from x232 to x237 had 1.4-2.2 cores taken by other `claude.exe` processes (other
+      sessions or the claude-mem worker's children) on a 6-core / 12-thread i7-8700K, and the only two runs with
+      little of it were the fastest: 14.00 (0.0 cores) and 13.06 (0.8). The others scattered at 9.9-12.3. The
+      apparent ~4-5% cost of `GCM_LEGACY_SKIP` (on 11.07 over 10 runs, off 11.54 over 6) matches the arms'
+      different contamination (~1.9 against ~1.65 cores) and is not established; no default was changed. The
+      quiet-host figure of production is ~13-14 game frames/s, in line with runWg's 13.25 of 10-30.
+    - Kept from those runs (a measurement, not a comparison): the SPURS profile (x233p1, `SPURS_PM_PROF=60`).
+      The SPU kernel threads are ~4.9 cores busy of the game's ~6.3. EDGE wids 15-17 run ~81% of a thread each
+      (~6800 jobs/s each, channel reads 2%, idle polls 0%), wid 8 and wid 3 ~70%. EDGE geometry is the likely
+      co-bound; a host profile of those threads comes next.
+    - Correction (x240-x243): most of the foreign load was the author's own agent process and the terminal that
+      draws it (0.4-2.9 cores while merely waiting), plus other jobs on the host (an ffmpeg batch of ~4.5 cores,
+      Disk Cleanup, the NVIDIA container). "Wait for a quiet host" does not work here: explorer alone takes ~0.3
+      cores, and the gate often gives up.
+    - Pinning the game to CPUs 0-9 (`0x3FF`, the agent and terminal on 10-11) COLLAPSES it: 2.44 and 8.95 game
+      frames/s in two runs of the same scene, the game using only ~2.5-4.7 cores (x242). The runtime's spinning
+      and yielding threads need all 12 logical CPUs; that also explains why 1-2 cores of foreign load move a run
+      from ~14 to ~11. Never restrict the game's affinity in a benchmark.
+    - With the game on all 12 CPUs and the agent and terminal on 10-11 at below-normal priority (x243), identical
+      production runs still gave 11.00 and 8.69. A single run's frames/s carries ~+-15% host noise on this
+      machine, so a 3-5% A/B is out of reach with a few runs; use the per-job medians (`pmprof_edge.py`,
+      `frame_wait.py`) or effects of 15% and more. `GOW_IDLE_WAIT=1` gave 11.59 in its one valid run: no
+      conclusion, default unchanged.
+    - `GCM_LEGACY_SKIP`: closed. No batch showed a consistent difference; the default stays on.
+    - Fetch repeats (x242s1, `ENG_PHASE_STATS=60`): per minute ~1.06M fetches and ~332M vertices, of which only
+      645 fetches (5160 vertices, 0.002%) repeat their inputs within a frame. A fetch cache is dropped without an
+      A/B.
+    - The EDGE host profile wanted above already exists (M0.95 era, `PS3_SAMPLE_WIDS=15,16,17`): lifted code 79%,
+      runtime ~20% in pieces of 1-4% each, and register promotion in the lifter as the remaining double-digit lever.
+    - Kept, default off: `GOW_IDLE_WAIT` (port: 0 = `Sleep(4)` after a walk that caught up with put, 1 = the
+      toolkit's kick wait, 2 = `Sleep(1)`) and the fetch-repeat stats. `SPU_SLOW_PCT` and `GCM_PARK_PAUSE` were
+      removed (void and neutral). Benchmarks run muted (`PS3_MUTE=1`).
 - **M0.97: the vtable decoder only sees its side-effect methods (2026-10-30).**
   - Host profile of the walker at 1 ms (x217, runWh, per-method clocks gone, exe code only): vertex fetch ~33%
     (`rsx_vertex_fetch_many` 19.7%, `rsx_vertex_remap_build` 8.5%), FIFO walk and decoders ~32%

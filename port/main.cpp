@@ -98,6 +98,7 @@ void     cellGcmTickFlip(void);
 int      cellGcm_take_flip_pending(void);
 void     cellGcm_rsx_process_fifo(void);      /* drain get -> put */
 int      cellGcm_park_spin(unsigned max_us);  /* -1 not parked, 1 released, 0 timeout */
+void     cellGcm_fifo_kick_wait(unsigned ms); /* idle wait a dry fence poll can cut short */
 unsigned cellGcm_flip_request_count(void);
 }
 
@@ -332,7 +333,16 @@ static DWORD WINAPI frame_clock(LPVOID)
          * at ~1 frame/s on 4 ms naps per hole). */
         { static int s_ps = -1;
           if (s_ps < 0) { const char* e = getenv("GCM_PARK_SPIN_US"); s_ps = e ? atoi(e) : 4000; }
-          if (s_ps <= 0 || cellGcm_park_spin((unsigned)s_ps) < 0) Sleep(4); }
+          /* GOW_IDLE_WAIT (diagnostic, default 0): what a walk that caught up
+           * with put does until the next one. 0 = Sleep(4); 1 = the toolkit's
+           * kick wait (4 ms, cut short when a guest fence poll finds the queue
+           * dry); 2 = Sleep(1). */
+          static int s_iw = -1;
+          if (s_iw < 0) { const char* e = getenv("GOW_IDLE_WAIT"); s_iw = e ? atoi(e) : 0; }
+          if (s_ps <= 0 || cellGcm_park_spin((unsigned)s_ps) < 0) {
+              if (s_iw == 1) cellGcm_fifo_kick_wait(4);
+              else Sleep(s_iw == 2 ? 1 : 4);
+          } }
         ULONGLONG now = GetTickCount64();
 
         int fired = 0;
