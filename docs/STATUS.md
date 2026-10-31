@@ -821,6 +821,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     already failed under `RSX_REMAP_RANGE=1`; the test had not been run with the port's knobs on.
     `test_vertex_fetch_plan` now checks the order (7 failures before, 0 after). Toolkit tests should be run with
     the port's defaults as well as the toolkit's.
+  - Frame dumps before and after the fix (x228 o2 vs x229, corridor at 360 s and 590 s) show no difference: the
+    bug was latent in this scene.
+  - Production baseline runWm (x229, all defaults, no stats): 11.47 game frames/s with the host at 87% CPU (another
+    process at ~1.2 cores). The quiet-host figure (13.25-13.50 on runWg) still needs a quiet-host rerun of runWm.
+  - Where the walker's time outside the exe goes: with the CRT (`VCRUNTIME140.dll`) sampled as the extra module
+    (x230) the walker's ntdll+module share is 26.3%, against 24.1% with the NVIDIA ICD sampled (x217). CRT copies
+    are therefore a few percent of the walker, consistent with `VK_DRAW_PROF`'s ~0.6 us per draw for the vertex
+    and index copies; removing the second pass over vertex data (fetch into the ring slice directly) is not the
+    big lever. The walker's remaining split: vertex fetch ~33%, FIFO walk and decoders ~30%, texture hashing
+    ~10%, the rest spread thin.
 - **M0.97: the vtable decoder only sees its side-effect methods (2026-10-30).**
   - Host profile of the walker at 1 ms (x217, runWh, per-method clocks gone, exe code only): vertex fetch ~33%
     (`rsx_vertex_fetch_many` 19.7%, `rsx_vertex_remap_build` 8.5%), FIFO walk and decoders ~32%
