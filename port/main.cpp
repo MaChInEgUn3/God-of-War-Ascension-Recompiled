@@ -253,10 +253,20 @@ static DWORD WINAPI heartbeat(LPVOID arg)
         PROCESS_MEMORY_COUNTERS_EX mc = {};
         mc.cb = sizeof mc;
         K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&mc, sizeof mc);
-        fprintf(stderr, "[heartbeat] t=%llus flips=%u game_frame=%u presents=%ld ws=%lluMB priv=%lluMB\n",
+        /* sleep1/tres: what a Sleep(1) really takes here (mean of 10, ms) and the
+         * system timer resolution (ms), to catch the timer falling back to 15.6 ms. */
+        LARGE_INTEGER qf, qa, qb; QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&qa);
+        for (int i = 0; i < 10; i++) Sleep(1);
+        QueryPerformanceCounter(&qb);
+        typedef LONG (WINAPI *qtr_fn)(PULONG, PULONG, PULONG);
+        static qtr_fn qtr = (qtr_fn)(void*)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryTimerResolution");
+        ULONG rmin = 0, rmax = 0, rcur = 0;
+        if (qtr) qtr(&rmin, &rmax, &rcur);
+        fprintf(stderr, "[heartbeat] t=%llus flips=%u game_frame=%u presents=%ld ws=%lluMB priv=%lluMB sleep1=%.2fms tres=%.2fms\n",
                 (unsigned long long)((GetTickCount64() - t0) / 1000), cellGcm_flip_request_count(), frame,
                 (long)g_frames_presented, (unsigned long long)(mc.WorkingSetSize >> 20),
-                (unsigned long long)(mc.PrivateUsage >> 20));
+                (unsigned long long)(mc.PrivateUsage >> 20),
+                (double)(qb.QuadPart - qa.QuadPart) * 100.0 / (double)qf.QuadPart, rcur / 10000.0);
         fflush(stderr);
     }
     return 0;

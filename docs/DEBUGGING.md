@@ -365,6 +365,8 @@ Lessons that cost days; keep them.
   `SPU_FP_CHECK_HOOK=0` (CMake `GOW_SPU_LS_PROBES`, default OFF). `SPU_LS_WATCH`, `SPU_SMC_WATCH` and
   `SPU_LS_LOWREAD` then see only accesses made by the runtime, and `SPU_FP_CHECK=1` checks nothing. Configure with
   `-DGOW_SPU_LS_PROBES=ON` to get both back. That costs ~10-15% per EDGE job (M0.61).
+* **Heartbeat timer check**: each `[heartbeat]` line (`GOW_HEARTBEAT=<s>`) ends with `sleep1=` (the mean of ten
+  `Sleep(1)` calls, ms) and `tres=` (the system timer resolution, ms), to catch the timer falling back to 15.6 ms.
 * **Host-side profile**: `PS3_SAMPLE=<ms>` samples every thread's RIP (reports every 10 s: guest functions,
   host modules, per-thread busy/ntdll split). `PS3_SAMPLE_HOST=1` buckets every sample by executable RVA and
   thread instead (lifted SPU job modules and overlay fragments are not in the guest map); resolve with

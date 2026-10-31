@@ -882,9 +882,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       A/B.
     - The EDGE host profile wanted above already exists (M0.95 era, `PS3_SAMPLE_WIDS=15,16,17`): lifted code 79%,
       runtime ~20% in pieces of 1-4% each, and register promotion in the lifter as the remaining double-digit lever.
-    - What binds now (x242s1, ratios from `ENG_PHASE_STATS=60`, which host load does not distort): the walker is
-      busy ~75% of wall time (44.8 s of 60 s), its draw ends take ~37 s of that, and vertex fetch ~15 s of those.
-      The walker is the main bound. Its largest piece is the fetch.
+    - What binds now (x246s2, game on all 12 CPUs, last 60 s block of `ENG_PHASE_STATS=60` in the corridor): the
+      walker is busy 43.5 s of 60 s, its draw ends take 40.2 s, vertex fetch 17.0 s, backend 9.3 s, textures
+      7.7 s. The walker is the main bound. Its largest piece is the fetch.
     - GPU reads of guest memory (`VK_EXT_external_memory_host`): NO-GO. The 3080 has the extension (import
       alignment 4 KB), and guest main memory is one committed, page-aligned region, so the mechanics would work.
       The gate was the data's lifetime. Toolkit `RSX_VTX_LIFE=<n>` (new, default off) hashes, for every n-th fetched
@@ -902,6 +902,21 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       fix. Deferred (small, off the frame's critical path):
       SSE4.1 quadword shifts for job modules, per-NID and per-thread lookup caches on the PPU, and the
       local-offset flag written only on change.
+    - Slow stretches (x246-x252, 2026-10-31 afternoon). Runs drop for minutes to 2-7 game frames/s and recover;
+      this, not small host noise, is most of the run-to-run spread. What is known:
+      - From ~120 s to 150-360 s every run is slow: the level loads and Kratos arrives. Where that phase ends
+        varies by run, and a fixed 360-590 s window sometimes lands in it. New scoring (scratchpad `escape.py`):
+        escape = after 150 s, the first three consecutive 30-s heartbeats at 8 game frames/s or more; window =
+        escape+60 .. escape+240 s; no escape = void. Re-scored x241-x252 production: 9.0-12.5, typically ~10.5-11.5.
+      - Some runs stay at 4-7 in the corridor scene itself (x251p1-p3 all run, x249t2 after 240 s), with Kratos at
+        the same spot as in fast runs (frame dumps), so it is not a scene of its own. In most of them the Windows
+        Terminal drawing the author's agent session took 0.7-2.7 cores and the host was at 90-100%; x249t2 had no
+        terminal load. Cause open.
+      - Ruled out with data: the timer (heartbeat `sleep1`/`tres`, new in the port: `tres` stayed 1.00 ms and
+        `Sleep(1)` 1.1-4 ms in slow and fast windows alike); the window present (it never runs with the window
+        hidden); interrupts, DPCs and hard page faults (no rise in slow windows). Game priority AboveNormal
+        against Normal (x252) was not tested under load: no terminal load came up in that batch.
+      - The `0x3FF` collapse (x242) reads as the same thing: the game short of CPUs.
     - Kept, default off: `GOW_IDLE_WAIT` (port: 0 = `Sleep(4)` after a walk that caught up with put, 1 = the
       toolkit's kick wait, 2 = `Sleep(1)`) and the fetch-repeat stats. `SPU_SLOW_PCT` and `GCM_PARK_PAUSE` were
       removed (void and neutral). Benchmarks run muted (`PS3_MUTE=1`).
