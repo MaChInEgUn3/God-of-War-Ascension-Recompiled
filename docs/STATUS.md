@@ -917,6 +917,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         hidden); interrupts, DPCs and hard page faults (no rise in slow windows). Game priority AboveNormal
         against Normal (x252) was not tested under load: no terminal load came up in that batch.
       - The `0x3FF` collapse (x242) reads as the same thing: the game short of CPUs.
+      - In a slow window (x247d1, `GOW_MAIN_PROF`) the main thread spends 28-33% of its samples waiting at
+        `0x368C64` for the frame's task batch, against ~10% in a fast one (about 60 against 9 ms per frame),
+        while the SPURS kernel threads mostly sit in ntdll. The kernel threads nap with `Sleep(1)` between passes;
+        on a full host a thread waking at normal priority can wait a quantum for a CPU, once per link of the
+        frame's job chain.
+      - Toolkit `SPURS_KERN_PRIO=<n>` (new, default unset): `SetThreadPriority` level for the kernel threads.
+        Under a fixed synthetic load (scratchpad `burn.py`, three busy processes at normal priority on all CPUs;
+        x253, order b0 b1 b1 b0, game frames/s over 420-600 s from the heartbeats): default 6.0 / 7.5,
+        `SPURS_KERN_PRIO=1` 8.3 / 8.0. The load alone takes production from ~11 to ~7.5. One default run fell to
+        2.9 at the end, and neither priority run did. Suggestive, not established: two runs per arm.
     - Kept, default off: `GOW_IDLE_WAIT` (port: 0 = `Sleep(4)` after a walk that caught up with put, 1 = the
       toolkit's kick wait, 2 = `Sleep(1)`) and the fetch-repeat stats. `SPU_SLOW_PCT` and `GCM_PARK_PAUSE` were
       removed (void and neutral). Benchmarks run muted (`PS3_MUTE=1`).

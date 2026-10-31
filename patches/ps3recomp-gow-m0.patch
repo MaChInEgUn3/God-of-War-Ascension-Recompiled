@@ -251,7 +251,7 @@ index 7fa8cab9..252b32bd 100644
                    hs->connected = 1; }
        /* PAD_SWEEP=<seconds per step>: walk the sticks through a fixed set of
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516f..44521606 100644
+index 19a8516f..732f4e67 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -13,6 +13,7 @@
@@ -1038,7 +1038,7 @@ index 19a8516f..44521606 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,184 +1935,565 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,184 +1935,572 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1294,6 +1294,13 @@ index 19a8516f..44521606 100644
 +{
 +#ifdef _WIN32
 +    { ULONG g = 256 * 1024; SetThreadStackGuarantee(&g); }  /* let SO reach the reporter */
++    /* SPURS_KERN_PRIO=<n> (default unset): SetThreadPriority level for the
++     * kernel threads (1 = above normal, 2 = highest). They nap between passes;
++     * on a host whose CPUs are all busy (the title's spinning threads, other
++     * programs) a thread waking from a nap at normal priority can wait a whole
++     * quantum for a CPU, and the frame's dependent jobs pay that each time. */
++    { const char* e = getenv("SPURS_KERN_PRIO");
++      if (e && *e) SetThreadPriority(GetCurrentThread(), atoi(e)); }
 +#endif
 +    struct SpursInst* si = ((struct spurs_kern_arg*)p)->si;
 +    const int my_spu = ((struct spurs_kern_arg*)p)->spu;
@@ -1751,7 +1758,7 @@ index 19a8516f..44521606 100644
      {   static int _n = 0;
          if (_n < 32)
              printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1860,30 +2501,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1860,30 +2508,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
              printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
          _n++;
      }
@@ -1791,7 +1798,7 @@ index 19a8516f..44521606 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2528,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2535,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -1852,7 +1859,7 @@ index 19a8516f..44521606 100644
      return CELL_OK;
  }
  
-@@ -3095,6 +3765,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3772,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -1895,7 +1902,7 @@ index 19a8516f..44521606 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3808,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3815,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1904,7 +1911,7 @@ index 19a8516f..44521606 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +3829,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +3836,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -1935,7 +1942,7 @@ index 19a8516f..44521606 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4133,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4140,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
