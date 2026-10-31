@@ -867,9 +867,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       Disk Cleanup, the NVIDIA container). "Wait for a quiet host" does not work here: explorer alone takes ~0.3
       cores, and the gate often gives up.
     - Pinning the game to CPUs 0-9 (`0x3FF`, the agent and terminal on 10-11) COLLAPSES it: 2.44 and 8.95 game
-      frames/s in two runs of the same scene, the game using only ~2.5-4.7 cores (x242). The runtime's spinning
-      and yielding threads need all 12 logical CPUs; that also explains why 1-2 cores of foreign load move a run
-      from ~14 to ~11. Never restrict the game's affinity in a benchmark.
+      frames/s in two runs of the same scene, the game using only ~2.5-4.7 cores (x242) with 10 CPUs free to it.
+      The mechanism is not established: the game was mostly idle, not CPU-starved, so some thread sleeps or waits
+      where it should be woken (a wait or scheduling pathology, which may cost a little at 12 CPUs too). Never
+      restrict the game's affinity in a benchmark.
     - With the game on all 12 CPUs and the agent and terminal on 10-11 at below-normal priority (x243), identical
       production runs still gave 11.00 and 8.69. A single run's frames/s carries ~+-15% host noise on this
       machine, so a 3-5% A/B is out of reach with a few runs; use the per-job medians (`pmprof_edge.py`,
