@@ -814,6 +814,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     tex -1.2 us, backend -0.9 us, +0.2 us for the test. Far below the ~30% first estimated: vertex fetch, the
     draw record and the first-use texture hashing stay per draw. A first version that copied and compared 16 KB
     of registers and constants per draw (x225/x226) gained nothing.
+  - Bug fixed (toolkit 062d0e5a): `RSX_REMAP_RANGE` (port default since M0.89) took draws whose id range EQUALS
+    their reference count. The engine reads "unique == count" as "nothing collapsed" and draws the references in
+    order without an index buffer, so a draw naming each id once but out of order (3, 1, 2) came out as 1, 2, 3:
+    another winding or other triangles. The range must now be smaller than the count. The engine unit test
+    already failed under `RSX_REMAP_RANGE=1`; the test had not been run with the port's knobs on.
+    `test_vertex_fetch_plan` now checks the order (7 failures before, 0 after). Toolkit tests should be run with
+    the port's defaults as well as the toolkit's.
 - **M0.97: the vtable decoder only sees its side-effect methods (2026-10-30).**
   - Host profile of the walker at 1 ms (x217, runWh, per-method clocks gone, exe code only): vertex fetch ~33%
     (`rsx_vertex_fetch_many` 19.7%, `rsx_vertex_remap_build` 8.5%), FIFO walk and decoders ~32%

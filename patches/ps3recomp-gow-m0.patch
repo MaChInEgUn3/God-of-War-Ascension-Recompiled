@@ -6209,7 +6209,7 @@ index 131cc0d8..71c0b6cf 100644
       * has to be walked texel by texel; so does anything the host cannot take
       * as stored. */
 diff --git a/libs/video/rsx_vertex_compact.c b/libs/video/rsx_vertex_compact.c
-index 7fa5f314..cf05a38b 100644
+index 7fa5f314..dffddb1b 100644
 --- a/libs/video/rsx_vertex_compact.c
 +++ b/libs/video/rsx_vertex_compact.c
 @@ -262,53 +262,137 @@ void rsx_vertex_fetch_plan_prepare(
@@ -6383,7 +6383,7 @@ index 7fa5f314..cf05a38b 100644
  
  static u64 rsx_vertex_remap_hash(u64 value)
  {
-@@ -320,6 +404,116 @@ static u64 rsx_vertex_remap_hash(u64 value)
+@@ -320,6 +404,122 @@ static u64 rsx_vertex_remap_hash(u64 value)
      return value;
  }
  
@@ -6453,8 +6453,14 @@ index 7fa5f314..cf05a38b 100644
 +     * vertices in first-use order: unique k is id lo + k and each
 +     * occurrence maps to id - lo. No lookup per reference; the vertices of
 +     * the range no reference names are fetched too (at most the range,
-+     * which is at most about half the references). */
-+    if (rsx_vertex_remap_range_on() && range <= count && range * 2u <= (u64)count + 128u) {
++     * which is at most about half the references).
++     *
++     * The range must be SMALLER than the reference count: callers take
++     * "unique == count" to mean nothing was collapsed and draw the references
++     * in order without an index buffer, so a range equal to the count with
++     * its ids out of order (3, 1, 2) would be drawn as 1, 2, 3 -- another
++     * winding, or other triangles. Such a draw takes the first-use path. */
++    if (rsx_vertex_remap_range_on() && range < count && range * 2u <= (u64)count + 128u) {
 +        u32* const occ = remap->occurrence_to_unique;
 +        for (u32 occurrence = 0; occurrence < count; occurrence++)
 +            occ[occurrence] = refs[occurrence].vertex_id - lo;
@@ -6500,7 +6506,7 @@ index 7fa5f314..cf05a38b 100644
  int rsx_vertex_remap_build(
      rsx_vertex_remap* remap, rsx_vertex_ref* refs, u32 count,
      u32* unique_count)
-@@ -339,6 +533,10 @@ int rsx_vertex_remap_build(
+@@ -339,6 +539,10 @@ int rsx_vertex_remap_build(
          remap->occurrence_capacity = count;
      }
  
@@ -6511,7 +6517,7 @@ index 7fa5f314..cf05a38b 100644
      if (count > UINT_MAX / 2u)
          return 0;
      u32 slot_capacity = 16u;
-@@ -367,8 +565,13 @@ int rsx_vertex_remap_build(
+@@ -367,8 +571,13 @@ int rsx_vertex_remap_build(
          }
      }
  
@@ -6526,7 +6532,7 @@ index 7fa5f314..cf05a38b 100644
      for (u32 occurrence = 0; occurrence < count; occurrence++) {
          const rsx_vertex_ref ref = refs[occurrence];
          const u64 key = ((u64)ref.base_index << 32) | ref.vertex_id;
-@@ -408,6 +611,7 @@ void rsx_vertex_remap_destroy(rsx_vertex_remap* remap)
+@@ -408,6 +617,7 @@ void rsx_vertex_remap_destroy(rsx_vertex_remap* remap)
          return;
      free(remap->occurrence_to_unique);
      free(remap->slots);
@@ -9444,7 +9450,7 @@ index b2f93a7b..4e0af415 100644
      test_decode_g8b8_swizzled();
      test_decode_compressed_is_verbatim();
 diff --git a/libs/video/tests/test_vertex_fetch_plan.c b/libs/video/tests/test_vertex_fetch_plan.c
-index 79f3cc66..0678f74e 100644
+index 79f3cc66..8fc90687 100644
 --- a/libs/video/tests/test_vertex_fetch_plan.c
 +++ b/libs/video/tests/test_vertex_fetch_plan.c
 @@ -6,7 +6,16 @@
@@ -9481,7 +9487,7 @@ index 79f3cc66..0678f74e 100644
  
  static int fails;
  #define CHECK(c, ...) do { if (!(c)) { fails++; if (fails <= 20) { \
-@@ -128,12 +146,309 @@ static void random_plan(rsx_vertex_fetch_plan* plan, int use_inline,
+@@ -128,12 +146,315 @@ static void random_plan(rsx_vertex_fetch_plan* plan, int use_inline,
      }
  }
  
@@ -9556,6 +9562,12 @@ index 79f3cc66..0678f74e 100644
 +                       fast_refs[k].base_index == src[i].base_index;
 +        }
 +        CHECK(range_ok, "remap case %d kind %u: range mode names another vertex", c, kind);
++        /* Callers read "unique == count" as "nothing collapsed" and draw the
++         * references in order: then the map must be the identity. */
++        int order_ok = 1;
++        if (ok_range && u_range == count)
++            for (u32 i = 0; i < count; i++) order_ok &= rsx_vertex_remap_index(&fast_remap, i) == i;
++        CHECK(order_ok, "remap case %d kind %u: nothing collapsed but the order changed", c, kind);
 +        if (ok_range && u_range != n_uniq) remap_range_taken++;
 +        remap_cases++;
 +        if (kind == 0 || kind == 1) remap_dense_like++;
@@ -9792,7 +9804,7 @@ index 79f3cc66..0678f74e 100644
  
      for (int n = 0; n < PLANS; n++) {
          for (int l = 0; l < 2; l++)
-@@ -152,6 +467,21 @@ int main(void)
+@@ -152,6 +473,21 @@ int main(void)
          ref = plan;
          rsx_vertex_fetch_plan_prepare(&plan, refs, count);
          ref_prepare(&ref, refs, count);
@@ -9814,7 +9826,7 @@ index 79f3cc66..0678f74e 100644
          for (u32 at = 0; at < RSX_DSP_NUM_VERTEX_ATTR; at++) {
              CHECK(plan.attr[at].stable_base == ref.attr[at].stable_base &&
                    plan.attr[at].stable_first == ref.attr[at].stable_first &&
-@@ -167,9 +497,18 @@ int main(void)
+@@ -167,9 +503,18 @@ int main(void)
          }
      }
  
