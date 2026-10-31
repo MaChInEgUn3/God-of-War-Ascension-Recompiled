@@ -181,6 +181,10 @@ Lessons that cost days; keep them.
   under `=2` a `repeat misses` line lists the registers that broke repeats and the texture paths (M0.98).
   The `fetch repeats in a frame` line counts vertex fetches whose inputs (layout, array and index registers, ranges)
   match an earlier fetch of the same frame, and of those the ones with the same output (GoW:A: 0.002%).
+* **Vertex source lifetime** (toolkit, default off): `RSX_VTX_LIFE=<n>` hashes, for every n-th fetched draw, each
+  attribute's referenced source range and each index run, re-hashes them when the frame ends and when the next one
+  ends, and prints `[vtx-life]` every 60 s: how many ranges changed by each point. It answers whether a GPU could
+  read vertex data straight from guest memory. GoW:A: no, most of the data is rewritten within the frame (STATUS, x244).
 * **Vtable decoder skipped** (toolkit default off, GoW:A port default on): `GCM_LEGACY_SKIP=1` passes only 0x50,
   0x104, 0x180, 0x1A4 and 0x1D6C-0x1D74 to `rsx_process_method` while the engine draws and no vtable backend is
   registered; its first-N logs (`[RSX] CLEAR_SURFACE`, draw logs) stop. `RSX_TRACE` turns it off (M0.97).

@@ -882,6 +882,26 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       A/B.
     - The EDGE host profile wanted above already exists (M0.95 era, `PS3_SAMPLE_WIDS=15,16,17`): lifted code 79%,
       runtime ~20% in pieces of 1-4% each, and register promotion in the lifter as the remaining double-digit lever.
+    - What binds now (x242s1, ratios from `ENG_PHASE_STATS=60`, which host load does not distort): the walker is
+      busy ~75% of wall time (44.8 s of 60 s), its draw ends take ~37 s of that, and vertex fetch ~15 s of those.
+      The walker is the main bound. Its largest piece is the fetch.
+    - GPU reads of guest memory (`VK_EXT_external_memory_host`): NO-GO. The 3080 has the extension (import
+      alignment 4 KB), and guest main memory is one committed, page-aligned region, so the mechanics would work.
+      The gate was the data's lifetime. Toolkit `RSX_VTX_LIFE=<n>` (new, default off) hashes, for every n-th fetched
+      draw, each attribute's referenced source range and each index run. It hashes them again when that frame ends
+      and when the next one ends. x244 (n = 4, in game, 360-480 s): of ~714k vertex ranges a minute, 473k (82% of
+      the bytes) changed before their own frame ended, and 42k more before the next frame ended. Of ~929k index
+      runs, 599k changed by the frame end and 152k more by the next. The game reuses its vertex and index rings
+      within the frame, right after the RSX has passed them. A GPU that reads guest memory a frame later would see
+      other data, so the copy the walker makes at the draw is required, and the GPU-side gather is not a lever.
+    - Upstream PRs #629-#635 (another GoW:A port on the same toolkit, MIT) reviewed against our tree. Nothing there
+      speeds up our build: we already have the SPU dispatch, overlay relocation, float and shuffle work in
+      equivalent or better form, and #630 removes a hand-off our design does not have. Taken: #629's fix for
+      `spu_taskset_parked_add`, where two tasks parking at once could take the same slot (claim with a
+      compare-and-swap, then fill; toolkit c7f81d26, 600 s smoke run x245 without a hang). That is a correctness
+      fix. Deferred (small, off the frame's critical path):
+      SSE4.1 quadword shifts for job modules, per-NID and per-thread lookup caches on the PPU, and the
+      local-offset flag written only on change.
     - Kept, default off: `GOW_IDLE_WAIT` (port: 0 = `Sleep(4)` after a walk that caught up with put, 1 = the
       toolkit's kick wait, 2 = `Sleep(1)`) and the fetch-repeat stats. `SPU_SLOW_PCT` and `GCM_PARK_PAUSE` were
       removed (void and neutral). Benchmarks run muted (`PS3_MUTE=1`).
