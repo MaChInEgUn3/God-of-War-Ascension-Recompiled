@@ -174,6 +174,11 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+* **Repeat draws** (toolkit default off, GoW:A port default on): `RSX_DRAW_REPEAT=1` lets a draw that repeats the
+  previous draw's state reuse its resolved targets, textures and constant buffers; `=2` resolves everything as
+  before and prints `[draw-repeat-check] repeat differs: ...`. `VK_CB_REUSE=1` reuses the previous draw's uniform
+  slices (`VK_DRAW_PROF` counts them). With `ENG_PHASE_STATS` the pipe line counts mergeable and repeat draws, and
+  under `=2` a `repeat misses` line lists the registers that broke repeats and the texture paths (M0.98).
 * **Vtable decoder skipped** (toolkit default off, GoW:A port default on): `GCM_LEGACY_SKIP=1` passes only 0x50,
   0x104, 0x180, 0x1A4 and 0x1D6C-0x1D74 to `rsx_process_method` while the engine draws and no vtable backend is
   registered; its first-N logs (`[RSX] CLEAR_SURFACE`, draw logs) stop. `RSX_TRACE` turns it off (M0.97).

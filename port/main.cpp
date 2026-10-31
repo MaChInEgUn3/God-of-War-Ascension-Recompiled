@@ -757,6 +757,11 @@ int main(int argc, char** argv)
      * the engine draws, so it only sees the reference, notify and semaphore
      * methods. Walker CPU per draw -3-4% (A/B on a busy host). */
     if (!getenv("GCM_LEGACY_SKIP")) _putenv_s("GCM_LEGACY_SKIP", "1");
+    /* RSX_DRAW_REPEAT=1 + VK_CB_REUSE=1 (M0.98): ~75% of draws repeat the previous
+     * draw's whole state; they reuse its resolved targets, textures and constant
+     * buffers (exact: =2 check, 0 differ). Walker CPU per draw -2-3%. */
+    if (!getenv("RSX_DRAW_REPEAT")) _putenv_s("RSX_DRAW_REPEAT", "1");
+    if (!getenv("VK_CB_REUSE")) _putenv_s("VK_CB_REUSE", "1");
     /* RSX_Z2ARGB=1: the 1280x720 depth target the deferred passes sample as
      * A8R8G8B8 (twice per frame) is built on the GPU instead of being stored to
      * guest memory, converted and uploaded again; nothing on the CPU or SPU reads

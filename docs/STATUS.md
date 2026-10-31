@@ -799,6 +799,21 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.98: draws that repeat the previous draw's state reuse it (2026-10-31).**
+  - Counters (x220/x221, runWl): ~77% of draws have the previous draw's targets, pipeline, textures, samplers,
+    viewport, scissor, stencil ref, depth bounds, fragment constants and vertex constants, all triangle lists, with
+    no clear, flip, surface read/write or blit-shadow drop in between: only vertex and index data differ.
+  - Toolkit 447e7724 (port defaults on): `RSX_DRAW_REPEAT` reuses the render state, targets, surface, viewport and
+    depth slot; when `RSX_PIPE_CACHE` also hit and no texture unit samples a current target or the bound zeta,
+    the texture handles, samplers and constant buffers too, without binding the constants again. The test is a
+    dispatcher state generation with a byte compare as fallback; the per-draw words (NOP markers, vertex array
+    offsets, draw and index methods, the per-draw semaphore release) are left out. `VK_CB_REUSE` then points the
+    draw at the previous draw's uniform slices. Check mode through the corridor (x222/x224/x227): ~75% of draws
+    reuse everything, millions of checks, 0 differ.
+  - A/B (x228, busy host at 88-95% CPU, walker CPU per draw): 24.48 / 25.53 on against 24.87 / 26.33 off (-2-3%):
+    tex -1.2 us, backend -0.9 us, +0.2 us for the test. Far below the ~30% first estimated: vertex fetch, the
+    draw record and the first-use texture hashing stay per draw. A first version that copied and compared 16 KB
+    of registers and constants per draw (x225/x226) gained nothing.
 - **M0.97: the vtable decoder only sees its side-effect methods (2026-10-30).**
   - Host profile of the walker at 1 ms (x217, runWh, per-method clocks gone, exe code only): vertex fetch ~33%
     (`rsx_vertex_fetch_many` 19.7%, `rsx_vertex_remap_build` 8.5%), FIFO walk and decoders ~32%
