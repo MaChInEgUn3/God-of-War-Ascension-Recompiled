@@ -984,12 +984,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         0.74-0.76; the other five 0.35-0.73; PPU main 0.55-0.64. Against the slow run (x260d), the hot kernel
         thread and the walker barely change; the PPU main thread and the other five kernel threads do half the
         work or less. The hot thread costs the same ~0.75 cores at 3 and at 10 frames/s, and has 3-5 times the
-        kernel time of its peers, so most of its time does not scale with frames (polling or pass overhead).
-        What it runs is not identified yet. Other load seen by the new `perf=` field: the WMI provider host at
-        ~0.4 cores, with ~2-core bursts roughly every minute; explorer bursts of 1-3.4 cores together with the
-        NVIDIA display container; the security agent `avp` at 0.1-0.4; the author's agent session (Windows
-        Terminal, claude) at 0.4-2. The WMI cost is at least partly the monitoring itself (`cpuwatch.ps1` reads
-        the per-process counters every 30 s).
+        kernel time of its peers: its work does not scale with frames. It is the SPU 5 thread
+        (`SPURS_KERN_SPUS=0,1,5`), which runs wid 8, `Wws_Job/BrBDblBufWrkld`, the game's real-time audio DSP
+        (M0.60). `SPURS_PM_PROF` in x233p1 and x247d1: wid 8 runs 2500-3500 jobs/s and 67-77% of a thread at
+        every frame rate (263-511 jobs per game frame), while wid 3 runs exactly 50 jobs per game frame. The audio
+        is paced in real time; `PS3_MUTE=1` only silences the device. Not on the frame's path; its ~0.75 cores
+        only matter as one more busy CPU.
+      - Other load seen by the new `perf=` field: the WMI provider host at ~0.4 cores, with ~2-core bursts roughly
+        every minute; explorer bursts of 1-3.4 cores together with the NVIDIA display container (no explorer
+        window was open, and the bursts do not line up with the frame dumps); the security agent `avp` at 0.1-0.4;
+        the author's agent session (Windows Terminal, claude) at 0.4-2.
+      - The monitor itself is not the hidden load. The WMI provider host sat at 0.66 cores over 30 s with no
+        `cpuwatch.ps1` running and at 0.53-0.68 with it. The per-process counter query (`sys=`) arrived in
+        `cpuwatch.ps1` at x250u1; the slow/fast split of the invisible load is the same before (3.4 / 2.2 cores,
+        11 runs) and after (3.5 / 1.6, 17 runs).
     - Kept, default off: `GOW_IDLE_WAIT` (port: 0 = `Sleep(4)` after a walk that caught up with put, 1 = the
       toolkit's kick wait, 2 = `Sleep(1)`) and the fetch-repeat stats. `SPU_SLOW_PCT` and `GCM_PARK_PAUSE` were
       removed (void and neutral). Benchmarks run muted (`PS3_MUTE=1`).
