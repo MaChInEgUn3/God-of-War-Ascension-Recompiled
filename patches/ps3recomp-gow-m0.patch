@@ -251,18 +251,21 @@ index 7fa8cab9..252b32bd 100644
                    hs->connected = 1; }
        /* PAD_SWEEP=<seconds per step>: walk the sticks through a fixed set of
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516f..7bdc360d 100644
+index 19a8516f..cb653fad 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
-@@ -13,6 +13,7 @@
+@@ -13,8 +13,10 @@
  #include "../../runtime/platform/win32_compat.h"
  #include "../../runtime/ps3_log.h"
  #include "spu_workload.h"   /* SPU image -> lifted-entry dispatch (runtime/spu) */
 +#include "ps3emu/ps3_ftrace.h"
  #include "spurs_taskset.h"  /* REAL BE CellSpursTaskset layout builders (fork Option-B) */
  #include "../../runtime/ppu/ppu_memory.h"   /* vm_base (guest mem) */
++#include "../../runtime/ppu/ppu_context.h"  /* g_active_ctx -> guest lr/tid for [rcstore] */
  #include <stdio.h>
-@@ -69,7 +70,10 @@ typedef struct {
+ #include <stdlib.h>   /* getenv -- an implicit decl returns int, truncating the pointer */
+ #include <string.h>
+@@ -69,7 +71,10 @@ typedef struct {
  } SpursTask;
  
  /* Global workload table (per-SPURS instance in a real system, simplified) */
@@ -274,7 +277,7 @@ index 19a8516f..7bdc360d 100644
  static SpursTask     s_tasks[CELL_SPURS_MAX_TASK];
  static u32           s_next_task_id = 0;
  
-@@ -432,89 +436,86 @@ enum {
+@@ -432,89 +437,91 @@ enum {
      SPURS_INST_SIZE    = 0x1000,
  };
  
@@ -377,6 +380,11 @@ index 19a8516f..7bdc360d 100644
 -static void spurs_api_unlock(struct SpursInst* si)
 +static DWORD WINAPI spurs_kernel_thread(LPVOID p);
 +static volatile u8 s_hl_ran[32];   /* SPURS_WWS_HDR_LOG: module ran since the last look (1 idle, 2 work) */
++/* SPURS_RC_LAT=1 (diagnostic): QPC of the oldest cellSpursReadyCountStore(wid, >0)
++ * no kernel pass has seen yet; a pass that finds the wid kicked takes it and
++ * adds the delay to a per-wid histogram, printed every 60 s as [rc-lat]. */
++static volatile LONG64 s_rc_store_q[SPURS_MAXW];
++static int s_rc_lat = -1;
 +static volatile LONG s_wid_busy[SPURS_MAXW];   /* a kernel thread is running this wid's module */
 +static void spurs_wkl_pm_forget(u32 wid);      /* drop a wid's resolved policy module */
 +static void spurs_retire_workloads(u32 ea);    /* drop one instance's workload registrations */
@@ -422,7 +430,7 @@ index 19a8516f..7bdc360d 100644
      si->nspus = (nspus > 0 && nspus <= CELL_SPURS_MAX_SPU) ? nspus : 1;
      memset(si->prefix, 0, sizeof(si->prefix));
      if (prefix) memcpy(si->prefix, prefix, 15);
-@@ -525,13 +526,44 @@ static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
+@@ -525,13 +532,44 @@ static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
      memset(vm_base + spurs_ea, 0, SPURS_INST_SIZE);
      *(vm_base + spurs_ea + SPURS_NSPUS) = (u8)si->nspus;
      vm_write64(spurs_ea + SPURS_WKL_FLAG, 0xFFFFFFFFFFFFFFFFull); /* no receiver */
@@ -474,7 +482,7 @@ index 19a8516f..7bdc360d 100644
      printf("[cellSpurs] Initialize \"%s\" ea=0x%08X nSpus=%u (real BE instance + kernel poll)\n",
             si->prefix, spurs_ea, si->nspus);
      return CELL_OK;
-@@ -563,18 +595,37 @@ s32 cellSpursFinalize(CellSpurs* spurs)
+@@ -563,18 +601,37 @@ s32 cellSpursFinalize(CellSpurs* spurs)
      if (!spurs)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
  
@@ -522,7 +530,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_OK;
  }
  
-@@ -604,7 +655,8 @@ s32 cellSpursAttributeInitialize(CellSpursAttribute* attr, s32 nSpus,
+@@ -604,7 +661,8 @@ s32 cellSpursAttributeInitialize(CellSpursAttribute* attr, s32 nSpus,
   * internal export (NID 0x95180230), whose arguments are (attr, revision,
   * sdkVersion, nSpus, spuPriority, ppuPriority, exitIfNoWork). Reading them with
   * the public five-argument prototype took the revision (2) as nSpus, the SDK
@@ -532,7 +540,7 @@ index 19a8516f..7bdc360d 100644
  s32 _cellSpursAttributeInitialize(CellSpursAttribute* attr, u32 revision,
                                    u32 sdkVersion, s32 nSpus, s32 spuPriority,
                                    s32 ppuPriority, u8 exitIfNoWork)
-@@ -667,17 +719,14 @@ s32 cellSpursSetMaxContention(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -667,17 +725,14 @@ s32 cellSpursSetMaxContention(CellSpurs* spurs, CellSpursWorkloadId wid,
                                u32 maxContention)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -556,7 +564,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_OK;
  }
  
-@@ -686,18 +735,14 @@ s32 cellSpursSetPriorities(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -686,18 +741,14 @@ s32 cellSpursSetPriorities(CellSpurs* spurs, CellSpursWorkloadId wid,
  {
      if (!spurs || !priorities) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
      const u8* priorities_h = GUEST_PTR(priorities, const u8*);
@@ -580,7 +588,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_OK;
  }
  
-@@ -720,11 +765,13 @@ static u32 s_spurs_event_queue[MAX_SPURS_QUEUES];
+@@ -720,11 +771,13 @@ static u32 s_spurs_event_queue[MAX_SPURS_QUEUES];
   * tears itself down. Cancel only the queues the instance being finalised owns. */
  static u32 s_spurs_event_queue_owner[MAX_SPURS_QUEUES];
  static int s_spurs_event_queue_n = 0;
@@ -595,7 +603,7 @@ index 19a8516f..7bdc360d 100644
  static void spurs_cancel_attached_queues(u32 spurs_ea)
  {
      AcquireSRWLockExclusive(&s_spurs_queue_lock);
-@@ -872,9 +919,23 @@ static s32 spurs_create_taskset(CellSpurs* spurs, CellSpursTaskset* taskset,
+@@ -872,9 +925,23 @@ static s32 spurs_create_taskset(CellSpurs* spurs, CellSpursTaskset* taskset,
      /* Write the REAL big-endian CellSpursTaskset layout (fork Option-B) so the lifted
       * SPU leaf + spurs_pm_build_context read valid data (the native writes above are
       * little-endian = garbage to the SPU). Overwrites 0x00-0x80 with BE fields. */
@@ -621,7 +629,7 @@ index 19a8516f..7bdc360d 100644
  
      g_ydkj_real_spurs_ea = spurs_ea;   /* capture for the taskset-policy handoff (LS[0x1C0]) */
      printf("[cellSpurs] CreateTaskset() ea=0x%08X spurs=0x%08X (real BE layout)\n", taskset_ea, spurs_ea);
-@@ -902,6 +963,145 @@ s32 cellSpursCreateTasksetWithAttribute(CellSpurs* spurs,
+@@ -902,6 +969,145 @@ s32 cellSpursCreateTasksetWithAttribute(CellSpurs* spurs,
      return spurs_create_taskset(spurs, taskset, 0, NULL, 0, size);
  }
  
@@ -767,7 +775,7 @@ index 19a8516f..7bdc360d 100644
  s32 cellSpursDestroyTaskset(CellSpursTaskset* taskset)
  {
      taskset = GUEST_PTR(taskset, CellSpursTaskset*);
-@@ -965,6 +1165,11 @@ s32 cellSpursTasksetAttributeSetName(CellSpursTasksetAttribute* attr,
+@@ -965,6 +1171,11 @@ s32 cellSpursTasksetAttributeSetName(CellSpursTasksetAttribute* attr,
   * from an EA computed out of r3 = that argument (spu_0003 task main @0x17e70:
   * `wrch $ch18, f(r3.word3)`), so a zero argument makes it GET from EA 0 and
   * stall. lsPattern/argument arrive as guest EAs (generic adapter forwards r3..r10). */
@@ -779,7 +787,7 @@ index 19a8516f..7bdc360d 100644
  s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
                          void* elf, void* context, u32 sizeContext,
                          u32 lsPattern_ea, u32 argument_ea)
-@@ -1039,9 +1244,21 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
+@@ -1039,9 +1250,21 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
  
              /* Register the task in the REAL BE taskset: writes task_info[slot]
               * (args/elf/context/ls_pattern) + sets enabled+ready bits so the PM's
@@ -804,7 +812,7 @@ index 19a8516f..7bdc360d 100644
              { extern void spu_taskset2_set_exit(uint32_t, uint32_t, int, uint32_t);
                spu_taskset2_set_exit(taskset_ea, i, 0, 0); }   /* fresh entry for a recycled id */
              spurs_taskset_add_task(taskset_ea, i, (uint64_t)elf_ea,
-@@ -1049,11 +1266,16 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
+@@ -1049,11 +1272,16 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
              /* Bridge to the image-22 dispatch so build_context uses this taskset+task. */
              g_ydkj_real_taskset_ea = taskset_ea;
              g_ydkj_real_taskid     = i;
@@ -825,7 +833,7 @@ index 19a8516f..7bdc360d 100644
  
              /* One-shot: dump the memory the task argument points at, to find the
               * pointer that reads back 0 (the task GETs from EA 0 -> some field of
-@@ -1116,18 +1338,22 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
+@@ -1116,18 +1344,22 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
               * suits create+join task patterns; a workload/taskset whose SPU job
               * waits on concurrent PPU-side signals will want the async lv2
               * SPU-thread path instead — wired when a title exercises it. */
@@ -859,7 +867,7 @@ index 19a8516f..7bdc360d 100644
              return CELL_OK;
          }
      }
-@@ -1355,22 +1581,14 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1355,22 +1587,14 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
      /* spurs/wid/priority are guest EAs; pm stays a guest EA (it's the SPU
       * program address consumed later by the workload dispatch). */
      uint32_t spurs_ea = (uint32_t)(uintptr_t)spurs;
@@ -886,7 +894,7 @@ index 19a8516f..7bdc360d 100644
              s_workloads[i].in_use = 1;
              s_workloads[i].pm = pm;
              s_workloads[i].sizePm = sizePm;
-@@ -1380,24 +1598,45 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1380,24 +1604,45 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
              s_workloads[i].maxContention = maxContention;
              s_workloads[i].readyCount = 0;
  
@@ -936,7 +944,7 @@ index 19a8516f..7bdc360d 100644
              vm_write32(spurs_ea + SPURS_WKL_ENABLED,
                         vm_read32(spurs_ea + SPURS_WKL_ENABLED) | (0x80000000u >> i));
              *(vm_base + spurs_ea + SPURS_SYSSRV_MSG) = 0xFF;
-@@ -1406,12 +1645,10 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
+@@ -1406,12 +1651,10 @@ s32 cellSpursAddWorkload(CellSpurs* spurs, CellSpursWorkloadId* wid,
              vm_write32((u32)(uintptr_t)wid, i);
              printf("[cellSpurs] AddWorkload(wid=%u, pm=%p, size=%u)\n",
                     i, pm, sizePm);
@@ -949,7 +957,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_SPURS_CORE_ERROR_NOMEM;
  }
  
-@@ -1577,24 +1814,20 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
+@@ -1577,24 +1820,20 @@ s32 cellSpursWorkloadAttributeSetName(u64 attr_ea, u64 nameClass_ea, u64 nameIns
  s32 cellSpursRemoveWorkload(CellSpurs* spurs, CellSpursWorkloadId wid)
  {
      if (!spurs) return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -986,7 +994,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_OK;
  }
  
-@@ -1625,7 +1858,7 @@ s32 cellSpursWorkloadAttributeInitialize(CellSpursWorkloadAttribute* attr,
+@@ -1625,7 +1864,7 @@ s32 cellSpursWorkloadAttributeInitialize(CellSpursWorkloadAttribute* attr,
  }
  
  /* ---------------------------------------------------------------------------
@@ -995,7 +1003,7 @@ index 19a8516f..7bdc360d 100644
   *
   * The game kicks work by storing a nonzero wklReadyCount1[wid] byte or a
   * wklSignal1 bit into the instance — mostly with INLINED atomics (LBP never
-@@ -1639,7 +1872,21 @@ typedef struct {
+@@ -1639,7 +1878,21 @@ typedef struct {
      int                 image_id;
      int                 resolved;   /* 0=not tried, 1=found, -1=missing */
  } WklPm;
@@ -1018,7 +1026,7 @@ index 19a8516f..7bdc360d 100644
  
  static WklPm* spurs_resolve_pm(u32 wid)
  {
-@@ -1649,6 +1896,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1649,6 +1902,20 @@ static WklPm* spurs_resolve_pm(u32 wid)
      uint64_t fp = spu_workload_fingerprint(vm_base + (uint32_t)(uintptr_t)w->pm,
                                             w->sizePm);
      r->fn = spu_workload_find_img(fp, &r->image_id);
@@ -1039,7 +1047,7 @@ index 19a8516f..7bdc360d 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,184 +1936,623 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,215 +1942,709 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1179,9 +1187,7 @@ index 19a8516f..7bdc360d 100644
  }
  
 -static s32 spurs_scheduler_start(struct SpursInst* si)
-+/* For the [pm-hang] report: a wid's live readyCount (<< 8) and current contention. */
-+unsigned spurs_wid_ready_cont(u32 ea, u32 wid)
- {
+-{
 -    si->stopping = 0; si->cursor = si->pass_no = 0;
 -    memset(si->active, 0, sizeof(si->active));
 -    memset(si->idle, 0, sizeof(si->idle));
@@ -1207,6 +1213,9 @@ index 19a8516f..7bdc360d 100644
 -    si->kernel_live = 0; si->stopping = 0;
 -    ReleaseSRWLockExclusive(&si->lock);
 -    return CELL_SPURS_CORE_ERROR_NOMEM;
++/* For the [pm-hang] report: a wid's live readyCount (<< 8) and current contention. */
++unsigned spurs_wid_ready_cont(u32 ea, u32 wid)
++{
 +    if (!ea || wid >= SPURS_MAXW) return 0;
 +    return ((unsigned)*(vm_base + ea + spurs_off_ready(wid)) << 8) | spurs_nib_get(ea, SPURS_WKL_CURCONT, wid);
  }
@@ -1284,7 +1293,8 @@ index 19a8516f..7bdc360d 100644
 +            for (int i = 0; i < nw; i++) s_n[ws[i]] = (u8)(n > 0 ? n : 0);
 +            while (*e && *e != ';') e++;
 +            if (*e == ';') e++;
-+        }
+         }
+-    ReleaseSRWLockExclusive(&s_workload_registry_lock);
 +        s_init = 1;
 +    }
 +    return wid < SPURS_MAXW ? s_n[wid] : 0;
@@ -1505,6 +1515,32 @@ index 19a8516f..7bdc360d 100644
 +                static u32 s_pass_no;                            /* shared pass counter is fine */
 +                if (wid == 0) s_pass_no++;
 +                if (kicked) s_idle[wid] = 0;
++                if (kicked && s_rc_lat > 0 && s_rc_store_q[wid]) {
++                    const LONG64 t0 = InterlockedExchange64(&s_rc_store_q[wid], 0);
++                    if (t0) {
++                        static volatile LONG s_lh[SPURS_MAXW][9]; static LONG64 s_lh_next;
++                        static LARGE_INTEGER s_lh_f;
++                        LARGE_INTEGER q; QueryPerformanceCounter(&q);
++                        if (!s_lh_f.QuadPart) QueryPerformanceFrequency(&s_lh_f);
++                        const double ms = (double)(q.QuadPart - t0) * 1000.0 / s_lh_f.QuadPart;
++                        int b = 0; for (double lim = 0.5; b < 8 && ms >= lim; lim *= 2) b++;
++                        InterlockedIncrement(&s_lh[wid][b]);
++                        if (!s_lh_next) s_lh_next = q.QuadPart + 60 * s_lh_f.QuadPart;
++                        else if (q.QuadPart >= s_lh_next
++                                 && InterlockedCompareExchange64(&s_lh_next, q.QuadPart + 60 * s_lh_f.QuadPart,
++                                                                 s_lh_next) != 0) {
++                            for (u32 w = 0; w < SPURS_MAXW; w++) {
++                                LONG c[9], tot = 0;
++                                for (int k = 0; k < 9; k++) { c[k] = InterlockedExchange(&s_lh[w][k], 0); tot += c[k]; }
++                                if (tot)
++                                    fprintf(stderr, "[rc-lat] %.3f wid %u n=%ld  <0.5:%ld <1:%ld <2:%ld <4:%ld"
++                                            " <8:%ld <16:%ld <32:%ld <64:%ld >=64:%ld ms\n",
++                                            (double)q.QuadPart / s_lh_f.QuadPart, w, tot,
++                                            c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]);
++                            }
++                        }
++                    }
++                }
 +                /* SPURS_WWS_HDR_LOG=<wid>[,<wid>...] (diagnostic, default off): how the
 +                 * PPU hands work to a WWS list the title never kicks. Each pass shadows
 +                 * the 0x100 bytes around the list header (workload data low word, from
@@ -1779,8 +1815,7 @@ index 19a8516f..7bdc360d 100644
 +            s_hl_ran[wid] = (u8)(rr_found ? 2 : 1);   /* SPURS_WWS_HDR_LOG: 1 ran idle, 2 found work */
 +            InterlockedDecrement(&s_wid_busy[wid]);
 +            }
-         }
--    ReleaseSRWLockExclusive(&s_workload_registry_lock);
++        }
 +    }
  }
  
@@ -1805,14 +1840,53 @@ index 19a8516f..7bdc360d 100644
      s_workloads[wid].readyCount = value;
 -    /* The real store: the instance byte the kernel (poll thread) watches. */
 -    vm_write8(si->ea + SPURS_WKL_READY1 + wid, (u8)value);
+-    {   static int _n = 0;
+-        if (_n < 32)
+-            printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
+-        else if (_n == 32)
+-            printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
+-        _n++;
 +    vm_base[ea + spurs_off_ready(wid)] = (u8)value;
 +    ef_line_end(ea + spurs_off_ready(wid));
-     {   static int _n = 0;
-         if (_n < 32)
-             printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)\n", wid, value);
-@@ -1860,30 +2560,26 @@ s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
-             printf("[cellSpurs] ReadyCountStore further logs suppressed\n");
-         _n++;
++    /* PS3_FTRACE: a 1-us SYSCALL mark, a = 0x5C00 + wid, b = value, on the
++     * caller's guest tid -- the kick on the same clock as the waits it ends. */
++    if (PS3_FT_ON()) {
++        extern PPU_THREAD_LOCAL ppu_context* g_active_ctx;
++        const uint64_t t = ps3_ft_now();
++        ps3_ft_span(PS3_FT_SYSCALL, g_active_ctx ? (uint32_t)g_active_ctx->thread_id : 0u,
++                    0x5C00u + wid, value, t, t + 1000);
++    }
++    if (s_rc_lat < 0) s_rc_lat = getenv("SPURS_RC_LAT") ? 1 : 0;
++    if (s_rc_lat > 0 && value && !s_rc_store_q[wid]) {
++        LARGE_INTEGER q; QueryPerformanceCounter(&q);
++        InterlockedCompareExchange64(&s_rc_store_q[wid], q.QuadPart, 0);
++    }
++    /* First 4 calls per wid: one busy workload (GoW:A's audio, wid 8) used to
++     * fill a global cap of 32 and hide every other caller, which read as "the
++     * title never calls this for wid 0/18" while it did.
++     * SPURS_RCSTORE_LOG=<n>: also log the next n calls with the QPC clock in
++     * seconds (the PS3_FTRACE base) and the host thread;
++     * SPURS_RCSTORE_LOG_AFTER=<s> starts that after s seconds. */
++    {   static volatile long _n[SPURS_MAXW];
++        const long i = InterlockedIncrement(&_n[wid]);
++        if (i <= 4)
++            printf("[cellSpurs] ReadyCountStore(wid=%u, value=%u)%s\n", wid, value,
++                   i == 4 ? " (further calls for this wid not shown)" : "");
++        static long s_rl = -1; static double s_rl_after; static LARGE_INTEGER s_rl_t0, s_rl_f;
++        static volatile long s_rl_n;
++        if (s_rl < 0) { const char* e = getenv("SPURS_RCSTORE_LOG"); s_rl = e ? atol(e) : 0;
++                        const char* a = getenv("SPURS_RCSTORE_LOG_AFTER"); s_rl_after = a ? atof(a) : 0;
++                        QueryPerformanceFrequency(&s_rl_f); QueryPerformanceCounter(&s_rl_t0); }
++        if (s_rl) {
++            LARGE_INTEGER q; QueryPerformanceCounter(&q);
++            if ((double)(q.QuadPart - s_rl_t0.QuadPart) / s_rl_f.QuadPart >= s_rl_after
++                && InterlockedIncrement(&s_rl_n) <= s_rl)
++            {   extern PPU_THREAD_LOCAL ppu_context* g_active_ctx;
++                fprintf(stderr, "[rcstore] %.6f wid %u value %u tid %lu guest-tid %llu lr=0x%08X\n",
++                        (double)q.QuadPart / s_rl_f.QuadPart, wid, value, GetCurrentThreadId(),
++                        g_active_ctx ? (unsigned long long)g_active_ctx->thread_id : 0ull,
++                        g_active_ctx ? (u32)g_active_ctx->lr : 0u); }
++        }
      }
 -    spurs_api_unlock(si);
      return CELL_OK;
@@ -1850,7 +1924,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2587,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2652,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -1911,7 +1985,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_OK;
  }
  
-@@ -3095,6 +3824,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3889,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -1954,7 +2028,7 @@ index 19a8516f..7bdc360d 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3867,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3932,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -1963,7 +2037,7 @@ index 19a8516f..7bdc360d 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +3888,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +3953,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -1994,7 +2068,7 @@ index 19a8516f..7bdc360d 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4192,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4257,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
@@ -11290,7 +11364,7 @@ index b44816b0..305d9fcf 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index f54150d9..7872ea22 100644
+index f54150d9..6e67fea3 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -34,11 +34,13 @@
@@ -11593,7 +11667,34 @@ index f54150d9..7872ea22 100644
      int ok = __atomic_compare_exchange_n((uint32_t*)(vm_base + ea), &exp_raw, new_raw,
                                           0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? 1 : 0;
      if (coh) {
-@@ -1043,6 +1199,9 @@ extern "C" int ppu_stdcx64(uint64_t ea, uint64_t expected, uint64_t val)
+@@ -983,11 +1139,22 @@ extern "C" int ppu_stwcx32(uint64_t ea, uint32_t expected, uint32_t val)
+     /* PPU_CASWATCH=<hex ea>: log successful stwcx. on that 128-byte line.
+      * PPU_WWATCH hooks plain stores only; an atomic counter (a semaphore an SPU
+      * spins on) is written exclusively through here and looked untouched. */
+-    { static int64_t s_cw = -2;
+-      if (s_cw == -2) { const char* e = getenv("PPU_CASWATCH"); s_cw = e ? (int64_t)(strtoul(e, 0, 16) & ~127u) : -1; }
++    /* PPU_CASWATCH_MAX=<n> lines (default 200); PPU_CASWATCH_AFTER=<s> skips the
++     * first s seconds after the first commit seen. The leading number is the QPC
++     * clock in seconds, the same base as PS3_FTRACE and [wws-hdr]. */
++    { static int64_t s_cw = -2; static long s_cw_max; static double s_cw_after;
++      static LARGE_INTEGER s_cw_t0, s_cw_f;
++      if (s_cw == -2) { const char* e = getenv("PPU_CASWATCH"); s_cw = e ? (int64_t)(strtoul(e, 0, 16) & ~127u) : -1;
++                        const char* m = getenv("PPU_CASWATCH_MAX"); s_cw_max = m ? atol(m) : 200;
++                        const char* a = getenv("PPU_CASWATCH_AFTER"); s_cw_after = a ? atof(a) : 0;
++                        QueryPerformanceFrequency(&s_cw_f); QueryPerformanceCounter(&s_cw_t0); }
+       if (ok && s_cw >= 0 && ((uint32_t)ea & ~127u) == (uint32_t)s_cw) {
+-          static int n; if (PS3_LOG_FIRST(n, 200))
+-              fprintf(stderr, "[caswatch] 0x%08X %08X -> %08X lr=0x%08X tid=%u\n", (uint32_t)ea, expected, val,
++          LARGE_INTEGER q; QueryPerformanceCounter(&q);
++          static volatile long n;
++          if ((double)(q.QuadPart - s_cw_t0.QuadPart) / s_cw_f.QuadPart >= s_cw_after
++              && InterlockedIncrement(&n) <= s_cw_max)
++              fprintf(stderr, "[caswatch] %.6f 0x%08X %08X -> %08X lr=0x%08X tid=%u\n",
++                      (double)q.QuadPart / s_cw_f.QuadPart, (uint32_t)ea, expected, val,
+                       self ? (uint32_t)self->lr : 0u, self ? (unsigned)self->thread_id : 0u); } }
+     /* PPU_CAS_FAIL=1: histogram the EAs whose store-conditional keeps FAILING.
+      *
+@@ -1043,6 +1210,9 @@ extern "C" int ppu_stdcx64(uint64_t ea, uint64_t expected, uint64_t val)
      if (self && self->reserve_addr != (uint32_t)ea) { resv_unlock(L); return 0; }
      int coh = spu_coh_is_reserved((uint32_t)ea);
      if (coh) spu_lockline_lock();
@@ -11603,7 +11704,7 @@ index f54150d9..7872ea22 100644
      int ok = __atomic_compare_exchange_n((uint64_t*)(vm_base + ea), &exp_raw, new_raw, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? 1 : 0;
      if (coh) {
          if (ok) spu_coh_notify_write((uint32_t)ea);
-@@ -1069,11 +1228,24 @@ extern "C" int ppu_stdcx64(uint64_t ea, uint64_t expected, uint64_t val)
+@@ -1069,11 +1239,24 @@ extern "C" int ppu_stdcx64(uint64_t ea, uint64_t expected, uint64_t val)
  #ifdef _WIN32
  static volatile uintptr_t s_guard_page = 0;   /* host base of the guarded 4KB page */
  static volatile uint32_t  s_guard_ea   = 0;   /* guest ea being watched */
@@ -11628,7 +11729,7 @@ index f54150d9..7872ea22 100644
  static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
  {
      /* Re-entrancy guard. The handler logs with fprintf, and if the guarded page
-@@ -1090,14 +1262,98 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
+@@ -1090,14 +1273,98 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
      if (code == EXCEPTION_ACCESS_VIOLATION && s_guard_page &&
          ep->ExceptionRecord->NumberParameters >= 2) {
          uintptr_t tgt = (uintptr_t)ep->ExceptionRecord->ExceptionInformation[1];
@@ -11731,7 +11832,7 @@ index f54150d9..7872ea22 100644
              /* On the watched word specifically, dump the guest call stack: with a
               * memset-style clear the writer is always the same memcpy body, and
               * the only useful question is WHO called it. */
-@@ -1146,7 +1402,15 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
+@@ -1146,7 +1413,15 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
               * single-step below can report a non-zero -> zero transition and name
               * exactly who cleared it. */
              s_guard_pre = __builtin_bswap32(*(volatile uint32_t*)(vm_base + s_guard_ea));
@@ -11748,7 +11849,7 @@ index f54150d9..7872ea22 100644
              ep->ContextRecord->EFlags |= 0x100;   /* single-step to re-arm after the write */
              return EXCEPTION_CONTINUE_EXECUTION;
          }
-@@ -1172,8 +1436,56 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
+@@ -1172,8 +1447,56 @@ static LONG WINAPI ppu_guard_veh(EXCEPTION_POINTERS* ep)
                    fflush(stderr);
                    ppu_guest_callstack("guard-zeroed");
                }
@@ -11807,7 +11908,7 @@ index f54150d9..7872ea22 100644
          ep->ContextRecord->EFlags &= ~0x100u;
          return EXCEPTION_CONTINUE_EXECUTION;
      }
-@@ -1188,6 +1500,14 @@ extern "C" void ppu_guard_page(uint32_t guest_ea)
+@@ -1188,6 +1511,14 @@ extern "C" void ppu_guard_page(uint32_t guest_ea)
      if (!vm_base || s_guard_page) return;
      s_guard_ea   = guest_ea;
      s_guard_page = ((uintptr_t)vm_base + guest_ea) & ~(uintptr_t)0xFFF;
@@ -11822,7 +11923,7 @@ index f54150d9..7872ea22 100644
      AddVectoredExceptionHandler(1, ppu_guard_veh);   /* runs before vm_commit_veh */
      /* Commit first: VirtualProtect fails silently on a reserved page, and a
       * page nothing has touched yet (VRAM, early in boot) is exactly that --
-@@ -1195,9 +1515,10 @@ extern "C" void ppu_guard_page(uint32_t guest_ea)
+@@ -1195,9 +1526,10 @@ extern "C" void ppu_guard_page(uint32_t guest_ea)
      /* The whole 64 KB demand-commit block: vm_commit_veh commits a block at a
       * time on first touch, and doing so later re-commits this page read-write,
       * silently disarming the guard. */
@@ -11835,7 +11936,7 @@ index f54150d9..7872ea22 100644
      fprintf(stderr, "[GUARD] armed on guest 0x%08X (host page %p)\n", guest_ea, (void*)s_guard_page);
      fflush(stderr);
  }
-@@ -1473,7 +1794,7 @@ extern "C" int* ps3_ppu_vcall_sp_slot(void) { return &g_vcall_sp; }
+@@ -1473,7 +1805,7 @@ extern "C" int* ps3_ppu_vcall_sp_slot(void) { return &g_vcall_sp; }
   * them, until SPU code runs) it is the plain memcpy it replaced. */
  #define VM_WRITE_COH(a, src, n)                                               \
      do {                                                                      \
@@ -11844,7 +11945,7 @@ index f54150d9..7872ea22 100644
              spu_lockline_lock();                                              \
              memcpy(vm_base + (uint32_t)(a), (src), (n));                      \
              spu_coh_notify_write((uint32_t)(a));                              \
-@@ -1567,6 +1888,23 @@ static inline void ppu_null_read_report(uint32_t a, int width, void* ra)
+@@ -1567,6 +1899,23 @@ static inline void ppu_null_read_report(uint32_t a, int width, void* ra)
  /* ppu_recomp.h's inline loads (vm_read*_inl) skip the out-of-line accessors'
   * probes, so they run only while no read diagnostic is armed. */
  extern "C" int vm_inline_ok = 0;
@@ -11868,7 +11969,7 @@ index f54150d9..7872ea22 100644
  static struct VmInlineInit {
      VmInlineInit() {
          static const char* const vars[] = {
-@@ -1575,6 +1913,12 @@ static struct VmInlineInit {
+@@ -1575,6 +1924,12 @@ static struct VmInlineInit {
          int d = 0;
          for (int i = 0; vars[i]; i++) if (getenv(vars[i])) d = 1;
          vm_inline_ok = !d;
@@ -11881,7 +11982,7 @@ index f54150d9..7872ea22 100644
      }
  } s_vm_inline_init;
  
-@@ -1792,8 +2136,82 @@ static void ww_arm_inline_window(uint32_t ww)
+@@ -1792,8 +2147,82 @@ static void ww_arm_inline_window(uint32_t ww)
      g_ww_lo = ww & ~15u;
      g_ww_hi = (ww & ~15u) + len;
  }
@@ -11965,7 +12066,7 @@ index f54150d9..7872ea22 100644
      /* PPU_WVAL=<hexvalue>: log every PPU store that WRITES this value, wherever
       * it lands. PPU_WWATCH answers "who writes this address"; when a bad value is
       * copied from node to node down a list, that only ever catches the copy.
-@@ -1913,6 +2331,12 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
+@@ -1913,6 +2342,12 @@ static inline void barrier_watch_hit(uint32_t a, uint32_t v, int width, void* ra
      }
  }
  
@@ -11978,7 +12079,7 @@ index f54150d9..7872ea22 100644
  /* See the note on the forward declaration above ppu_stwcx32. */
  extern "C" void ppu_ww_note_atomic(uint32_t ea, uint32_t val, int width, void* ra)
  {
-@@ -2062,6 +2486,16 @@ extern "C" uint32_t ppu_prof_resolve_host(void* ra)
+@@ -2062,6 +2497,16 @@ extern "C" uint32_t ppu_prof_resolve_host(void* ra)
      return lo ? g_inv[lo - 1].guest : 0;
  }
  
@@ -11995,7 +12096,7 @@ index f54150d9..7872ea22 100644
  static ppu_fn ppu_lookup(uint32_t a)
  {
      uint32_t i = (a * 2654435761u) & PPU_HASH_MASK;
-@@ -2169,6 +2603,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
+@@ -2169,6 +2614,52 @@ static bool ppu_dump_readable(uint32_t ea, uint32_t n)
  #endif
  }
  
@@ -12048,7 +12149,7 @@ index f54150d9..7872ea22 100644
  extern "C" void ppu_dump_guest_stack(ppu_context* ctx, const char* tag)
  {
      if (!ctx || !vm_base) return;
-@@ -2496,6 +2976,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
+@@ -2496,6 +2987,25 @@ static void ps3_indirect_call_impl(ppu_context* ctx)
  #endif
      uint32_t addr = (uint32_t)ctx->ctr;
      if (g_icall_target_set) { addr = g_icall_target; g_icall_target_set = 0; }
@@ -12074,7 +12175,7 @@ index f54150d9..7872ea22 100644
      /* PS3_CALLTRACE=N: log the first N indirect calls (target + r3/r4) --
       * generic visibility into vtable/callback dispatch (e.g. which job body a
       * JobManager worker runs). */
-@@ -3244,11 +3743,61 @@ extern "C" void lv2_syscall(ppu_context* ctx)
+@@ -3244,11 +3754,61 @@ extern "C" void lv2_syscall(ppu_context* ctx)
                  char bt[512]; uint32_t bn = wlen < 511 ? wlen : 511;
                  for (uint32_t i = 0; i < bn; i++) bt[i] = (char)vm_read8(buf + i);
                  bt[bn] = 0;
@@ -12139,7 +12240,7 @@ index f54150d9..7872ea22 100644
                      }
                  }
              }
-@@ -3797,11 +4346,16 @@ extern "C" ppu_context* volatile g_ppu_main_ctx = nullptr;
+@@ -3797,11 +4357,16 @@ extern "C" ppu_context* volatile g_ppu_main_ctx = nullptr;
  
  extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
  {
@@ -12161,7 +12262,7 @@ index f54150d9..7872ea22 100644
  
      g_ppu_thread_entry_trampoline = ppu_thread_entry_trampoline;
      uint32_t code = 0, toc = 0;
-@@ -3939,8 +4493,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
+@@ -3939,8 +4504,12 @@ extern "C" int ppu_run(uint32_t entry_opd, uint32_t stack_top)
           * an empty boot device before deadlocking on a data.toc it never loaded. */
          ctx.gpr[3] = argc_n;                        /* argc */
          ctx.gpr[4] = argv_base;                     /* argv */
@@ -12176,7 +12277,7 @@ index f54150d9..7872ea22 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4051,3 +4609,157 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4051,3 +4620,157 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -12651,7 +12752,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..2c6125fd 100644
+index 59f5e4b8..5178d946 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -12847,7 +12948,7 @@ index 59f5e4b8..2c6125fd 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4013 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4061 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -14260,6 +14361,52 @@ index 59f5e4b8..2c6125fd 100644
 + * completion. Chosen above the context/descriptor we park near the top of LS. */
 +#define SPU_JOB_RETURN_LS   0x3FF00u
 +
++/* SPU_LLWATCH=<hex ea>: log each SPU store into that 128-byte line -- PUTLLC
++ * commit, PUTLLUC or plain PUT -- with the QPC clock in seconds (the
++ * PS3_FTRACE base), the workload the SPURS kernel is running (wklCurrentId,
++ * LS 0x1DC) and the words it changes. The SPU half of PPU_CASWATCH, for
++ * counters SPU jobs and the PPU both bump. Called before the copy; stores that
++ * leave the line as it was are skipped. SPU_LLWATCH_MAX (default 400),
++ * SPU_LLWATCH_AFTER=<s> after the first store seen. */
++void spu_llwatch_note(spu_context* ctx, uint32_t ea, const void* mem, const void* src,
++                      uint32_t size, const char* kind)
++{
++    static int64_t s_lw = -2; static long s_lw_max; static double s_lw_after;
++    static LARGE_INTEGER s_lw_t0, s_lw_f;
++    if (s_lw == -2) { const char* e = getenv("SPU_LLWATCH");
++                      s_lw = e ? (int64_t)(strtoul(e, 0, 16) & ~127u) : -1;
++                      const char* m = getenv("SPU_LLWATCH_MAX"); s_lw_max = m ? atol(m) : 400;
++                      const char* a = getenv("SPU_LLWATCH_AFTER"); s_lw_after = a ? atof(a) : 0;
++                      QueryPerformanceFrequency(&s_lw_f); QueryPerformanceCounter(&s_lw_t0); }
++    if (s_lw < 0) return;
++    const uint32_t line = (uint32_t)s_lw;
++    if (ea >= line + 128u || ea + size <= line) return;
++    LARGE_INTEGER q; QueryPerformanceCounter(&q);
++    if ((double)(q.QuadPart - s_lw_t0.QuadPart) / s_lw_f.QuadPart < s_lw_after) return;
++    const uint32_t lo = ea > line ? ea : line;
++    const uint32_t hi = ea + size < line + 128u ? ea + size : line + 128u;
++    char buf[400]; int k = 0;
++    for (uint32_t a = lo & ~3u; a < hi && k < 360; a += 4) {
++        uint32_t a0 = 0, a1 = 0;
++        for (uint32_t b = 0; b < 4; b++) {
++            const uint32_t x = a + b;
++            const uint8_t o = *((const uint8_t*)mem + (x - ea));
++            const uint8_t n = (x >= lo && x < hi) ? *((const uint8_t*)src + (x - ea)) : o;
++            a0 = a0 << 8 | o; a1 = a1 << 8 | n;
++        }
++        if (a0 != a1)
++            k += snprintf(buf + k, sizeof buf - k, " +%02X:%08X>%08X", a - line, a0, a1);
++    }
++    if (!k) return;
++    static volatile long n;
++    if (InterlockedIncrement(&n) > s_lw_max) return;
++    buf[k] = 0;
++    uint32_t wid; memcpy(&wid, (const uint8_t*)ctx->ls + 0x1DC, 4);
++    fprintf(stderr, "[llwatch] %.6f spu%u img=%d wid=%u pc=0x%05X %s ea=0x%08X%s\n",
++            (double)q.QuadPart / s_lw_f.QuadPart, (unsigned)(ctx->spu_id & 7u),
++            ctx->image_id, __builtin_bswap32(wid), (uint32_t)ctx->pc & SPU_LS_MASK, kind, ea, buf);
++}
++
 +/* Returns 1 if `cmd` is an atomic line op and was handled here, else 0. */
 +static int spu_mfc_atomic(spu_context* ctx, uint32_t cmd)
 +{
@@ -14590,6 +14737,7 @@ index 59f5e4b8..2c6125fd 100644
 +            memcmp(mem, ctx->resv_line, MFC_ATOMIC_LINE) == 0) {
 +            { extern void spu_lockguard_check(spu_context*, uint32_t, const uint8_t*, uint32_t, const char*);
 +              spu_lockguard_check(ctx, ea, ls, MFC_ATOMIC_LINE, "PUTLLC"); }
++            spu_llwatch_note(ctx, ea, mem, ls, MFC_ATOMIC_LINE, "putllc");
 +            memcpy(mem, ls, MFC_ATOMIC_LINE);          /* commit local store */
 +            /* A committing PUTLLC is a line write like any other, so every
 +             * PEER reservation on it is lost and its SPU takes SPU_EVENT_LR.
@@ -14709,6 +14857,7 @@ index 59f5e4b8..2c6125fd 100644
 +        spu_lockline_lock();
 +        { extern void spu_lockguard_check(spu_context*, uint32_t, const uint8_t*, uint32_t, const char*);
 +          spu_lockguard_check(ctx, ea, ls, MFC_ATOMIC_LINE, "PUTLLUC"); }
++        spu_llwatch_note(ctx, ea, mem, ls, MFC_ATOMIC_LINE, "putlluc");
 +        memcpy(mem, ls, MFC_ATOMIC_LINE);              /* unconditional store */
 +        /* Unconditional, so it invalidates EVERY reservation on the line --
 +         * this SPU's included, which is why the notify runs before the
@@ -20331,7 +20480,7 @@ index f46d415f..e04c1180 100644
   * brsl/bisl frame is live (host_depth>0); at 0 the frame was destroyed (task
   * resume / restack unwind) so dispatch to the link register instead -- faithful
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 7b0debec..7ca2044f 100644
+index 7b0debec..83a8b623 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -24,6 +24,7 @@
@@ -20404,7 +20553,16 @@ index 7b0debec..7ca2044f 100644
          /* SPU_STACKEA_WATCH (b): scan the just-loaded payload for a 0xD00Cxxxx
           * dword = the completion-word EA arriving in a job buffer. */
          { static int s_se = -1; if (s_se < 0) s_se = getenv("SPU_STACKEA_WATCH") ? 1 : 0;
-@@ -679,16 +705,30 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -672,6 +698,8 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+             extern void spu_lockline_unlock(void);
+             extern void spu_lockguard_check(spu_context*, uint32_t, const uint8_t*, uint32_t, const char*);
+             spu_lockguard_check(spu, (uint32_t)ea, (const uint8_t*)ls_ptr, size, "PUT");
++            { extern void spu_llwatch_note(spu_context*, uint32_t, const void*, const void*, uint32_t, const char*);
++              spu_llwatch_note(spu, (uint32_t)ea, ea_ptr, ls_ptr, size, "put"); }
+             uint32_t a0 = (uint32_t)ea & ~127u;
+             uint32_t a1 = ((uint32_t)ea + size - 1u) & ~127u;
+             int span_reserved = 0;
+@@ -679,16 +707,30 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                  if (spu_coh_is_reserved(a)) { span_reserved = 1; break; }
                  if (a == a1) break;
              }
@@ -20437,7 +20595,7 @@ index 7b0debec..7ca2044f 100644
                  for (uint32_t a = a0; ; a += 128u) {
                      if (spu_coh_is_reserved(a)) {
                          spu_lockline_lock();
-@@ -698,7 +738,9 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -698,7 +740,9 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                      if (a == a1) break;
                  }
              }
@@ -20447,7 +20605,7 @@ index 7b0debec..7ca2044f 100644
          /* Tell whoever is listening where this PUT landed.
           *
           * A title whose SPUs build the RSX command stream never tells libgcm
-@@ -728,10 +770,19 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -728,10 +772,19 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
          /* POISON-DMA detector: does an SPU PUT write the singleton object region
           * (0x40003000-0x40005000) or carry the 0xC708C708 poison? This host-side
           * memcpy bypasses vm_write32/AWATCH, so it's the prime suspect for the
@@ -20468,7 +20626,7 @@ index 7b0debec..7ca2044f 100644
            for (uint32_t o = 0; o + 4 <= size; o += 4) {
                uint32_t w; memcpy(&w, (const char*)ls_ptr + o, 4);
                if (w == 0x08C708C7u) { haspoison = 1; break; } /* 0xC708C708 BE in LS bytes */
-@@ -776,6 +827,27 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+@@ -776,6 +829,27 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
  
          uint64_t ea = (ea_base & 0xFFFFFFFF00000000ull) | eal;
  
@@ -20496,7 +20654,7 @@ index 7b0debec..7ca2044f 100644
          if (xfer_size) {
              /* Each list element occupies whole LS quadwords, even for
               * 1/2/4/8-byte transfers. The EA supplies its byte offset within
-@@ -795,7 +867,7 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+@@ -795,7 +869,7 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
              spu->list_stall_cmd[t]       = base_cmd;
              spu->list_stall_mask |= (1u << t);  /* this tag now has a parked list */
              spu->list_stall_stat |= (1u << t);  /* accumulate into the notify mask */
@@ -20505,7 +20663,7 @@ index 7b0debec..7ca2044f 100644
              /* Real MFC runs a queued list asynchronously, so the notify lands
               * AFTER the arming code finishes. We run it inline here, so hold the
               * resulting interrupt off for a few drain ticks -- otherwise the WWS
-@@ -846,6 +918,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -846,6 +920,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
       * about to land. If the handler was supposed to fill in the claimed job's
       * EA and did not, the elements read back empty and the transfer is a no-op
       * -- which looks identical to "the pipeline never ran" from the PPU side. */
@@ -20514,7 +20672,7 @@ index 7b0debec..7ca2044f 100644
      { /* First 16 dumps per header call site, shared safely by its workers.
         * Saturate instead of wrapping the counter back into logging. */
        static volatile LONG _n = 0;
-@@ -866,11 +940,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -866,11 +942,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
          fprintf(stderr, "\n");
        }
      }
@@ -20533,7 +20691,7 @@ index 7b0debec..7ca2044f 100644
      return rc;
  }
  
-@@ -1250,7 +1331,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1250,7 +1333,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                        (uint32_t)ea);
                fflush(stderr);
                spu_halt(spu);
@@ -20550,7 +20708,7 @@ index 7b0debec..7ca2044f 100644
        } else { s_last_ea = (uint32_t)ea; s_last_lsa = lsa; s_rep = 0; s_since = 0; } }
  
      /* Mark tag as in-progress */
-@@ -1419,7 +1508,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1419,7 +1510,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -20655,7 +20813,7 @@ index 7b0debec..7ca2044f 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1441,6 +1627,21 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1441,6 +1629,21 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * carried in MFC_EAL (the PM writes EAL=list, LSA=dest) and each element
       * supplies the low-32 EA; only EAH carries through. Passing `lsa` as the
       * list address read list elements from the transfer DESTINATION. */
@@ -20677,7 +20835,7 @@ index 7b0debec..7ca2044f 100644
      if (mfc_is_list(cmd)) {
          /* List DMAs are rare, and they skip the per-element trace above, so
           * they are easy to miss entirely while diagnosing a pipeline that
-@@ -1451,11 +1652,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1451,11 +1654,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -20719,7 +20877,7 @@ index 7b0debec..7ca2044f 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1607,6 +1838,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1607,6 +1840,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }

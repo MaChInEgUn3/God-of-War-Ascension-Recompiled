@@ -833,8 +833,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     with the module not having run (the PPU's write) and the kick (readyCount) comes 1-59 ms later; the next
     run with work follows the kick. wid 18's runs mostly come without a kick. In the dead pieces of x268 the main
     thread polls at `0x3436BC` 1.6 times per ms (1.5 outside them; quiet x264 1.3 and 1.5), so it is not slow
-    to wake: the work it waits for is not ready yet, because the kick is late. Who raises readyCount for these
-    lists, and what delays it under load, is the open question.
+    to wake: the work it waits for is not ready yet. "Because the kick is late" was the reading at the time;
+    x271-x277 (next bullet) do not support it.
+  - Who raises readyCount, and when (x271-x277: runWz, the same two busy processes, toolkit e548526c
+    diagnostics). The main thread (guest tid 1, lr `0x46661C`) calls `cellSpursReadyCountStore` for every
+    non-audio list, about 80 times a second for `CollisL` and once a frame for `MeshProcJobs` and `RsxSync`; the
+    audio thread `brbDriver` (tid 10) kicks wid 8. The SPU modules raise readyCount too: `RenderJobs` (wid 13)
+    raises `MeshProcJobs` (x272-x273). The kernel sees a store within 4 ms in more than 99% of cases for wids 0,
+    14 and 18 (x275, `SPURS_RC_LAT`), so the recompiler is not where the kick waits. With the stores marked in
+    `PS3_FTRACE` (x277, 50 s, 505 dead pieces, 3.1 s): in every piece the list that runs next had already run
+    after its last kick. The run that ends a piece is most often a probe that finds nothing (median 31 us);
+    the first run that does work after the piece is `MeshProcJobs` in 354 of 505. Still open: why that work
+    becomes ready without a new kick, or with nothing scheduling it, under load. Earlier x271-x273 readings
+    that "the PPU never raises readyCount" were blind to the HLE store (see DEBUGGING) and are void.
   - 600 s smoke run of runWx with no environment set (x266): no hang; 12.9-14.0 game frames/s from 330 s on
     (its load phase ran slow until 300 s, as load phases vary run to run).
 - **What bounds the fast frame now (2026-11-01, x262).** `PS3_FTRACE=480:20` on runWv (M0.99 production) in the

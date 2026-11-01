@@ -144,6 +144,16 @@ Lessons that cost days; keep them.
   with `ran` (0 = the module has not run since the last look, so the PPU or another SPU wrote it; 1 ran idle;
   2 found work), the idle streak and whether readyCount/signal was up. `SPURS_WWS_HDR_LOG_AFTER=<s>` starts it
   late; 400 lines at most.
+  Who raises readyCount: `cellSpursReadyCountStore` prints its first 4 calls per wid (a global cap of 32 used to be
+  filled by the audio workload, wid 8, and hid every other caller). `SPURS_RCSTORE_LOG=<n>` (`_AFTER=<s>`) prints
+  the next n calls as `[rcstore] <QPC s> wid value tid guest-tid lr`; with `PS3_FTRACE` each call is also a 1-us
+  SYSCALL mark (a = 0x5C00 + wid, b = value) on the caller's guest tid (scratchpad `ftkick.py` lines them up with
+  the dead pieces). `SPURS_RC_LAT=1` prints, every 60 s, a per-wid histogram of store -> first kernel pass that
+  sees the kick (`[rc-lat]`). `SPU_LLWATCH=<hex ea>` logs every SPU store into that 128-byte line (PUTLLC commit,
+  PUTLLUC, plain PUT) as `[llwatch] <QPC s> spuN img wid=<running wid> pc kind ea +off:old>new`, skipping stores
+  that change nothing (`_MAX`, default 400; `_AFTER=<s>`); `PPU_CASWATCH=<hex ea>` now carries the same clock
+  (`_MAX`, default 200; `_AFTER`). **Blind spot:** `PPU_CASWATCH`, `PPU_WWATCH` and `SPU_LLWATCH` cannot see an HLE
+  host-side store -- `ReadyCountStore` writes guest memory directly -- so "no writer seen" there is not "no writer".
   `SPURS_PASS_SLEEP_US=<us>` (default off) waits the pause on a high-resolution timer instead of `Sleep(1)` (~1.7 ms);
   200 gives ~0.53 ms, the timer's floor on Windows 11 (M0.89: no frame-rate change in GoW:A).
   `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default: `SPURS_KERN_SPUS=0,1,5`, i.e. 3 threads with audio on SPU 5) runs n host kernel threads per instance, with a per-wid
