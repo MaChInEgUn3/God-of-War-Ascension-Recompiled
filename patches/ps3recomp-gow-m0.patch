@@ -12752,7 +12752,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..5178d946 100644
+index 59f5e4b8..8ce4bb7b 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -12948,7 +12948,7 @@ index 59f5e4b8..5178d946 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4061 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4138 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -18818,8 +18818,79 @@ index 59f5e4b8..5178d946 100644
 +    t_ibc[slot].key = key; t_ibc[slot].fn = fn;
 +}
 +
++/* SPU_IBC_COUNT=1 (diagnostic, leaves the cache on): every 4M dispatches print
++ * how they resolved, as [ibc-count]: hit, cache not tried (job entry, resident
++ * code slot, trace switch), and on the slow path which lookup answered --
++ * resident code slot, resident task, resident overlay, the image, the WWS job
++ * module header match -- or none. */
++enum { IBS_ALL, IBS_HIT, IBS_NOTRY, IBS_MISS, IBS_CODE, IBS_TASK, IBS_OVL, IBS_IMG, IBS_MATCH, IBS_NONE,
++       IBS_FILL, IBS_N };
++static volatile LONG64 s_ibs[IBS_N];
++static int s_ibs_on = -1;
++#define IBS(i) do { if (__builtin_expect(s_ibs_on > 0, 0)) InterlockedIncrement64(&s_ibs[i]); } while (0)
++static __attribute__((noinline)) void spu_ibs_entry(void)
++{
++    if (s_ibs_on < 0) s_ibs_on = getenv("SPU_IBC_COUNT") ? 1 : 0;
++    if (s_ibs_on <= 0) return;
++    if ((InterlockedIncrement64(&s_ibs[IBS_ALL]) & ((1 << 22) - 1)) == 0) {
++        static const char* nm[IBS_N] = { "all", "hit", "notry", "miss", "code", "task", "ovl", "img",
++                                         "match", "none", "fill" };
++        char buf[400]; int k = 0;
++        for (int i = 0; i < IBS_N; i++)
++            k += snprintf(buf + k, sizeof buf - k, " %s=%lld", nm[i], (long long)s_ibs[i]);
++        fprintf(stderr, "[ibc-count]%s\n", buf);
++    }
++}
++
++static __attribute__((noinline)) void spu_indirect_branch_slow(spu_context* ctx);
++
++/* Every SPU indirect call and computed jump lands here, millions of times a
++ * second (GoW:A's audio DSP alone), and ~90% hit the dispatch cache. The full
++ * resolver below needs a large frame -- eight saved registers, two XMM saves,
++ * a stack cookie -- and paid it on every hit, plus a call into the interrupt
++ * restore check: a quarter of the audio workload's host time went to this
++ * function. This fast path does only what a cache hit needs, in a frame-less
++ * function, and hands everything else (trace switches, a pending interrupt
++ * return, a miss, a non-plain target) to the full resolver unchanged. */
 +void spu_indirect_branch(spu_context* ctx)
 +{
++    if (__builtin_expect(s_ibc_on > 0 && s_ibs_on == 0 && g_spu_jobcap_on == 0 &&
++                         g_spu_jobrep_on <= 0 && !ctx->irq_saved, 1)) {
++        ctx->pc &= SPU_LS_MASK;
++        if (ctx->resident_task == 0 || ctx->pc < SPU_TASKSET_TASK_LO) {
++            spu_fn fn = spu_ibc_probe(ctx);
++            if (fn) {
++                const uint32_t jl = ctx->gpr[0]._u32[0] & SPU_LS_MASK;
++                int plain = !(ctx->policy_mode && ctx->pc >= 0x4000 && ctx->pc < 0x3E000 &&
++                              jl >= 0xA00 && jl < 0x4000);
++                for (uint32_t m = plain ? ctx->resident_code_mask : 0; m; m &= m - 1) {
++                    const unsigned slot = (unsigned)__builtin_ctz(m);
++                    if (ctx->pc - ctx->resident_code[slot].lsa < ctx->resident_code[slot].size &&
++                        ctx->pc >= ctx->resident_code[slot].lsa) { plain = 0; break; }
++                }
++                if (plain) {
++                    ctx->resident_task = 0;
++                    spu_check_stack_reset(ctx, fn);
++#if defined(__clang__)
++                    __attribute__((musttail)) return fn(ctx);
++#else
++                    fn(ctx);
++                    return;
++#endif
++                }
++            }
++        }
++    }
++#if defined(__clang__)
++    __attribute__((musttail)) return spu_indirect_branch_slow(ctx);
++#else
++    spu_indirect_branch_slow(ctx);
++#endif
++}
++
++static __attribute__((noinline)) void spu_indirect_branch_slow(spu_context* ctx)
++{
++    if (__builtin_expect(s_ibs_on != 0, 0)) spu_ibs_entry();
 +    /* Real SPU bi/bisl mask the target to the 256 KB local store; the high bits
 +     * of a computed pointer (e.g. a packed handle like 0x7a028803) are ignored.
 +     * Without this, any indirect branch through such a value fails the lookup
@@ -18864,6 +18935,7 @@ index 59f5e4b8..5178d946 100644
 +                    ctx->pc >= ctx->resident_code[slot].lsa) { plain = 0; break; }
 +            }
 +            if (plain) {
++                IBS(IBS_HIT);
 +                ctx->resident_task = 0;
 +                spu_check_stack_reset(ctx, fn);
 +#if defined(__clang__)
@@ -18873,8 +18945,9 @@ index 59f5e4b8..5178d946 100644
 +                return;
 +#endif
 +            }
-+        }
-+    }
++            IBS(IBS_NOTRY);
++        } else IBS(IBS_MISS);
++    } else IBS(IBS_NOTRY);
 +    /* SPURS kernel services (policy-module runs only): the HLE kernel plants
 +     * these two reserved addresses as exitToKernelAddr / selectWorkloadAddr in
 +     * the SpursKernelContext (spurs_policy.c). */
@@ -19103,11 +19176,14 @@ index 59f5e4b8..5178d946 100644
 +    }
 +    if (!code_owner && ctx->resident_task)
 +        fn = spu_lookup(ctx->pc, ctx->resident_task);
++    if (code_owner) IBS(fn ? IBS_CODE : IBS_NONE);
++    else if (fn) IBS(IBS_TASK);
 +    /* Resident overlay next: streamed code overwrote that LS range, so its lift
 +     * is the truth there -- the base image's stale bytes at the same addresses
 +     * may also be registered (historical junk lifts) and must lose. */
-+    if (!code_owner && !fn && ctx->resident_ovl) fn = spu_lookup(ctx->pc, ctx->resident_ovl);
-+    if (!code_owner && !fn) fn = spu_lookup(ctx->pc, ctx->image_id);
++    if (!code_owner && !fn && ctx->resident_ovl && (fn = spu_lookup(ctx->pc, ctx->resident_ovl)) != NULL)
++        IBS(IBS_OVL);
++    if (!code_owner && !fn && (fn = spu_lookup(ctx->pc, ctx->image_id)) != NULL) IBS(IBS_IMG);
 +    /* Only these lookups' answer goes into the dispatch cache: the fallbacks
 +     * below read local store or change the overlay. */
 +    const int ibc_fill = fn && !code_owner && !ctx->resident_task && s_ibc_on > 0 &&
@@ -19249,6 +19325,7 @@ index 59f5e4b8..5178d946 100644
 +                                "pc=0x%05X -> overlay image %d\n", codeBase, ctx->pc & SPU_LS_MASK, img);
 +                }
 +                fn = spu_lookup(ctx->pc, img);
++                if (fn) IBS(IBS_MATCH);
 +            }
 +        }
 +    }
@@ -19403,7 +19480,7 @@ index 59f5e4b8..5178d946 100644
 +                  s_dumped = 1; } } }
 +    }
 +    if (fn) {
-+        if (ibc_fill && fn == ibc_fn) spu_ibc_fill(ctx, fn);
++        if (ibc_fill && fn == ibc_fn) { spu_ibc_fill(ctx, fn); IBS(IBS_FILL); }
 +        /* After the overlay match above, so the header names the overlay this
 +         * entry resolved to. */
 +        if (jc_link) spu_jobcap_open(ctx, jc_link);
@@ -20892,7 +20969,7 @@ index 7b0debec..83a8b623 100644
      case MFC_WrListStallAck:
          /* Acknowledge a stalled list element's tag group: resume the parked
 diff --git a/runtime/spu/spu_drain.c b/runtime/spu/spu_drain.c
-index fc3cea12..efdde9ee 100644
+index fc3cea12..8cdd818e 100644
 --- a/runtime/spu/spu_drain.c
 +++ b/runtime/spu/spu_drain.c
 @@ -1,52 +1,54 @@
@@ -20998,7 +21075,7 @@ index fc3cea12..efdde9ee 100644
  /* Last 32 drain steps on this host thread (pc), for post-mortems of a run that
   * ended where it should not have (spurs_policy.c, [pm-end]). */
  static _Thread_local uint32_t t_recent[32];
-@@ -58,415 +60,551 @@ unsigned spu_recent_pcs(uint32_t* out, unsigned max)
+@@ -58,415 +60,568 @@ unsigned spu_recent_pcs(uint32_t* out, unsigned max)
      return k;
  }
  
@@ -21804,11 +21881,28 @@ index fc3cea12..efdde9ee 100644
 +    spu_hop(ctx, fn);
 +}
 +
++static __attribute__((noinline)) void spu_drain_call_loop(spu_context* ctx, uint32_t return_pc);
++
++/* Every lifted indirect call (bisl) ends with this. Most callees come back by
++ * host return with nothing queued, and the drain loop below -- whose interrupt
++ * frame holds a jmp_buf, so it pays a large frame and a stack cookie -- has
++ * nothing to do: return before building it. */
 +void spu_drain_call(spu_context* ctx, uint32_t return_pc)
 +{
 +    if (__builtin_expect(g_spu_direct < 0, 0)) spu_direct_init();
 +    if (__builtin_expect(ctx->host_depth >= s_depth_max, 0))
 +        spu_depth_guard(ctx);
++    if (__builtin_expect(!g_spu_trampoline_fn &&
++                         ((ctx->pc ^ return_pc) & SPU_LS_MASK) == 0, 1)) {
++        ctx->drain_ret_pc = 0;
++        if (g_spu_jobret_on) spu_job_drain_return(ctx, return_pc);
++        return;
++    }
++    spu_drain_call_loop(ctx, return_pc);
++}
++
++static __attribute__((noinline)) void spu_drain_call_loop(spu_context* ctx, uint32_t return_pc)
++{
 +    /* drain_ret_pc goes back to 0 on the way out (upstream v0.18 restores the
 +     * enclosing drain's). On this branch the interpreter's stop at an outer
 +     * return pc it passes through hangs GoW:A's RenJobSet policy module

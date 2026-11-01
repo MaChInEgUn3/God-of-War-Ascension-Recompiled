@@ -799,6 +799,25 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M1.01: SPU indirect-branch dispatch takes a frame-less fast path (2026-11-01).**
+  - Why: under load the frame is throughput-bound (x277-x279 below), so CPU per frame is the lever. A loaded
+    profile of the audio workload (x280: runWz, two busy processes, `SPURS_PM_PROF`, `PS3_SAMPLE_HOST` with
+    `PS3_SAMPLE_WIDS=8`) put 40% of its host time in `spu_indirect_branch` (27.5%) and `spu_drain_call` (12.7%).
+    `SPU_IBC_COUNT` (x281): ~4.7M dispatches a second, 90.6% cache hits. A hit still paid the full resolver's
+    frame (eight saved registers, two XMM saves, a stack cookie) and a call into the interrupt-restore check.
+  - A 4096-entry cache (x282, x283) cut refills from 3.5% to 0.7% of dispatches but not the host share; the
+    size stays 512.
+  - Toolkit b8e3c612: the hit is served by a small `spu_indirect_branch`, everything else by the unchanged
+    resolver (`spu_indirect_branch_slow`); `spu_drain_call` returns before building its jmp_buf frame when
+    the callee came back with nothing queued. Same recipe, one run each (x284, x285): the dispatch functions
+    are ~34% of the audio workload's host time (`spu_indirect_branch` 16.1% + 5.4% slow path; the drain loop
+    still runs for 7%, for callees that leave a tail-chain queued). No hang, heartbeats normal.
+  - Size: dispatch was ~0.18 of a core in the audio workload; this saves a fraction of that, too small to show
+    in a single loaded run's frame rate (the runs also hit the escape at different times: x280 had twice the
+    frames of x283-x285, so their per-job costs are not comparable). EDGE spends ~4% in dispatch (M0.95 profile).
+  - Next candidate: a per-call-site inline cache in the SPU lifter (`bisl` sites check the last target and call
+    the lifted function directly) would skip both functions for the common case; it needs the job modules
+    relifted and validated.
 - **M1.00: idle WWS lists are probed at least every 4th kernel pass; no more stall clusters (2026-11-01).**
   - Observed (x262-x264, details below): stall pieces of 39-149 ms, with every traced thread waiting and no
     SPU but audio running, that end when `CollisL`, `MeshProcJobs` or `RsxSync` is next dispatched. Probing idle

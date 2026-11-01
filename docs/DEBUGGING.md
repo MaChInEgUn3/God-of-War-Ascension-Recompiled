@@ -248,7 +248,11 @@ Lessons that cost days; keep them.
 * **SPU indirect-branch dispatch cache** (M0.79): `PS3_SPU_IBC=0` turns it off, to check whether a dispatch bug comes
   from the cache. It is also off whenever `SPU_IBCOV`, `SPU_IB_STATS`, `SPU_POLLTRACE`, `YDKJ_POLTRACE`,
   `SPU_JOBTRACE`, `SPU_JOBEXEC` or `LBP_HLE_JOBDONE` is set, and while job capture or replay runs, so those traces
-  see every dispatch.
+  see every dispatch. Since M1.01 a cache hit is served by a small `spu_indirect_branch` with no frame; anything
+  else goes to `spu_indirect_branch_slow` (the full resolver), so a host profile splits the two.
+  `SPU_IBC_COUNT=1` prints `[ibc-count]` every 4M dispatches: hit, notry (cache not tried), miss, and on the slow
+  path which lookup answered (code slot, task, overlay, image, WWS module match, none) and fills. It sends every
+  dispatch down the slow path, so use it for rates and shares, not for timing.
 * **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:
