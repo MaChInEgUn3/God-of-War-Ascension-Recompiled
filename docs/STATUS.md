@@ -815,6 +815,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Size: dispatch was ~0.18 of a core in the audio workload; this saves a fraction of that, too small to show
     in a single loaded run's frame rate (the runs also hit the escape at different times: x280 had twice the
     frames of x283-x285, so their per-job costs are not comparable). EDGE spends ~4% in dispatch (M0.95 profile).
+  - 600 s smoke run of runWz with no environment set (x291): no hang; out of the opening by 120 s, 10.5 game
+    frames/s over 420-600 s on a busy host (82-97% CPU from other programs). An earlier attempt (x290) ran while
+    other programs were compiling (host at 100%) and never left the opening; not a regression.
   - Next candidate: a per-call-site inline cache in the SPU lifter (`bisl` sites check the last target and call
     the lifted function directly) would skip both functions for the common case; it needs the job modules
     relifted and validated.
