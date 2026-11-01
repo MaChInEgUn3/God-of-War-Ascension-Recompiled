@@ -819,6 +819,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     `Sleep(1)` after 64 tries. The coherency spin yields with `SwitchToThread` every 4096 tries. On a machine
     with fewer cores than busy threads this is the first thing to check; `SPURS_KERN_PRIO=0` turns it off.
   - 600 s smoke run with no environment set (x256): the kernel threads report `prio=1`, no hang.
+  - Lighter fixed load (two busy processes, x259, order k0 k1 k1 k0 k0 k1): `SPURS_KERN_PRIO=1` 7.3, 8.4, 8.7
+    (mean 8.1) against 0 at 4.4, 7.8, 8.3 (mean 6.8; medians 8.4 and 7.8). The 4.4 run fell to 1.1-1.6 at the
+    end; without it the arms overlap. Same direction, weaker than under three busy processes.
   - Same load, the walker thread above normal as well (port `GOW_WALKER_PRIO=1`, diagnostic, default unset;
     x257, order w1 w0 w0 w1): 4.2 / 8.2 against 7.6 / 8.0. The 4.2 run collapsed to 1.3-3.2 at the end. Not
     kept. The two default runs repeat M0.99's priority arm (7.8).
