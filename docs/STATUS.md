@@ -825,13 +825,22 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     runs 31% of the time (~6 ms per frame).
   - That dead time is not spread evenly: the median frame has none, and 15 of 191 frames hold 82% of it (pieces
     of 30-63 ms, clustered at 484.4-485.5 s and around 492 s; frame max 322 ms). During those pieces every
-    other PPU thread is blocked, the RSX walker is idle 86% of the time and only the audio SPU runs. The run that
-    ends a piece is a WWS list in wid 0, 0xE or 0x12 (38, 30 and 11 of 94 pieces). Cause not named: a few
-    stalls, not a wake latency spread over every frame.
+    traced PPU thread is blocked (the four fios media threads make no traced calls, so the trace cannot say what
+    they do), the RSX walker is idle 86% of the time and only the audio SPU runs. The run that ends a piece is
+    `Wws_Job/CollisL` (wid 0), `MeshProcJobs` (0xE) or `RsxSync` (0x12) (38, 30 and 11 of 94 pieces). Cause
+    not named: a few stalls, not a wake latency spread over every frame. The run's CPU log has the security
+    agent's two processes (`avp`, `kpm`) at 0.4 cores each in the first sample after the cluster, above their
+    level elsewhere; suggestive only. `cpuwatch.ps1` now also logs the game's file read/write rates.
+  - Phases (per frame, from the first EDGE run after the flip to the last before the next): the EDGE phase is
+    78.6 ms (median) of the 96.7 ms frame, and EDGE runs 92% of it; before and after it 1.9 and 1.6 ms. wid 3
+    (`General6`, 50 jobs per game frame) runs 52 ms inside the EDGE phase, on other lanes. The main thread's
+    19.5 ms of blocking is all inside the EDGE phase. Each EDGE wid's ~65 ms per frame runs one job after
+    another, so the frame tracks the length of those three chains.
   - The RSX walker drains 66 ms per frame and waits on the GPU ~4.
   - Reading: the fast frame is SPU compute, mostly the EDGE jobs; dispatch between module runs is cheap. The
     time with nothing running (~9 ms per frame, ~9%) is mostly a few stall frames. The larger lever is the cost
-    per EDGE job (lifted code, native stages).
+    per EDGE job, which has no named next step yet: the EDGE profile is 79% lifted code and ~20% runtime,
+    register promotion was closed, and the last two native stages gave +3-4% and +2.7-3.8%.
 - **M0.99: the frame rate holds better under background load: SPURS kernel threads above normal priority
   (2026-10-31).**
   - Cause: with the host's CPUs busy, the main thread waited ~60 ms per frame for the frame's task batch
