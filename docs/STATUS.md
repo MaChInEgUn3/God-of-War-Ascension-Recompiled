@@ -979,6 +979,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         sample, so this is a correlation over many samples, not a per-window measurement; what the invisible load
         is was not recorded. `cpuwatch.ps1` now also lists the top processes by performance counter (`perf=`),
         which sees every process.
+      - Fast-state census (x261, same build and recipe, 10-11 game frames/s from 330 s on, 60-s windows over
+        300-600 s): the game uses 4.9-5.5 cores. Walker 0.69-0.76; the same single hot SPURS kernel thread
+        0.74-0.76; the other five 0.35-0.73; PPU main 0.55-0.64. Against the slow run (x260d), the hot kernel
+        thread and the walker barely change; the PPU main thread and the other five kernel threads do half the
+        work or less. The hot thread costs the same ~0.75 cores at 3 and at 10 frames/s, and has 3-5 times the
+        kernel time of its peers, so most of its time does not scale with frames (polling or pass overhead).
+        What it runs is not identified yet. Other load seen by the new `perf=` field: the WMI provider host at
+        ~0.4 cores, with ~2-core bursts roughly every minute; explorer bursts of 1-3.4 cores together with the
+        NVIDIA display container; the security agent `avp` at 0.1-0.4; the author's agent session (Windows
+        Terminal, claude) at 0.4-2. The WMI cost is at least partly the monitoring itself (`cpuwatch.ps1` reads
+        the per-process counters every 30 s).
     - Kept, default off: `GOW_IDLE_WAIT` (port: 0 = `Sleep(4)` after a walk that caught up with put, 1 = the
       toolkit's kick wait, 2 = `Sleep(1)`) and the fetch-repeat stats. `SPU_SLOW_PCT` and `GCM_PARK_PAUSE` were
       removed (void and neutral). Benchmarks run muted (`PS3_MUTE=1`).
