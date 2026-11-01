@@ -799,6 +799,26 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **What bounds the fast frame now (2026-11-01, x262).** `PS3_FTRACE=480:20` on runWv (M0.99 production) in the
+  fast state, no synthetic load, with `SPURS_PM_PROF` and `GOW_MAIN_PROF`; scratchpad `ftgaps.py` reads the
+  trace. The M0.60 picture (main thread asleep 310 ms of a 463 ms frame, EDGE one job at a time) no longer
+  holds.
+  - 191 frames, median 96.7 ms (10.3 fps). SPUs 0-3 are busy 72-76% of the frame, SPU 4 42%, SPU 5 87%
+    (mostly the audio workload, wid 8). Work other than audio keeps at least one SPU busy for 95.5 of 104.4 ms
+    per frame.
+  - The three EDGE workloads (wids 0xF-0x11) now run side by side: each ~65% of a kernel thread, ~5600 jobs/s
+    and the same job count each (~116 us per job), with no idle polls and 2% in channel waits. Their union
+    covers 72.8 ms per frame, and the gaps between consecutive EDGE runs total 1.1 ms per frame (median 1 us).
+    wid 3 53 ms per frame (50 jobs per game frame), wid 0xD 29, wids 7 and 0xB 16 each.
+  - The main thread is blocked 34 ms per frame: 19.4 at `0x3436BC` (the task batch, in `0x368C64`) and 12.6 at
+    `0x35E7B4`. The main-thread sampler also shows spin waits that the timeline counts as running: ~12% at
+    `0x416A4C` (a RenJobSet job) and 6-8% at `0x467B2C` (WWS job completion). While it waits at `0x35E7B4`,
+    EDGE is busy 91% of the time. While it waits at `0x3436BC`, EDGE is busy 39%, and no SPU other than audio
+    runs 31% of the time (~6 ms per frame).
+  - The RSX walker drains 66 ms per frame and waits on the GPU ~4.
+  - Reading: the fast frame is SPU compute, mostly the EDGE jobs. Handoffs with nothing running cost ~9 ms per
+    frame (~9%), mostly at the task batch: the part M0.99 acts on. The larger lever is the cost per EDGE job
+    (lifted code, native stages).
 - **M0.99: the frame rate holds better under background load: SPURS kernel threads above normal priority
   (2026-10-31).**
   - Cause: with the host's CPUs busy, the main thread waited ~60 ms per frame for the frame's task batch
