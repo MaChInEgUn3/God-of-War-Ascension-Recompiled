@@ -819,6 +819,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     `Sleep(1)` after 64 tries. The coherency spin yields with `SwitchToThread` every 4096 tries. On a machine
     with fewer cores than busy threads this is the first thing to check; `SPURS_KERN_PRIO=0` turns it off.
   - 600 s smoke run with no environment set (x256): the kernel threads report `prio=1`, no hang.
+  - Same load, the walker thread above normal as well (port `GOW_WALKER_PRIO=1`, diagnostic, default unset;
+    x257, order w1 w0 w0 w1): 4.2 / 8.2 against 7.6 / 8.0. The 4.2 run collapsed to 1.3-3.2 at the end. Not
+    kept. The two default runs repeat M0.99's priority arm (7.8).
+  - Same load, the whole game process AboveNormal against Normal (x258, order p n n p): 4.4 / 6.3 against
+    4.6 / 6.1. No effect. The whole batch ran slower than x257 on a busier host (CPU samples at 98-100%). A game
+    that already wins every priority contest and still loses speed is losing it to the busy processes sharing
+    its physical cores (hyperthreading), which no priority setting prevents. Not kept.
 - **M0.98: draws that repeat the previous draw's state reuse it (2026-10-31).**
   - Counters (x220/x221, runWl): ~77% of draws have the previous draw's targets, pipeline, textures, samplers,
     viewport, scissor, stencil ref, depth bounds, fragment constants and vertex constants, all triangle lists, with

@@ -319,6 +319,10 @@ static DWORD WINAPI main_prof(LPVOID arg)
 
 static DWORD WINAPI frame_clock(LPVOID)
 {
+    /* GOW_WALKER_PRIO=<n> (diagnostic, default unset): SetThreadPriority level
+     * for this thread, which walks the RSX FIFO. */
+    { const char* p = getenv("GOW_WALKER_PRIO");
+      if (p && *p) SetThreadPriority(GetCurrentThread(), atoi(p)); }
     { const char* m = getenv("GOW_MAIN_PROF");
       if (m && atoi(m) > 0) CreateThread(NULL, 0, main_prof, (LPVOID)(uintptr_t)(atoi(m) * 1000), 0, NULL); }
     { const char* w = getenv("GOW_CLOCK_WATCH");

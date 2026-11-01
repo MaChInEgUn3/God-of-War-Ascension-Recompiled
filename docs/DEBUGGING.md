@@ -368,6 +368,8 @@ Lessons that cost days; keep them.
 * **SPURS kernel thread priority**: `SPURS_KERN_PRIO=<n>` (toolkit default unset, GoW:A port default 1) passes n to
   `SetThreadPriority` for the kernel threads (0 = normal, i.e. off; 1 = above normal). The `[spurs-kern] ... poll
   thread live` line ends with the level applied. It keeps the frame rate up on a busy host (STATUS M0.99).
+* **Walker thread priority**: `GOW_WALKER_PRIO=<n>` (port, diagnostic, default unset) passes n to `SetThreadPriority`
+  for the thread that walks the RSX FIFO. Not kept (STATUS M0.99, x257).
 * **Heartbeat timer check**: each `[heartbeat]` line (`GOW_HEARTBEAT=<s>`) ends with `sleep1=` (the mean of ten
   `Sleep(1)` calls, ms) and `tres=` (the system timer resolution, ms), to catch the timer falling back to 15.6 ms.
 * **Host-side profile**: `PS3_SAMPLE=<ms>` samples every thread's RIP (reports every 10 s: guest functions,
