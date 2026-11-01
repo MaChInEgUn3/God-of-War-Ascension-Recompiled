@@ -799,6 +799,26 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M0.99: the frame rate holds better under background load: SPURS kernel threads above normal priority
+  (2026-10-31).**
+  - Cause: with the host's CPUs busy, the main thread waited ~60 ms per frame for the frame's task batch
+    (`0x368C64`) while the SPURS kernel threads napped (x247d1); a kernel thread waking from its `Sleep(1)` pass
+    pause at normal priority waits for a CPU at each link of the job chain (details in the M0.98 notes below).
+  - Toolkit `SPURS_KERN_PRIO=<n>` (default unset; 0 = normal) sets the kernel threads' `SetThreadPriority` level
+    and the `[spurs-kern] ... poll thread live` line prints the level applied. The GoW:A port sets 1.
+  - Under a fixed background load (scratchpad `burn.py`: three busy processes at normal priority on all 12
+    CPUs), game frames/s over 420-600 s from the heartbeats (the escape-anchored score voids most loaded runs,
+    whose steady state is ~8, so the raw window is used): default 6.0, 7.5, 5.5, 4.4 (mean 5.85);
+    `SPURS_KERN_PRIO=1` 8.3, 8.0, 8.9, 6.0 (mean 7.8, +33%; the 6.0 run's window still holds its load phase,
+    which counts against this arm). Every priority run is at or above every default run (x253, x254).
+  - Light load (the agent's terminal at ~1 core, no synthetic load; x255): 8.7 / 7.1 against 4.6 / 7.2.
+    A truly idle host is not measured; priority only acts when threads wait for a CPU, so a loss there is
+    unlikely but not tested.
+  - Caveat, priority inversion: kernel threads spin on a few locks. `ts_lock` (the taskset lock, also taken by
+    PPU-side HLE) spun with `Sleep(0)`, which yields only to equal or higher priority; it now falls back to
+    `Sleep(1)` after 64 tries. The coherency spin yields with `SwitchToThread` every 4096 tries. On a machine
+    with fewer cores than busy threads this is the first thing to check; `SPURS_KERN_PRIO=0` turns it off.
+  - 600 s smoke run with no environment set (x256): the kernel threads report `prio=1`, no hang.
 - **M0.98: draws that repeat the previous draw's state reuse it (2026-10-31).**
   - Counters (x220/x221, runWl): ~77% of draws have the previous draw's targets, pipeline, textures, samplers,
     viewport, scissor, stencil ref, depth bounds, fragment constants and vertex constants, all triangle lists, with

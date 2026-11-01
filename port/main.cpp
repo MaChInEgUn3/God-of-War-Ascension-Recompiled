@@ -659,6 +659,13 @@ int main(int argc, char** argv)
      * frame is a chain of dependent jobs across workloads; a timer tick per hop
      * halved the frame rate (measured 2.95 -> 6.25 game frames/s). */
     if (!getenv("SPURS_PASS_GREEDY")) _putenv_s("SPURS_PASS_GREEDY", "1");
+    /* SPURS_KERN_PRIO=1 (M0.99): kernel threads above normal priority. With the
+     * host's CPUs busy (other programs, the title's own spinning threads) a kernel
+     * thread waking from its pass nap at normal priority waited for a CPU at each
+     * link of the frame's job chain. Under a fixed background load (three busy
+     * processes) 7.8 against 5.9 game frames/s over four runs each (x253, x254).
+     * SPURS_KERN_PRIO=0 runs them at normal priority. */
+    if (!getenv("SPURS_KERN_PRIO")) _putenv_s("SPURS_KERN_PRIO", "1");
     /* SPURS_PM_RERUN_US=2000: after a module run that executed jobs, run the same
      * workload again at once (claim kept) for up to 2 ms. The WWS policy module
      * hands the SPU back after every job, so an EDGE list advanced one job per

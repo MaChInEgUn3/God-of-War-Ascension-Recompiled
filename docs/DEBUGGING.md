@@ -365,9 +365,9 @@ Lessons that cost days; keep them.
   `SPU_FP_CHECK_HOOK=0` (CMake `GOW_SPU_LS_PROBES`, default OFF). `SPU_LS_WATCH`, `SPU_SMC_WATCH` and
   `SPU_LS_LOWREAD` then see only accesses made by the runtime, and `SPU_FP_CHECK=1` checks nothing. Configure with
   `-DGOW_SPU_LS_PROBES=ON` to get both back. That costs ~10-15% per EDGE job (M0.61).
-* **SPURS kernel thread priority**: `SPURS_KERN_PRIO=<n>` (toolkit, default unset) passes n to `SetThreadPriority`
-  for the kernel threads (1 = above normal). It targets a full host, where threads waking from the pass nap wait
-  for a CPU (STATUS, x253).
+* **SPURS kernel thread priority**: `SPURS_KERN_PRIO=<n>` (toolkit default unset, GoW:A port default 1) passes n to
+  `SetThreadPriority` for the kernel threads (0 = normal, i.e. off; 1 = above normal). The `[spurs-kern] ... poll
+  thread live` line ends with the level applied. It keeps the frame rate up on a busy host (STATUS M0.99).
 * **Heartbeat timer check**: each `[heartbeat]` line (`GOW_HEARTBEAT=<s>`) ends with `sleep1=` (the mean of ten
   `Sleep(1)` calls, ms) and `tres=` (the system timer resolution, ms), to catch the timer falling back to 15.6 ms.
 * **Host-side profile**: `PS3_SAMPLE=<ms>` samples every thread's RIP (reports every 10 s: guest functions,
