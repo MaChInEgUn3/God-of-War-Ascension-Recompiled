@@ -12752,7 +12752,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..8ce4bb7b 100644
+index 59f5e4b8..02cb4a7a 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -12948,7 +12948,7 @@ index 59f5e4b8..8ce4bb7b 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4138 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4156 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -18827,11 +18827,29 @@ index 59f5e4b8..8ce4bb7b 100644
 +       IBS_FILL, IBS_N };
 +static volatile LONG64 s_ibs[IBS_N];
 +static int s_ibs_on = -1;
-+#define IBS(i) do { if (__builtin_expect(s_ibs_on > 0, 0)) InterlockedIncrement64(&s_ibs[i]); } while (0)
-+static __attribute__((noinline)) void spu_ibs_entry(void)
++/* SPU_IBC_COUNT_WIDS=<w>[,<w>...]: count only dispatches made while the SPURS kernel
++ * runs one of those workloads (wklCurrentId, LS 0x1DC). */
++static uint32_t s_ibs_wids;
++static SPU_THREAD_LOCAL int t_ibs_take;
++#define IBS(i) do { if (__builtin_expect(s_ibs_on > 0, 0) && t_ibs_take) InterlockedIncrement64(&s_ibs[i]); } while (0)
++static __attribute__((noinline)) void spu_ibs_entry(const spu_context* ctx)
 +{
-+    if (s_ibs_on < 0) s_ibs_on = getenv("SPU_IBC_COUNT") ? 1 : 0;
++    if (s_ibs_on < 0) {
++        s_ibs_on = getenv("SPU_IBC_COUNT") ? 1 : 0;
++        for (const char* e = getenv("SPU_IBC_COUNT_WIDS"); e && *e; ) {
++            const int w = atoi(e);
++            if (w >= 0 && w < 32) s_ibs_wids |= 1u << w;
++            while (*e && *e != ',') e++;
++            if (*e == ',') e++;
++        }
++    }
 +    if (s_ibs_on <= 0) return;
++    if (s_ibs_wids) {
++        const uint32_t w = ((uint32_t)ctx->ls[0x1DC] << 24 | (uint32_t)ctx->ls[0x1DD] << 16 |
++                            (uint32_t)ctx->ls[0x1DE] << 8 | ctx->ls[0x1DF]);
++        t_ibs_take = w < 32 && (s_ibs_wids >> w & 1);
++        if (!t_ibs_take) return;
++    } else t_ibs_take = 1;
 +    if ((InterlockedIncrement64(&s_ibs[IBS_ALL]) & ((1 << 22) - 1)) == 0) {
 +        static const char* nm[IBS_N] = { "all", "hit", "notry", "miss", "code", "task", "ovl", "img",
 +                                         "match", "none", "fill" };
@@ -18890,7 +18908,7 @@ index 59f5e4b8..8ce4bb7b 100644
 +
 +static __attribute__((noinline)) void spu_indirect_branch_slow(spu_context* ctx)
 +{
-+    if (__builtin_expect(s_ibs_on != 0, 0)) spu_ibs_entry();
++    if (__builtin_expect(s_ibs_on != 0, 0)) spu_ibs_entry(ctx);
 +    /* Real SPU bi/bisl mask the target to the 256 KB local store; the high bits
 +     * of a computed pointer (e.g. a packed handle like 0x7a028803) are ignored.
 +     * Without this, any indirect branch through such a value fails the lookup
@@ -19867,7 +19885,7 @@ index 00000000..79bffe73
 +
 +#endif /* SPU_COH_BITMAP_H */
 diff --git a/runtime/spu/spu_coherency.c b/runtime/spu/spu_coherency.c
-index bc7017da..7fc5f879 100644
+index bc7017da..3463e758 100644
 --- a/runtime/spu/spu_coherency.c
 +++ b/runtime/spu/spu_coherency.c
 @@ -7,11 +7,13 @@
@@ -19885,7 +19903,7 @@ index bc7017da..7fc5f879 100644
  
  #include <stdint.h>
  #include <stdio.h>
-@@ -39,15 +41,24 @@ static volatile long g_lockline = 0;
+@@ -39,15 +41,38 @@ static volatile long g_lockline = 0;
   * pause, and yield after a long wait. The bare exchange loop let GH3's four
   * idle job-policy pollers saturate the line and delay every other SPU atomic
   * -- FMOD's mixer task among them, 25-40 ms at a time. */
@@ -19909,10 +19927,24 @@ index bc7017da..7fc5f879 100644
 +    } while (_InterlockedExchange(&g_lockline, 1));
 +    QueryPerformanceCounter(&t1);
 +    g_spu_lockline_wait_ticks += (unsigned long long)(t1.QuadPart - t0.QuadPart);
++    /* SPU_LOCKLINE_STATS=1: every 2^16 contended acquisitions, [lockline] with the
++     * process-wide contended count, total and longest wait since the last line. */
++    { static int s_ls = -1; static volatile LONG64 s_n, s_w, s_mx;
++      if (s_ls < 0) s_ls = getenv("SPU_LOCKLINE_STATS") ? 1 : 0;
++      if (s_ls) {
++          const LONG64 w = t1.QuadPart - t0.QuadPart;
++          InterlockedAdd64(&s_w, w);
++          LONG64 m = s_mx; while (w > m && InterlockedCompareExchange64(&s_mx, w, m) != m) m = s_mx;
++          if ((InterlockedIncrement64(&s_n) & 0xFFFF) == 0) {
++              LARGE_INTEGER f; QueryPerformanceFrequency(&f);
++              const LONG64 tw = InterlockedExchange64(&s_w, 0), mx = InterlockedExchange64(&s_mx, 0);
++              fprintf(stderr, "[lockline] %.3f 65536 contended, %.1f ms waited, longest %.3f ms\n",
++                      (double)t1.QuadPart / f.QuadPart, tw * 1000.0 / f.QuadPart, mx * 1000.0 / f.QuadPart);
++          } } }
  }
  void spu_lockline_unlock(void) { _InterlockedExchange(&g_lockline, 0); }
  #else
-@@ -69,18 +80,17 @@ void spu_lockline_unlock(void) { atomic_flag_clear_explicit(&g_lockline, memory_
+@@ -69,18 +94,17 @@ void spu_lockline_unlock(void) { atomic_flag_clear_explicit(&g_lockline, memory_
   * line outside a hardcoded window would be silently non-coherent, which is the
   * failure this whole file exists to remove.
   * ===========================================================================*/
@@ -19937,7 +19969,7 @@ index bc7017da..7fc5f879 100644
  
  /* Every live virtual context may retain a reservation between scheduling
   * quanta; physical SPU count is not a bound on this set. All access is under
-@@ -93,15 +103,27 @@ static spu_coh_entry* s_coh_ctxs;
+@@ -93,15 +117,27 @@ static spu_coh_entry* s_coh_ctxs;
  
  unsigned long g_spu_lr_raise = 0;
  
@@ -19968,7 +20000,7 @@ index bc7017da..7fc5f879 100644
      spu_coh_entry* entry = (spu_coh_entry*)malloc(sizeof(*entry));
      if (!entry) {
          fprintf(stderr, "[spu-coh] cannot register reservation holder %p\n", (void*)ctx);
-@@ -111,6 +133,7 @@ void spu_coh_reserve(spu_context* ctx, uint32_t ea)
+@@ -111,6 +147,7 @@ void spu_coh_reserve(spu_context* ctx, uint32_t ea)
      entry->ctx = ctx;
      entry->next = s_coh_ctxs;
      s_coh_ctxs = entry;
@@ -19976,7 +20008,7 @@ index bc7017da..7fc5f879 100644
  }
  
  /* Drop a context from the reserving set.
-@@ -139,7 +162,14 @@ void spu_coh_unregister(spu_context* ctx)
+@@ -139,7 +176,14 @@ void spu_coh_unregister(spu_context* ctx)
          free(entry);
          break;
      }
@@ -19991,7 +20023,7 @@ index bc7017da..7fc5f879 100644
  }
  
  /* Drop every registered context that lies in [lo, hi) -- a host thread's
-@@ -170,9 +200,7 @@ void spu_coh_forget_range(uintptr_t lo, uintptr_t hi)
+@@ -170,9 +214,7 @@ void spu_coh_forget_range(uintptr_t lo, uintptr_t hi)
  
  int spu_coh_is_reserved(uint32_t addr)
  {
@@ -20002,7 +20034,7 @@ index bc7017da..7fc5f879 100644
  }
  
  /* A DMA PUT is issued BY an SPU, and hardware does not take that SPU's own
-@@ -199,16 +227,81 @@ void ppu_resv_break_line_absent(uint32_t ea) { (void)ea; }
+@@ -199,16 +241,81 @@ void ppu_resv_break_line_absent(uint32_t ea) { (void)ea; }
  __attribute__((weak)) void ppu_resv_break_line(uint32_t ea) { (void)ea; }
  #endif
  
@@ -20087,7 +20119,7 @@ index bc7017da..7fc5f879 100644
              g_spu_lr_raise++;
              spu_ch_wake(c);
          }
-@@ -219,12 +312,13 @@ void spu_coh_notify_write(uint32_t ea)
+@@ -219,12 +326,13 @@ void spu_coh_notify_write(uint32_t ea)
  {
      uint32_t line = ea & ~127u;
      ppu_resv_break_line(ea);

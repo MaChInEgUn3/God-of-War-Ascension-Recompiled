@@ -252,7 +252,9 @@ Lessons that cost days; keep them.
   else goes to `spu_indirect_branch_slow` (the full resolver), so a host profile splits the two.
   `SPU_IBC_COUNT=1` prints `[ibc-count]` every 4M dispatches: hit, notry (cache not tried), miss, and on the slow
   path which lookup answered (code slot, task, overlay, image, WWS module match, none) and fills. It sends every
-  dispatch down the slow path, so use it for rates and shares, not for timing.
+  dispatch down the slow path, so use it for rates and shares, not for timing. `SPU_IBC_COUNT_WIDS=<w>[,...]`
+  counts only dispatches made while the kernel runs those workloads. `SPU_LOCKLINE_STATS=1` prints `[lockline]`
+  every 65536 contended acquisitions of the global SPU lock line: total and longest wait since the last line.
 * **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:

@@ -818,6 +818,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - 600 s smoke run of runWz with no environment set (x291): no hang; out of the opening by 120 s, 10.5 game
     frames/s over 420-600 s on a busy host (82-97% CPU from other programs). An earlier attempt (x290) ran while
     other programs were compiling (host at 100%) and never left the opening; not a regression.
+  - EDGE (wid 15) the same way, loaded (x292, `PS3_SAMPLE_WIDS=15`): ~a third of its host time is runtime, not
+    job code -- `spu_indirect_branch_slow` 7.9%, `spu_lockline_lock` 6.0%, `spu_coh_notify_write` 4.0%,
+    `spu_wrch` 3.9%, `spu_drain_call` 3.4%, `spu_indirect_branch` 2.8%, `spu_overlay_note_get` 2.3%, MFC ~4%.
+    The native kernels (`g73_loop1` 6.6%, `gow_e550_ec08_run` 4.6%, `g53_run` 2.1%) and lifted job code are the
+    rest. EDGE dispatches (x293, `SPU_IBC_COUNT_WIDS=15,16,17`, ~1M/s): 72.5% cache hits; of the 23.9% that
+    miss, ~14 points are SPURS kernel services (module poll / exit), 6.7 refills, 3.6 resident-code-slot
+    targets (never cached), 4.2 overlay, 2.5 image.
+  - The global SPU lock line under that load (x294, `SPU_LOCKLINE_STATS=1`): ~25k contended acquisitions a
+    second, 0.8 us mean wait, 20 ms of waiting per second in all -- but 11 of 135 windows held a wait over 5 ms
+    and the longest was 71 ms (a holder descheduled by the busy host). Its 6% in the EDGE profile is mostly the
+    uncontended cost of a lock word bouncing between six threads. Splitting it by line would cut both; it
+    guards PUTLLC against PPU stores and the reservation bookkeeping, so it needs an audit first.
   - Next candidate: a per-call-site inline cache in the SPU lifter (`bisl` sites check the last target and call
     the lifted function directly) would skip both functions for the common case; it needs the job modules
     relifted and validated.
