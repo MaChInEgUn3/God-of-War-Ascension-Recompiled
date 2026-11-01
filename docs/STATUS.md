@@ -838,6 +838,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     the same three workloads (`CollisL` 34, `MeshProcJobs` 19, `RsxSync` 17). In both runs the cluster falls
     in a 30-s window where the process working set grows ~30 MB, which suggests the game moving into a new
     area. What the main thread's task batch waits for there is still open.
+  - Production settings (x263, profilers off) size it: frame median 71.2 ms (14.0 fps), SPUs 0-4 busy 87-91%,
+    main thread blocked 17 ms per frame (7.3 at `0x3436BC`, 5.5 at `0x35E7B4`). The time with no non-audio SPU
+    running is ~2% (not the ~9% of x262, which had two profilers on and two clusters in 20 s), and 12 of 758
+    frames hold 83% of it. Outside the stall clusters the SPUs are close to full: the frame is SPU compute.
+  - The stall is the kernel's idle back-off (x264, same recipe as x263 plus `SPURS_IDLE_MAX=0`, the
+    diagnostic end: every enabled module every pass). The title never raises readyCount for these WWS lists,
+    so the kernel finds their work by probing, and a module that keeps finding nothing is probed only every
+    2nd..16th pass (default cap 4 = every 16th, ~27 ms at the measured `Sleep(1)`). A chain of such links
+    (`CollisL` -> `MeshProcJobs` -> `RsxSync` -> the task batch) adds up to the 39-149 ms pieces. With the cap at
+    0: time with nothing running 254 ms in 60 s (x263: 1351), longest piece 17.5 ms (149), main-thread wait at
+    `0x3436BC` 3.0 ms per frame (7.3), 810 frames in the 60-s window (758, +7%), game CPU ~7.3 cores (~7.0).
+    One run each; a moderate cap is the candidate default, to be A/B'd.
   - Phases (per frame, from the first EDGE run after the flip to the last before the next): the EDGE phase is
     78.6 ms (median) of the 96.7 ms frame, and EDGE runs 92% of it; before and after it 1.9 and 1.6 ms. wid 3
     (`General6`, 50 jobs per game frame) runs 52 ms inside the EDGE phase, on other lanes. The main thread's
