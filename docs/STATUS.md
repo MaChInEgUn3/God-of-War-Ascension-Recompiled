@@ -961,6 +961,24 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         x253, order b0 b1 b1 b0, game frames/s over 420-600 s from the heartbeats): default 6.0 / 7.5,
         `SPURS_KERN_PRIO=1` 8.3 / 8.0. The load alone takes production from ~11 to ~7.5. One default run fell to
         2.9 at the end, and neither priority run did. Suggestive, not established: two runs per arm.
+      - Per-thread CPU in a slow run (x260d, runWv, no synthetic load, 2-5 game frames/s from 210 s on; scratchpad
+        `thrsnap3.ps1` reads each thread's start address and maps it to the `.map`; 60-s windows over 300-540 s):
+        the game uses 2.8-3.5 cores. RSX walker (`frame_clock`) 0.60-0.72 cores (0.19-0.27 of it in the kernel);
+        one SPURS kernel thread 0.70-0.75; the other five 0.11-0.39 each; the PPU main thread only 0.21-0.31.
+        No thread spins near a full core, so contention with the runtime's own spinning is ruled out as the cause
+        of slow stretches. The host was not quiet: other processes kept it at 75-100% busy (file explorer up to
+        1.2 cores; ~0.9 cores of python from an unrelated job). The earlier run x260c, on the same host, held
+        6.4-9.2 over 300-600 s. (`x260d_thr.txt` window labels are 243 s behind game time: the snapshot script
+        was restarted mid-run.)
+      - Hidden host load. The run CPU logs (scratchpad `cpuwatch.ps1`) listed processes from `Get-Process`, which
+        reports no CPU for processes it cannot open (services, the security agents on this host), so "no other
+        load" never meant a quiet host. The total busy figure counts them: across 25 runs without synthetic load
+        (x240-x260, 240-600 s, 244 samples of 30 s), in windows under 6 game frames/s the rest of the host used
+        5.7 cores (median; 3.5 of them invisible to `Get-Process`) against 3.2 (1.8 invisible) in windows at 8 or
+        more. Slow windows coincide with ~2.5 more cores of other work. The busy figure is an instantaneous
+        sample, so this is a correlation over many samples, not a per-window measurement; what the invisible load
+        is was not recorded. `cpuwatch.ps1` now also lists the top processes by performance counter (`perf=`),
+        which sees every process.
     - Kept, default off: `GOW_IDLE_WAIT` (port: 0 = `Sleep(4)` after a walk that caught up with put, 1 = the
       toolkit's kick wait, 2 = `Sleep(1)`) and the fetch-repeat stats. `SPU_SLOW_PCT` and `GCM_PARK_PAUSE` were
       removed (void and neutral). Benchmarks run muted (`PS3_MUTE=1`).
