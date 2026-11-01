@@ -977,7 +977,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         5.7 cores (median; 3.5 of them invisible to `Get-Process`) against 3.2 (1.8 invisible) in windows at 8 or
         more. Slow windows coincide with ~2.5 more cores of other work. The busy figure is an instantaneous
         sample, so this is a correlation over many samples, not a per-window measurement; what the invisible load
-        is was not recorded. `cpuwatch.ps1` now also lists the top processes by performance counter (`perf=`),
+        is was not recorded. It holds after the load phase too (22 runs that escape, samples after the escape:
+        invisible 3.9 cores in the 10 windows under 6 against 1.9 in 175 windows at 8 or more), so it is not only
+        the security agents scanning the level load's file I/O. Its direction is not established: the correlation
+        with the game's rate is the same with the load 30 s before, at the same time and 30 s after (-0.35 to
+        -0.38), and idle-priority background work grows whenever the game uses less CPU. The burners establish
+        only that load slows the game. `cpuwatch.ps1` now also lists the top processes by performance counter (`perf=`),
         which sees every process.
       - Fast-state census (x261, same build and recipe, 10-11 game frames/s from 330 s on, 60-s windows over
         300-600 s): the game uses 4.9-5.5 cores. Walker 0.69-0.76; the same single hot SPURS kernel thread
@@ -991,8 +996,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         is paced in real time; `PS3_MUTE=1` only silences the device. Not on the frame's path; its ~0.75 cores
         only matter as one more busy CPU.
       - Other load seen by the new `perf=` field: the WMI provider host at ~0.4 cores, with ~2-core bursts roughly
-        every minute; explorer bursts of 1-3.4 cores together with the NVIDIA display container (no explorer
-        window was open, and the bursts do not line up with the frame dumps); the security agent `avp` at 0.1-0.4;
+        every minute; explorer bursts of 1.4-3.4 cores together with the NVIDIA display container (~0.8) and
+        `nvcontainer` (0.4-0.9) in the same samples, about every 110 s (t = 175, 286, 396, 646; no explorer window
+        was open, and the bursts do not line up with the frame dumps): about one burner's worth, periodically; the security agent `avp` at 0.1-0.4;
         the author's agent session (Windows Terminal, claude) at 0.4-2.
       - The monitor itself is not the hidden load. The WMI provider host sat at 0.66 cores over 30 s with no
         `cpuwatch.ps1` running and at 0.53-0.68 with it. The per-process counter query (`sys=`) arrived in
