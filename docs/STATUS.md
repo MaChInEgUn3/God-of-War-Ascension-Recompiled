@@ -1,4 +1,4 @@
-# Status (updated 2026-10-28)
+# Status (updated 2026-11-01)
 
 ## Works
 * Loader, lifter, compile and link of the whole PPU; boot through CRT, FIOS, PSARC mounting, DCDS, savedata.
@@ -811,6 +811,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     included).
   - `SPURS_IDLE_MAX=0` (every module every pass) removed the clusters entirely in one traced run (x264: longest
     piece 17.5 ms against 149) for ~0.3 more cores; it stays a diagnostic setting.
+  - 0 against 2 (x267, runWx, warm-up then i0 i2 i2 i0, 420-600 s): 13.39 / 7.38 against 13.78 / 10.54; escape
+    window 12.64 / 11.22 against 12.29 / 11.62. No gain from 0. The two low runs end with other load on the host
+    (a browser at 1.1-1.6 cores and the security agent at 0.6-1.2 in i0b; the security agent and the agent
+    session's terminal at ~0.9 each in i2b). 2 stays.
   - 600 s smoke run of runWx with no environment set (x266): no hang; 12.9-14.0 game frames/s from 330 s on
     (its load phase ran slow until 300 s, as load phases vary run to run).
 - **What bounds the fast frame now (2026-11-01, x262).** `PS3_FTRACE=480:20` on runWv (M0.99 production) in the
@@ -1058,7 +1062,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         with the game's rate is the same with the load 30 s before, at the same time and 30 s after (-0.35 to
         -0.38), and idle-priority background work grows whenever the game uses less CPU. The burners establish
         only that load slows the game. `cpuwatch.ps1` now also lists the top processes by performance counter (`perf=`),
-        which sees every process.
+        which sees every process. The same build reads differently by time of day: daytime production runs on
+        2026-10-31 scored ~10.5-11.5, while the default arms between 00:20 and 05:05 the next night, on a
+        quieter host, read 12-14 (x263 trace median 14.0 fps; x265 default runs 13.19 / 11.32). Compare A/B arms
+        only within one batch.
       - Fast-state census (x261, same build and recipe, 10-11 game frames/s from 330 s on, 60-s windows over
         300-600 s): the game uses 4.9-5.5 cores. Walker 0.69-0.76; the same single hot SPURS kernel thread
         0.74-0.76; the other five 0.35-0.73; PPU main 0.55-0.64. Against the slow run (x260d), the hot kernel
