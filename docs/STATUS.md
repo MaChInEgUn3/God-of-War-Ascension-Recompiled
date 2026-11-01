@@ -800,10 +800,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
 - **M1.00: idle WWS lists are probed at least every 4th kernel pass; no more stall clusters (2026-11-01).**
-  - Cause (x262-x264, details below): the title never raises readyCount for its WWS job lists, so the kernel
-    finds their work by probing them, and the idle back-off probed a list that kept finding nothing only every
-    16th pass. A chain of backed-off lists (`CollisL` -> `MeshProcJobs` -> `RsxSync` -> the main thread's task
-    batch) stalled the game 39-149 ms at a time, with every traced thread waiting and no SPU but audio running.
+  - Observed (x262-x264, details below): stall pieces of 39-149 ms, with every traced thread waiting and no
+    SPU but audio running, that end when `CollisL`, `MeshProcJobs` or `RsxSync` is next dispatched. Probing idle
+    modules more often shortens them. Why is only partly known (x270, below): the title does raise readyCount
+    for `CollisL` and `MeshProcJobs`, but 1-59 ms after it writes the list header, and their runs follow the
+    kick; `RsxSync` runs are mostly found by probing. An earlier version of this entry said the title never
+    kicks these lists; that was wrong.
   - The GoW:A port now sets `SPURS_IDLE_MAX=2` (every 4th pass at most; toolkit default 4). A/B on runWw, no
     load, no profilers, a discarded warm-up run first, order i2 i4 i4 i2 (x265), game frames/s over 420-600 s:
     13.44 / 13.46 against 13.19 / 11.32. Over the escape window 12.78 / 11.74 against 12.43 / 10.71. The arrival
@@ -825,8 +827,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - The same load with `SPURS_IDLE_MAX=0` (x269): dead time 4.0 s in 60, longest piece 37 ms, task-batch wait
     31.5 ms per frame, frame 127.8 ms, 468 frames in the window against 420. The probing cost shows: EDGE
     union busy 95 ms per frame (75 in x268). The 30-s heartbeats are about the same (~8 game frames/s in both;
-    x269 also had the security agent at ~1.1-1.3 cores). Faster probing only partly helps; the robust fix is to
-    know when the PPU pushes work to these lists instead of polling for it.
+    x269 also had the security agent at ~1.1-1.3 cores). Faster probing only partly helps.
+  - What the PPU writes (x270: runWy, toolkit `SPURS_WWS_HDR_LOG=0,7,14,18` with `_AFTER=420`, two busy
+    processes; the 400-line cap covered 1.7 s and no trace ran with it). For wids 0 and 14 the header changes
+    with the module not having run (the PPU's write) and the kick (readyCount) comes 1-59 ms later; the next
+    run with work follows the kick. wid 18's runs mostly come without a kick. In the dead pieces of x268 the main
+    thread polls at `0x3436BC` 1.6 times per ms (1.5 outside them; quiet x264 1.3 and 1.5), so it is not slow
+    to wake: the work it waits for is not ready yet, because the kick is late. Who raises readyCount for these
+    lists, and what delays it under load, is the open question.
   - 600 s smoke run of runWx with no environment set (x266): no hang; 12.9-14.0 game frames/s from 330 s on
     (its load phase ran slow until 300 s, as load phases vary run to run).
 - **What bounds the fast frame now (2026-11-01, x262).** `PS3_FTRACE=480:20` on runWv (M0.99 production) in the
@@ -872,11 +880,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     main thread blocked 17 ms per frame (7.3 at `0x3436BC`, 5.5 at `0x35E7B4`). The time with no non-audio SPU
     running is ~2% (not the ~9% of x262, which had two profilers on and two clusters in 20 s), and 12 of 758
     frames hold 83% of it. Outside the stall clusters the SPUs are close to full: the frame is SPU compute.
-  - The stall is the kernel's idle back-off (x264, same recipe as x263 plus `SPURS_IDLE_MAX=0`, the
-    diagnostic end: every enabled module every pass). The title never raises readyCount for these WWS lists,
-    so the kernel finds their work by probing, and a module that keeps finding nothing is probed only every
-    2nd..16th pass (default cap 4 = every 16th, ~27 ms at the measured `Sleep(1)`). A chain of such links
-    (`CollisL` -> `MeshProcJobs` -> `RsxSync` -> the task batch) adds up to the 39-149 ms pieces. With the cap at
+  - The kernel's idle back-off is part of the stall (x264, same recipe as x263 plus `SPURS_IDLE_MAX=0`, the
+    diagnostic end: every enabled module every pass). A module that keeps finding nothing is probed only every
+    2nd..16th pass (default cap 4 = every 16th, ~27 ms at the measured `Sleep(1)`); see M1.00 for what is and
+    is not known about why these lists wait (the title does kick two of them, late). With the cap at
     0: time with nothing running 254 ms in 60 s (x263: 1351), longest piece 17.5 ms (149), main-thread wait at
     `0x3436BC` 3.0 ms per frame (7.3), 810 frames in the 60-s window (758, +7%), game CPU ~7.3 cores (~7.0).
     One run each; a moderate cap is the candidate default, to be A/B'd.

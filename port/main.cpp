@@ -671,10 +671,10 @@ int main(int argc, char** argv)
      * SPURS_KERN_PRIO=0 runs them at normal priority. */
     if (!getenv("SPURS_KERN_PRIO")) _putenv_s("SPURS_KERN_PRIO", "1");
     /* SPURS_IDLE_MAX=2 (M1.00): probe an idle module at least every 4th kernel
-     * pass (toolkit default 4 = every 16th). The title never raises readyCount for
-     * its WWS lists, so the kernel finds their work only by probing; a chain of
-     * backed-off lists (CollisL -> MeshProcJobs -> RsxSync -> the main thread's
-     * task batch) stalled the game 39-149 ms at a time. 420-600 s: 13.44 / 13.46
+     * pass (toolkit default 4 = every 16th). Stalls of 39-149 ms ended each time
+     * one of CollisL, MeshProcJobs or RsxSync was next dispatched; probing idle
+     * modules more often shortens them (RsxSync's runs are mostly probe-found;
+     * the other two are kicked, late -- see STATUS M1.00). 420-600 s: 13.44 / 13.46
      * against 13.19 / 11.32 game frames/s (x265), menu phase 60-68 against 43-50.
      * 0 probes every module every pass (+0.3 cores, diagnostic). */
     if (!getenv("SPURS_IDLE_MAX")) _putenv_s("SPURS_IDLE_MAX", "2");

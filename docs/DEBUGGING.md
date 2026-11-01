@@ -139,6 +139,11 @@ Lessons that cost days; keep them.
   idle back-off (log2 passes; toolkit default 4 = every 16th pass, GoW:A port default 2 since M1.00; 0 probes every
   module every pass, the diagnostic end). A chain of backed-off WWS lists shows on a `PS3_FTRACE` timeline as
   stretches where the main thread waits and no SPU but audio runs (scratchpad `ftdead.py`).
+  `SPURS_WWS_HDR_LOG=<wid>[,<wid>...]` (default off) shadows the 0x100 bytes around each listed workload's list
+  header (workload data, from -0x80) every kernel pass and prints the words that changed as `[wws-hdr]` lines,
+  with `ran` (0 = the module has not run since the last look, so the PPU or another SPU wrote it; 1 ran idle;
+  2 found work), the idle streak and whether readyCount/signal was up. `SPURS_WWS_HDR_LOG_AFTER=<s>` starts it
+  late; 400 lines at most.
   `SPURS_PASS_SLEEP_US=<us>` (default off) waits the pause on a high-resolution timer instead of `Sleep(1)` (~1.7 ms);
   200 gives ~0.53 ms, the timer's floor on Windows 11 (M0.89: no frame-rate change in GoW:A).
   `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default: `SPURS_KERN_SPUS=0,1,5`, i.e. 3 threads with audio on SPU 5) runs n host kernel threads per instance, with a per-wid
