@@ -846,6 +846,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     the first run that does work after the piece is `MeshProcJobs` in 354 of 505. Still open: why that work
     becomes ready without a new kick, or with nothing scheduling it, under load. Earlier x271-x273 readings
     that "the PPU never raises readyCount" were blind to the HLE store (see DEBUGGING) and are void.
+  - The kick itself: the main thread's caller (`func_004649C0`) stores min(pending jobs, the list's maximum)
+    every time, with no condition, so the title does not skip kicks. `SPURS_KEEP_READY=1` (the kernel stops
+    consuming readyCount) under the same load (x278): 360-450 s 8.1 game frames/s, as x277; not kept.
+  - Where the loaded frame goes now (x277 against quiet x263, `ftgaps.py`; x263 is runWw, before M1.00, with
+    `SPURS_IDLE_MAX=4`, so the quiet arm is not the same build): 112.4 ms against 79.0. Dead time is down to
+    ~7 ms per frame; the main thread's time outside its two largest waits grows ~10 ms, the EDGE union 67 -> 78
+    ms, and those waits 12.8 -> 39.5 ms (23.6 at `0x3436BC`, 15.9 at `0x35E7B4` with EDGE busy 92% of it). The
+    remaining loaded loss is per-unit slowdown from sharing physical cores with other processes, which host
+    priority does not prevent (x257, x258). Using less CPU per frame is the lever -- the same one as the
+    frame-rate work.
+  - One fewer busy thread does not help: `SPURS_KERN_SPUS=0,1,2,3,5` (no SPU 4 lane, which was busy only
+    37.9 ms per frame) under the same load (x279): 3.3 game frames/s at 420-450 s against 8.3 (x277), frame
+    235 ms, the main thread waiting at `0x3436BC` 118 ms per frame with no non-audio SPU running 81% of it.
+    The `RenJobSet` lists that lane carried queue behind the others. Not kept.
   - 600 s smoke run of runWx with no environment set (x266): no hang; 12.9-14.0 game frames/s from 330 s on
     (its load phase ran slow until 300 s, as load phases vary run to run).
 - **What bounds the fast frame now (2026-11-01, x262).** `PS3_FTRACE=480:20` on runWv (M0.99 production) in the
