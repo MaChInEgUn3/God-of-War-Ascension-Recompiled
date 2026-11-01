@@ -815,6 +815,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     window 12.64 / 11.22 against 12.29 / 11.62. No gain from 0. The two low runs end with other load on the host
     (a browser at 1.1-1.6 cores and the security agent at 0.6-1.2 in i0b; the security agent and the agent
     session's terminal at ~0.9 each in i2b). 2 stays.
+  - What load does to the frame (x268: runWx, two busy processes from `burn.py`, `PS3_FTRACE=420:60`, profilers
+    off; against the quiet x264). Frame 142.6 ms against 74.0. The EDGE lanes are busy 69-72 ms per frame in
+    ~480 runs (61 quiet): each job ~13% slower from sharing physical cores. The time with no non-audio SPU
+    running is 10.2 s in 60 (quiet: 0.25 s), the main thread waits 41.9 ms per frame at the task batch (3.0),
+    87 of 420 frames hold 92% of that dead time, longest piece 202 ms, and the pieces end with the same chain
+    (`CollisL` 289, `MeshProcJobs` 116, `RsxSync` 66 of 590). Under load the game is latency-bound, not
+    throughput-bound: the links of that chain are found late.
+  - The same load with `SPURS_IDLE_MAX=0` (x269): dead time 4.0 s in 60, longest piece 37 ms, task-batch wait
+    31.5 ms per frame, frame 127.8 ms, 468 frames in the window against 420. The probing cost shows: EDGE
+    union busy 95 ms per frame (75 in x268). The 30-s heartbeats are about the same (~8 game frames/s in both;
+    x269 also had the security agent at ~1.1-1.3 cores). Faster probing only partly helps; the robust fix is to
+    know when the PPU pushes work to these lists instead of polling for it.
   - 600 s smoke run of runWx with no environment set (x266): no hang; 12.9-14.0 game frames/s from 330 s on
     (its load phase ran slow until 300 s, as load phases vary run to run).
 - **What bounds the fast frame now (2026-11-01, x262).** `PS3_FTRACE=480:20` on runWv (M0.99 production) in the
