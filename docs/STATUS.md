@@ -806,19 +806,32 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - 191 frames, median 96.7 ms (10.3 fps). SPUs 0-3 are busy 72-76% of the frame, SPU 4 42%, SPU 5 87%
     (mostly the audio workload, wid 8). Work other than audio keeps at least one SPU busy for 95.5 of 104.4 ms
     per frame.
-  - The three EDGE workloads (wids 0xF-0x11) now run side by side: each ~65% of a kernel thread, ~5600 jobs/s
-    and the same job count each (~116 us per job), with no idle polls and 2% in channel waits. Their union
-    covers 72.8 ms per frame, and the gaps between consecutive EDGE runs total 1.1 ms per frame (median 1 us).
-    wid 3 53 ms per frame (50 jobs per game frame), wid 0xD 29, wids 7 and 0xB 16 each.
+  - The three EDGE workloads (wids 0xF-0x11) now run side by side, as the game registers them (since the M0.85
+    lanes, `SPURS_LANES=15,16,17=3`; the M0.60 timeline predates them): each ~65% of a kernel thread, ~5600
+    jobs/s and the same job count each (~116 us per job), with no idle polls and 2% in channel waits. Their
+    union covers 72.8 ms per frame. wid 3 53 ms per frame (50 jobs per game frame), wid 0xD 29, wids 7 and 0xB
+    16 each.
+  - Per lane (kernel threads on SPUs 0-3, each running all three EDGE wids): busy 71-73 ms per frame in ~480
+    module runs. Gaps under 5 ms between runs total 5-6 ms per frame (median 1-4 us), so dispatch between runs
+    is cheap. Each lane also sits idle 25-29 ms per frame in gaps of 5 ms or more, ~31 ms of it in between-pass
+    pauses: it found no work. The lanes idle at different times (the union of all non-audio work leaves 8.9 ms
+    per frame).
+  - Upper bounds: this run had `SPURS_PM_PROF` (a timer read and a lock on every module run), the main-thread
+    sampler and the trace on; production runs have neither profiler. The frame rate matched x261.
   - The main thread is blocked 34 ms per frame: 19.4 at `0x3436BC` (the task batch, in `0x368C64`) and 12.6 at
     `0x35E7B4`. The main-thread sampler also shows spin waits that the timeline counts as running: ~12% at
     `0x416A4C` (a RenJobSet job) and 6-8% at `0x467B2C` (WWS job completion). While it waits at `0x35E7B4`,
     EDGE is busy 91% of the time. While it waits at `0x3436BC`, EDGE is busy 39%, and no SPU other than audio
     runs 31% of the time (~6 ms per frame).
+  - That dead time is not spread evenly: the median frame has none, and 15 of 191 frames hold 82% of it (pieces
+    of 30-63 ms, clustered at 484.4-485.5 s and around 492 s; frame max 322 ms). During those pieces every
+    other PPU thread is blocked, the RSX walker is idle 86% of the time and only the audio SPU runs. The run that
+    ends a piece is a WWS list in wid 0, 0xE or 0x12 (38, 30 and 11 of 94 pieces). Cause not named: a few
+    stalls, not a wake latency spread over every frame.
   - The RSX walker drains 66 ms per frame and waits on the GPU ~4.
-  - Reading: the fast frame is SPU compute, mostly the EDGE jobs. Handoffs with nothing running cost ~9 ms per
-    frame (~9%), mostly at the task batch: the part M0.99 acts on. The larger lever is the cost per EDGE job
-    (lifted code, native stages).
+  - Reading: the fast frame is SPU compute, mostly the EDGE jobs; dispatch between module runs is cheap. The
+    time with nothing running (~9 ms per frame, ~9%) is mostly a few stall frames. The larger lever is the cost
+    per EDGE job (lifted code, native stages).
 - **M0.99: the frame rate holds better under background load: SPURS kernel threads above normal priority
   (2026-10-31).**
   - Cause: with the host's CPUs busy, the main thread waited ~60 ms per frame for the frame's task batch
