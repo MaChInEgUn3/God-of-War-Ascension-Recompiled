@@ -254,7 +254,13 @@ Lessons that cost days; keep them.
   path which lookup answered (code slot, task, overlay, image, WWS module match, none) and fills. It sends every
   dispatch down the slow path, so use it for rates and shares, not for timing. `SPU_IBC_COUNT_WIDS=<w>[,...]`
   counts only dispatches made while the kernel runs those workloads. `SPU_LOCKLINE_STATS=1` prints `[lockline]`
-  every 65536 contended acquisitions of the global SPU lock line: total and longest wait since the last line.
+  every 65536 contended acquisitions of the global SPU lock line: process-wide acquisitions, total and longest
+  wait since the last line. A wait over 5 ms also prints `[lockline-long] <QPC s> waited <ms>: waiter tid <host>
+  rva 0x.., holder tid <host> rva 0x..` (the first 200); the RVAs are return addresses into the code that took
+  the lock -- add 0x140000000 and look the address up in the build's `MyGameRecomp.map` (the same build's map).
+  `SPURS_RCSTORE_LOG` lines carry host and guest tids, which names a PPU holder.
+* **Before reading a run as a regression**: check its `_cpu.txt` (cpuwatch) for other programs; x290 "never
+  left the opening" because other sessions were compiling (host at 100%), and the rerun was normal.
 * **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:

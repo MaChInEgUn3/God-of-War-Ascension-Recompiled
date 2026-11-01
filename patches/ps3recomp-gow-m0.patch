@@ -19885,7 +19885,7 @@ index 00000000..79bffe73
 +
 +#endif /* SPU_COH_BITMAP_H */
 diff --git a/runtime/spu/spu_coherency.c b/runtime/spu/spu_coherency.c
-index bc7017da..3463e758 100644
+index bc7017da..5cd5ce43 100644
 --- a/runtime/spu/spu_coherency.c
 +++ b/runtime/spu/spu_coherency.c
 @@ -7,11 +7,13 @@
@@ -19903,7 +19903,7 @@ index bc7017da..3463e758 100644
  
  #include <stdint.h>
  #include <stdio.h>
-@@ -39,15 +41,38 @@ static volatile long g_lockline = 0;
+@@ -39,15 +41,70 @@ static volatile long g_lockline = 0;
   * pause, and yield after a long wait. The bare exchange loop let GH3's four
   * idle job-policy pollers saturate the line and delay every other SPU atomic
   * -- FMOD's mixer task among them, 25-40 ms at a time. */
@@ -19911,12 +19911,30 @@ index bc7017da..3463e758 100644
 + * the WAIT_SIGNAL log (SPU_WAITLOG) to tell lock contention from task work. */
 +__declspec(thread) unsigned long long g_spu_lockline_wait_ticks;
 +__declspec(thread) unsigned long long g_spu_lockline_count;
++/* SPU_LOCKLINE_STATS: process-wide acquisitions, and who holds the line (host tid and
++ * the return address into the code that took it) so a long wait names its holder. */
++static int s_ll_stats = -1;
++static volatile LONG64 s_ll_acq;
++static volatile DWORD s_ll_holder;
++static void* volatile s_ll_holder_ra;
++static __declspec(noinline) void spu_lockline_note_holder(void* ra)
++{
++    if (s_ll_stats < 0) s_ll_stats = getenv("SPU_LOCKLINE_STATS") ? 1 : 0;
++    if (s_ll_stats <= 0) return;
++    InterlockedIncrement64(&s_ll_acq);
++    s_ll_holder = GetCurrentThreadId();
++    s_ll_holder_ra = ra;
++}
  void spu_lockline_lock(void)
  {
      unsigned spins = 0;
 -    while (_InterlockedExchange(&g_lockline, 1)) {
 +    g_spu_lockline_count++;
-+    if (!_InterlockedExchange(&g_lockline, 1)) return;
++    if (!_InterlockedExchange(&g_lockline, 1)) {
++        if (__builtin_expect(s_ll_stats != 0, 0)) spu_lockline_note_holder(__builtin_return_address(0));
++        return;
++    }
++    const DWORD holder0 = s_ll_holder; void* const holder_ra0 = s_ll_holder_ra;
 +    LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
 +    do {
          do {
@@ -19929,22 +19947,36 @@ index bc7017da..3463e758 100644
 +    g_spu_lockline_wait_ticks += (unsigned long long)(t1.QuadPart - t0.QuadPart);
 +    /* SPU_LOCKLINE_STATS=1: every 2^16 contended acquisitions, [lockline] with the
 +     * process-wide contended count, total and longest wait since the last line. */
-+    { static int s_ls = -1; static volatile LONG64 s_n, s_w, s_mx;
-+      if (s_ls < 0) s_ls = getenv("SPU_LOCKLINE_STATS") ? 1 : 0;
-+      if (s_ls) {
++    if (__builtin_expect(s_ll_stats != 0, 0)) spu_lockline_note_holder(__builtin_return_address(0));
++    { static volatile LONG64 s_n, s_w, s_mx;
++      if (s_ll_stats > 0) {
 +          const LONG64 w = t1.QuadPart - t0.QuadPart;
 +          InterlockedAdd64(&s_w, w);
 +          LONG64 m = s_mx; while (w > m && InterlockedCompareExchange64(&s_mx, w, m) != m) m = s_mx;
++          static LARGE_INTEGER f;
++          if (!f.QuadPart) QueryPerformanceFrequency(&f);
++          if (w * 200 > f.QuadPart) {   /* > 5 ms: name the waiter and the holder seen when the wait began */
++              static volatile LONG s_long;
++              if (InterlockedIncrement(&s_long) <= 200)
++              {   /* return addresses as RVAs of the executable: resolve against its .map */
++                  const char* base = (const char*)GetModuleHandleW(NULL);
++                  fprintf(stderr, "[lockline-long] %.3f waited %.2f ms: waiter tid %lu rva 0x%llX, holder tid %lu rva 0x%llX\n",
++                          (double)t1.QuadPart / f.QuadPart, w * 1000.0 / f.QuadPart, GetCurrentThreadId(),
++                          (unsigned long long)((const char*)__builtin_return_address(0) - base), holder0,
++                          holder_ra0 ? (unsigned long long)((const char*)holder_ra0 - base) : 0ull);
++              }
++          }
 +          if ((InterlockedIncrement64(&s_n) & 0xFFFF) == 0) {
-+              LARGE_INTEGER f; QueryPerformanceFrequency(&f);
 +              const LONG64 tw = InterlockedExchange64(&s_w, 0), mx = InterlockedExchange64(&s_mx, 0);
-+              fprintf(stderr, "[lockline] %.3f 65536 contended, %.1f ms waited, longest %.3f ms\n",
-+                      (double)t1.QuadPart / f.QuadPart, tw * 1000.0 / f.QuadPart, mx * 1000.0 / f.QuadPart);
++              const LONG64 acq = InterlockedExchange64(&s_ll_acq, 0);
++              fprintf(stderr, "[lockline] %.3f 65536 contended of %lld acquisitions, %.1f ms waited, longest %.3f ms\n",
++                      (double)t1.QuadPart / f.QuadPart, (long long)acq, tw * 1000.0 / f.QuadPart,
++                      mx * 1000.0 / f.QuadPart);
 +          } } }
  }
  void spu_lockline_unlock(void) { _InterlockedExchange(&g_lockline, 0); }
  #else
-@@ -69,18 +94,17 @@ void spu_lockline_unlock(void) { atomic_flag_clear_explicit(&g_lockline, memory_
+@@ -69,18 +126,17 @@ void spu_lockline_unlock(void) { atomic_flag_clear_explicit(&g_lockline, memory_
   * line outside a hardcoded window would be silently non-coherent, which is the
   * failure this whole file exists to remove.
   * ===========================================================================*/
@@ -19969,7 +20001,7 @@ index bc7017da..3463e758 100644
  
  /* Every live virtual context may retain a reservation between scheduling
   * quanta; physical SPU count is not a bound on this set. All access is under
-@@ -93,15 +117,27 @@ static spu_coh_entry* s_coh_ctxs;
+@@ -93,15 +149,27 @@ static spu_coh_entry* s_coh_ctxs;
  
  unsigned long g_spu_lr_raise = 0;
  
@@ -20000,7 +20032,7 @@ index bc7017da..3463e758 100644
      spu_coh_entry* entry = (spu_coh_entry*)malloc(sizeof(*entry));
      if (!entry) {
          fprintf(stderr, "[spu-coh] cannot register reservation holder %p\n", (void*)ctx);
-@@ -111,6 +147,7 @@ void spu_coh_reserve(spu_context* ctx, uint32_t ea)
+@@ -111,6 +179,7 @@ void spu_coh_reserve(spu_context* ctx, uint32_t ea)
      entry->ctx = ctx;
      entry->next = s_coh_ctxs;
      s_coh_ctxs = entry;
@@ -20008,7 +20040,7 @@ index bc7017da..3463e758 100644
  }
  
  /* Drop a context from the reserving set.
-@@ -139,7 +176,14 @@ void spu_coh_unregister(spu_context* ctx)
+@@ -139,7 +208,14 @@ void spu_coh_unregister(spu_context* ctx)
          free(entry);
          break;
      }
@@ -20023,7 +20055,7 @@ index bc7017da..3463e758 100644
  }
  
  /* Drop every registered context that lies in [lo, hi) -- a host thread's
-@@ -170,9 +214,7 @@ void spu_coh_forget_range(uintptr_t lo, uintptr_t hi)
+@@ -170,9 +246,7 @@ void spu_coh_forget_range(uintptr_t lo, uintptr_t hi)
  
  int spu_coh_is_reserved(uint32_t addr)
  {
@@ -20034,7 +20066,7 @@ index bc7017da..3463e758 100644
  }
  
  /* A DMA PUT is issued BY an SPU, and hardware does not take that SPU's own
-@@ -199,16 +241,81 @@ void ppu_resv_break_line_absent(uint32_t ea) { (void)ea; }
+@@ -199,16 +273,81 @@ void ppu_resv_break_line_absent(uint32_t ea) { (void)ea; }
  __attribute__((weak)) void ppu_resv_break_line(uint32_t ea) { (void)ea; }
  #endif
  
@@ -20119,7 +20151,7 @@ index bc7017da..3463e758 100644
              g_spu_lr_raise++;
              spu_ch_wake(c);
          }
-@@ -219,12 +326,13 @@ void spu_coh_notify_write(uint32_t ea)
+@@ -219,12 +358,13 @@ void spu_coh_notify_write(uint32_t ea)
  {
      uint32_t line = ea & ~127u;
      ppu_resv_break_line(ea);

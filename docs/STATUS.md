@@ -827,9 +827,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     targets (never cached), 4.2 overlay, 2.5 image.
   - The global SPU lock line under that load (x294, `SPU_LOCKLINE_STATS=1`): ~25k contended acquisitions a
     second, 0.8 us mean wait, 20 ms of waiting per second in all -- but 11 of 135 windows held a wait over 5 ms
-    and the longest was 71 ms (a holder descheduled by the busy host). Its 6% in the EDGE profile is mostly the
-    uncontended cost of a lock word bouncing between six threads. Splitting it by line would cut both; it
-    guards PUTLLC against PPU stores and the reservation bookkeeping, so it needs an audit first.
+    and the longest was 71 ms. With the holder named (x295, toolkit 1cd65827): ~400k acquisitions a second,
+    6.5% contended; 13 distinct long-wait events in 480 s, each ~86 ms with several SPU threads waiting at
+    once. The holder was a PPU thread in a store to an SPU-reserved line in 24 of the 44 long waits
+    (`vm_write32`, `ppu_stdcx64`, `vm_write8`, all one host thread), a kernel thread in `spu_wrch_impl` in 10,
+    and a taskset task thread in `spu_taskset_task_exited` in 8. Hypothesis under test: priority inversion --
+    a normal-priority PPU thread descheduled by the busy host while it holds the line, with the above-normal
+    kernel threads spinning on it. These are hitches (~86 ms), not a frame-rate loss. Splitting the lock by
+    line would also cut contention; it guards PUTLLC against PPU stores and the reservation bookkeeping, so
+    it needs an audit first.
   - Next candidate: a per-call-site inline cache in the SPU lifter (`bisl` sites check the last target and call
     the lifted function directly) would skip both functions for the common case; it needs the job modules
     relifted and validated.
