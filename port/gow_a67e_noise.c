@@ -140,7 +140,34 @@ int gow_a67e_noise_mode(void)
     return s_a67_mode;
 }
 
-void gow_a67e_noise(spu_context* ctx) { a67_noise(ctx); }
+/* GOW_A67_COUNT=1 (diagnostic): every 60 s, [a67-count] calls and host ms spent in the native noise. */
+#ifdef _WIN32
+#include <windows.h>
+#endif
+static int s_a67_count = -1;
+void gow_a67e_noise(spu_context* ctx)
+{
+    if (__builtin_expect(s_a67_count == 0, 1)) { a67_noise(ctx); return; }
+    if (s_a67_count < 0) { s_a67_count = getenv("GOW_A67_COUNT") ? 1 : 0; if (!s_a67_count) { a67_noise(ctx); return; } }
+#ifdef _WIN32
+    static volatile LONG64 n, ticks, next; static LARGE_INTEGER f;
+    LARGE_INTEGER t0, t1;
+    if (!f.QuadPart) QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
+    a67_noise(ctx);
+    QueryPerformanceCounter(&t1);
+    InterlockedIncrement64(&n); InterlockedAdd64(&ticks, t1.QuadPart - t0.QuadPart);
+    if (!next) next = t1.QuadPart + 60 * f.QuadPart;
+    else if (t1.QuadPart >= next) {
+        const LONG64 nn = InterlockedExchange64(&n, 0), tt = InterlockedExchange64(&ticks, 0);
+        next = t1.QuadPart + 60 * f.QuadPart;
+        fprintf(stderr, "[a67-count] 60 s: %lld calls, %.0f ms in the noise (%.0f ns/call)\n", (long long)nn,
+                tt * 1000.0 / f.QuadPart, nn ? tt * 1e9 / f.QuadPart / nn : 0.0);
+    }
+#else
+    a67_noise(ctx);
+#endif
+}
 
 /* check mode: native first, then the lifted function from the same registers and stack bytes */
 static long s_a67_checked, s_a67_bad, s_a67_skipped;

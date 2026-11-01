@@ -821,9 +821,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - General6 (wid 3, ~0.5 core under load) profiled the same way (x286, `PS3_SAMPLE_WIDS=3`): the native noise
     (`gow_a67e_noise.c`) is ~40% of its samples, the rest the 1bdd job module. Its table lookups as AVX2 gathers
     were exact (x287, `GOW_A67_NOISE=3`: 19.9M calls, 0 differ) but no faster on this CPU (scratchpad
-    `a67bench.c`, best of 7: 275 against 258 ns per call); not kept. Open: 275 ns per call does not add up to
-    40% of General6 at the call rate the check counted (~42k/s), so either the calls are much dearer in the
-    game or the samples are misattributed -- worth a call counter before more work there.
+    `a67bench.c`, best of 7: 275 against 258 ns per call); not kept. Port `GOW_A67_COUNT=1` (x289, loaded)
+    counts it: ~300k calls a second at ~371 ns each (timer included), 6-7 s of host time per 60 s, i.e. ~0.11
+    of a core. A faster noise could save a part of that; the remaining General6 time is the 1bdd module.
 - **M1.00: idle WWS lists are probed at least every 4th kernel pass; no more stall clusters (2026-11-01).**
   - Observed (x262-x264, details below): stall pieces of 39-149 ms, with every traced thread waiting and no
     SPU but audio running, that end when `CollisL`, `MeshProcJobs` or `RsxSync` is next dispatched. Probing idle
