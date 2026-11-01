@@ -820,11 +820,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     with fewer cores than busy threads this is the first thing to check; `SPURS_KERN_PRIO=0` turns it off.
   - 600 s smoke run with no environment set (x256): the kernel threads report `prio=1`, no hang.
   - Lighter fixed load (two busy processes, x259, order k0 k1 k1 k0 k0 k1): `SPURS_KERN_PRIO=1` 7.3, 8.4, 8.7
-    (mean 8.1) against 0 at 4.4, 7.8, 8.3 (mean 6.8; medians 8.4 and 7.8). The 4.4 run fell to 1.1-1.6 at the
-    end; without it the arms overlap. Same direction, weaker than under three busy processes.
+    (mean 8.1) against 0 at 4.4, 7.8, 8.3 (mean 6.8). The 4.4 run, the batch's first, fell to 1.1-1.6 at the
+    end; without it the arms are equal (8.1 against 8.0). At two busy processes the gain is not shown.
+  - Batch order check: the first run of a batch is its slowest in four of six batches (x253, x257, x258, x259),
+    whatever its arm; in x254 and x255 the first run is the fastest. M0.99 rests on two batches with opposite
+    arms first; with every batch's first run dropped it still holds (x253+x254: 8.3, 8.0, 6.0 against 7.5, 5.5,
+    4.4). Batches from x260 on start with a discarded warm-up run.
   - Same load, the walker thread above normal as well (port `GOW_WALKER_PRIO=1`, diagnostic, default unset;
-    x257, order w1 w0 w0 w1): 4.2 / 8.2 against 7.6 / 8.0. The 4.2 run collapsed to 1.3-3.2 at the end. Not
-    kept. The two default runs repeat M0.99's priority arm (7.8).
+    x257, order w1 w0 w0 w1): 4.2 / 8.2 against 7.6 / 8.0. The 4.2 run, the batch's first, collapsed to 1.3-3.2
+    at the end; without it there is no gain either way. Not kept. The two default runs repeat M0.99's priority arm (7.8).
   - Same load, the whole game process AboveNormal against Normal (x258, order p n n p): 4.4 / 6.3 against
     4.6 / 6.1. No effect. The whole batch ran slower than x257 on a busier host (CPU samples at 98-100%). A game
     that already wins every priority contest and still loses speed is losing it to the busy processes sharing
