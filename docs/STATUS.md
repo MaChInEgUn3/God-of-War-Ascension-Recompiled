@@ -799,6 +799,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M1.00: idle WWS lists are probed at least every 4th kernel pass; no more stall clusters (2026-11-01).**
+  - Cause (x262-x264, details below): the title never raises readyCount for its WWS job lists, so the kernel
+    finds their work by probing them, and the idle back-off probed a list that kept finding nothing only every
+    16th pass. A chain of backed-off lists (`CollisL` -> `MeshProcJobs` -> `RsxSync` -> the main thread's task
+    batch) stalled the game 39-149 ms at a time, with every traced thread waiting and no SPU but audio running.
+  - The GoW:A port now sets `SPURS_IDLE_MAX=2` (every 4th pass at most; toolkit default 4). A/B on runWw, no
+    load, no profilers, a discarded warm-up run first, order i2 i4 i4 i2 (x265), game frames/s over 420-600 s:
+    13.44 / 13.46 against 13.19 / 11.32. Over the escape window 12.78 / 11.74 against 12.43 / 10.71. The arrival
+    phase gains most: 60-68 game frames/s at 90-120 s against 43-50 in all three default runs (warm-up
+    included).
+  - `SPURS_IDLE_MAX=0` (every module every pass) removed the clusters entirely in one traced run (x264: longest
+    piece 17.5 ms against 149) for ~0.3 more cores; it stays a diagnostic setting.
+  - 600 s smoke run of runWx with no environment set (x266): no hang; 12.9-14.0 game frames/s from 330 s on
+    (its load phase ran slow until 300 s, as load phases vary run to run).
 - **What bounds the fast frame now (2026-11-01, x262).** `PS3_FTRACE=480:20` on runWv (M0.99 production) in the
   fast state, no synthetic load, with `SPURS_PM_PROF` and `GOW_MAIN_PROF`; scratchpad `ftgaps.py` reads the
   trace. The M0.60 picture (main thread asleep 310 ms of a 463 ms frame, EDGE one job at a time) no longer

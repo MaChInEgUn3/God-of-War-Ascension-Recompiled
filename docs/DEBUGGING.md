@@ -136,7 +136,9 @@ Lessons that cost days; keep them.
   backend could not create a pipeline; GoW:A's first level needs about 1300 (the table holds 8192).
 * **SPURS kernel pacing**: `SPURS_PASS_SLEEP=<ms>` (default 1) is the pause between kernel passes;
   `SPURS_PASS_GREEDY=1` (GoW:A port default) skips it after a pass that found work; `SPURS_IDLE_MAX=<n>` caps the
-  idle back-off (log2 passes, default 4).
+  idle back-off (log2 passes; toolkit default 4 = every 16th pass, GoW:A port default 2 since M1.00; 0 probes every
+  module every pass, the diagnostic end). A chain of backed-off WWS lists shows on a `PS3_FTRACE` timeline as
+  stretches where the main thread waits and no SPU but audio runs (scratchpad `ftdead.py`).
   `SPURS_PASS_SLEEP_US=<us>` (default off) waits the pause on a high-resolution timer instead of `Sleep(1)` (~1.7 ms);
   200 gives ~0.53 ms, the timer's floor on Windows 11 (M0.89: no frame-rate change in GoW:A).
   `SPURS_KERN_THREADS=<n>|spus` (GoW:A port default: `SPURS_KERN_SPUS=0,1,5`, i.e. 3 threads with audio on SPU 5) runs n host kernel threads per instance, with a per-wid
