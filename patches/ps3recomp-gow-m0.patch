@@ -11059,10 +11059,10 @@ index 00000000..b9d193b1
 +    return g_fail;
 +}
 diff --git a/runtime/ppu/ppu_fs.cpp b/runtime/ppu/ppu_fs.cpp
-index 4d54b72b..14405fda 100644
+index 4d54b72b..ce43692a 100644
 --- a/runtime/ppu/ppu_fs.cpp
 +++ b/runtime/ppu/ppu_fs.cpp
-@@ -13,6 +13,8 @@
+@@ -13,11 +13,14 @@
   * Context-aware HLE: guest pointers (path, buffers, out params) are read/written
   * through vm_base in big-endian.
   */
@@ -11071,7 +11071,13 @@ index 4d54b72b..14405fda 100644
  #include "ppu_recomp.h"      /* ppu_context */
  #include "../../libs/filesystem/edat.h"
  #include "ps3emu/nid.h"      /* ps3_compute_nid */
-@@ -25,6 +27,7 @@
+ #include "ps3emu/guest_call.h" /* ps3_invoke_guest: AIO completion is a guest OPD */
+ #include "sdata_decrypt.h"   /* SDATA/EDAT (NPD) decryption for cellFsSdataOpen */
++#include "ps3emu/ps3_ftrace.h" /* PS3_FTRACE: HLE file reads/writes as fs_read/fs_write spans */
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <string.h>
+@@ -25,6 +28,7 @@
  #include <errno.h>
  #include <atomic>
  #include <sys/stat.h>
@@ -11079,7 +11085,7 @@ index 4d54b72b..14405fda 100644
  #include "../platform/win32_dirent.h"   /* <dirent.h>, or a Win32 stand-in */
  
  /* Guest-resolving host backtrace (ppu_loader.cpp). Must be declared at file scope:
-@@ -48,7 +51,7 @@ extern "C" void ydkj_host_bt(const char* tag);
+@@ -48,7 +52,7 @@ extern "C" void ydkj_host_bt(const char* tag);
   * differs between CRTs: MinGW-w64's own stat() wrapper (msvcrt builds) fails
   * with EOVERFLOW, UCRT's _stat64i32 (llvm-mingw) returns the size truncated, so
   * the same title took different paths depending on the toolchain. POSIX LP64
@@ -11088,7 +11094,27 @@ index 4d54b72b..14405fda 100644
  #ifdef _WIN32
  #  define FS_SEEK64(f, o, w) _fseeki64((f), (int64_t)(o), (w))
  #  define FS_TELL64(f)       ((int64_t)_ftelli64(f))
-@@ -434,7 +437,7 @@ static void cellFsRead(ppu_context* ctx)
+@@ -426,6 +430,19 @@ static inline void fs_prefault(uint32_t buf, uint64_t len)
+     p[len - 1] = p[len - 1];
+ }
+ 
++/* PS3_FTRACE: the HLE file calls never enter the lv2 dispatcher, so they would
++ * not show on the timeline. Record each one that takes at least the trace's
++ * minimum as a span of lv2's number for it (802 read, 803 write), so a stall
++ * that waits on the disk (or on a scanner looking at the read) shows up. */
++static inline uint64_t fs_ft_begin(void) { return PS3_FT_ON() ? ps3_ft_now() : 0; }
++static inline void fs_ft_end(const ppu_context* ctx, uint32_t num, uint64_t t0)
++{
++    if (!t0) return;
++    const uint64_t t1 = ps3_ft_now();
++    if (t1 - t0 >= ps3_ft_min_ns())
++        ps3_ft_span(PS3_FT_SYSCALL, (uint32_t)ctx->thread_id, num, (uint32_t)ctx->lr, t0, t1);
++}
++
+ static void cellFsRead(ppu_context* ctx)
+ {
+     int fd          = (int)(uint32_t)ctx->gpr[3];
+@@ -434,10 +451,12 @@ static void cellFsRead(ppu_context* ctx)
      uint32_t nread_ptr = (uint32_t)ctx->gpr[6];
      if (fd < 0 || fd >= FS_MAX || !g_files[fd]) { ctx->gpr[3] = (uint64_t)(int64_t)CELL_FS_EIO; return; }
      uint64_t raw_nbytes = ctx->gpr[5];
@@ -11096,8 +11122,13 @@ index 4d54b72b..14405fda 100644
 +    long long fpos_before = (long long)FS_TELL64(g_files[fd]);
      if (ppu_vm_size && (uint64_t)buf + nbytes > ppu_vm_size) nbytes = ppu_vm_size - buf;
      fs_prefault(buf, nbytes);
++    const uint64_t ft0 = fs_ft_begin();
      size_t n = fread(vm_base + buf, 1, (size_t)nbytes, g_files[fd]);   /* raw bytes, no swap */
-@@ -452,16 +455,16 @@ static void cellFsRead(ppu_context* ctx)
++    fs_ft_end(ctx, 802, ft0);
+     /* PS3_FSLOG_EOF=<fd>,<bytes>: report end-of-file past <bytes> on one descriptor.
+      * The intro cinematic is 28 seconds and this port renders it at a few frames
+      * a second, so it cannot be watched to its end -- truncating the stream makes
+@@ -452,16 +471,16 @@ static void cellFsRead(ppu_context* ctx)
            if (!once++) fprintf(stderr, "[fs] PS3_FSLOG_EOF: fd=%d truncated at %ld bytes\n", fd, elim);
            n = 0;
        } }
@@ -11117,6 +11148,31 @@ index 4d54b72b..14405fda 100644
  #ifdef _WIN32
      if (getenv("PS3_FSLOG") && buf==0 && raw_nbytes>0x10000) { static int _b=0; if(_b++<2){ void* fr[30]; unsigned short nn=RtlCaptureStackBackTrace(0,30,fr,0); uintptr_t mb=(uintptr_t)GetModuleHandleA(0); fprintf(stderr,"[FSBT] null-buf read caller rvas:"); for(unsigned short i=0;i<nn&&i<16;i++) fprintf(stderr," %llX",(unsigned long long)((uintptr_t)fr[i]-mb)); fprintf(stderr,"\n"); } }
  #endif
+@@ -504,7 +523,9 @@ static void cellFsWrite(ppu_context* ctx)
+     uint32_t nwr_ptr = (uint32_t)ctx->gpr[6];
+     if (fd < 0 || fd >= FS_MAX || !g_files[fd]) { ctx->gpr[3] = (uint64_t)(int64_t)CELL_FS_EIO; return; }
+     fs_prefault(buf, nbytes);   /* kernel READS the buffer; same reserved-page trap */
++    const uint64_t ft0 = fs_ft_begin();
+     size_t n = fwrite(vm_base + buf, 1, (size_t)nbytes, g_files[fd]);
++    fs_ft_end(ctx, 803, ft0);
+     /* DIAGNOSTIC (PS3_FSLOG_BT=1): dump the guest back-chain when the game logs the
+      * render-config failure, to locate setScreenRenderTargetInternal & the config obj. */
+     if (getenv("PS3_FSLOG_BT") && buf && nbytes > 0 && nbytes < 4096 && vm_base) {
+@@ -901,12 +922,14 @@ static void cellFsAioRead(ppu_context* ctx)
+          * wherever the AIO stopped. Hold the stream lock across seek, read
+          * and the seek back (stdio's own calls take the same lock). */
+         FILE* f = g_files[fd];
++        const uint64_t ft0 = fs_ft_begin();   /* the lock wait counts: another reader holds the disk */
+         HOST_LOCKFILE(f);
+         const int64_t pos = (int64_t)HOST_FTELL64(f);
+         if (HOST_FSEEK64(f, offset) == 0)
+             n = fread(vm_base + buf, 1, (size_t)size, f);
+         if (pos >= 0) HOST_FSEEK64(f, pos);
+         HOST_UNLOCKFILE(f);
++        fs_ft_end(ctx, 802, ft0);
+         err = CELL_OK;
+     }
+     if (getenv("PS3_FSLOG"))
 diff --git a/runtime/ppu/ppu_hle.cpp b/runtime/ppu/ppu_hle.cpp
 index b44816b0..305d9fcf 100644
 --- a/runtime/ppu/ppu_hle.cpp
@@ -26052,10 +26108,10 @@ index 00000000..151e8568
 +    return 0;
 +}
 diff --git a/tools/ftrace_report.py b/tools/ftrace_report.py
-index d324e9ba..fef57766 100644
+index d324e9ba..c13c4cb3 100644
 --- a/tools/ftrace_report.py
 +++ b/tools/ftrace_report.py
-@@ -23,7 +23,8 @@ import sys
+@@ -23,18 +23,20 @@ import sys
  
  (SYSCALL, USLEEP, SPU_WAIT, SPU_BUSY, SEMA, SEMA_GAVEUP, DRAIN, FLIP_FIFO, FLIP_REQ, PRESENT,
   GPU_ENCODE, GPU_WAIT, READBACK, GPU_EXEC) = range(1, 15)
@@ -26065,7 +26121,11 @@ index d324e9ba..fef57766 100644
  
  SYSCALL_NAMES = {   # runtime/syscalls/lv2_syscall_table.h
      43: "thread_yield", 44: "thread_join", 85: "event_flag_wait", 92: "semaphore_wait",
-@@ -34,7 +35,8 @@ SYSCALL_NAMES = {   # runtime/syscalls/lv2_syscall_table.h
+     97: "lwmutex_lock", 102: "mutex_lock", 107: "cond_wait", 113: "lwcond_wait",
+     122: "rwlock_rlock", 125: "rwlock_wlock", 130: "event_queue_receive", 138: "event_port_send",
+-    141: "usleep", 142: "sleep", 178: "spu_group_join", 801: "fs_open", 802: "fs_read", 818: "fs_lseek",
++    141: "usleep", 142: "sleep", 178: "spu_group_join", 801: "fs_open", 802: "fs_read", 803: "fs_write", 818: "fs_lseek",
+ }
  
  
  RSX_ROWS = ("acquire wait", "drain", "present", "encode (flush)", "encode (present)",

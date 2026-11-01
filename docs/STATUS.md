@@ -831,6 +831,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     not named: a few stalls, not a wake latency spread over every frame. The run's CPU log has the security
     agent's two processes (`avp`, `kpm`) at 0.4 cores each in the first sample after the cluster, above their
     level elsewhere; suggestive only. `cpuwatch.ps1` now also logs the game's file read/write rates.
+  - Not the disk (x263: runWw, which puts the HLE file reads and writes on the timeline; `PS3_FTRACE=420:60`,
+    profilers off; 12-13 game frames/s). In 60 s, 536 reads took 20 µs or more, 20 ms in all, the longest
+    0.2 ms, all on one thread, and none overlap a stall; no write took 20 µs. The stalls (82 pieces over 2 ms,
+    1.35 s in all, ~2% of the time) again come in one cluster, 448.8-450.3 s, pieces of 39-149 ms, ended by
+    the same three workloads (`CollisL` 34, `MeshProcJobs` 19, `RsxSync` 17). In both runs the cluster falls
+    in a 30-s window where the process working set grows ~30 MB, which suggests the game moving into a new
+    area. What the main thread's task batch waits for there is still open.
   - Phases (per frame, from the first EDGE run after the flip to the last before the next): the EDGE phase is
     78.6 ms (median) of the 96.7 ms frame, and EDGE runs 92% of it; before and after it 1.9 and 1.6 ms. wid 3
     (`General6`, 50 jobs per game frame) runs 52 ms inside the EDGE phase, on other lanes. The main thread's
