@@ -817,6 +817,40 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     level. A quiet column is still owed (not valid while the PC is in use).
   - Harness: the scratchpad `fixgame.ps1` used to force the game's class to Normal, which would undo this; its
     default is AboveNormal now.
+  - Quiet column, 2026-11-02 01:00: still owed. The host was at ~22% before the run (a terminal and explorer
+    about a core each), above the ~10% a quiet run needs.
+  - EDGE after M1.02, loaded (x301: runWz, two busy processes, `PS3_SAMPLE_WIDS=15 SPU_LOCKLINE_STATS=1`,
+    480 s, samples from 120 s; `_cpu.txt` shows the burners, a terminal and explorer, nothing else):
+    - Lock waits are gone as a cost: per `[lockline]` line, 33-66 ms waited in total by all threads, over
+      65536 contended of 1.1-1.8M acquisitions (~4.5%); longest 0.2-4.5 ms.
+    - `spu_lockline_lock` is 3.3% of EDGE samples (6.0% in x292). With waits that small, what is left is the
+      atomic exchange on a line every core touches, not blocking.
+    - Runtime shares of EDGE samples: dispatch ~11.5% (`spu_indirect_branch_slow` 4.5, `spu_indirect_branch`
+      3.4, `spu_overlay_note_get` 2.1, `spu_lookup` + walk 1.5); coherency ~8.5% (`spu_lockline_lock` 3.3,
+      `spu_coh_notify_write` 3.2, `spu_coh_is_reserved` 0.8, `ppu_resv_break_line` 0.6,
+      `spu_coh_reserve_fast` 0.6); channels ~7.3% (`spu_wrch` 3.5, `spu_wrch_impl` 1.9, `spu_rdch_impl` 1.1,
+      `spu_rdch` 0.8); MFC ~3.9%; drain ~2.2%.
+    - The native stages lead the lifted code: `g73_loop1` 5.6% (top symbol), `gow_e550_ec08_run` 3.7%. The top
+      lifted function is `DCC0` (4.0%), the serial decode EDGE_NATIVE.md defers.
+  - Sharding the lock line (audit, read only): not a quick change. The holder list `s_coh_ctxs` is one global
+    linked list, walked under the lock by `spu_coh_notify_write(_except)`, `spu_coh_reserve`,
+    `spu_coh_unregister` and `spu_coh_forget_range`; per-line locks need that list under its own protection
+    first. And if most acquisitions are for the same few SPURS lines, per-line locks would not spread them.
+    `[lockline-ra]` (call sites and list length, DEBUGGING.md) is the data for that call.
+  - Where three runtime pieces spend it (x301 samples per 16-byte bucket, disassembled from runWz):
+    - `spu_coh_notify_write`: 77% of its samples on the load of a listed context's `resv_valid`, the walk of
+      `s_coh_ctxs` missing on contexts other threads own.
+    - `spu_indirect_branch_slow`: ~2/3 of its samples in the quadword load/store loop of
+      `spu_smc_microstep`, which interprets the save and restore stubs the WWS job manager generates at
+      interrupt entry (LS 0x3FEC0, 76 `stqd`/`lqd` and a `bi`): ~3% of EDGE.
+    - `spu_overlay_note_get` (every GET): mostly the overlay hash-table probe and the content-signature scan
+      for GETs of 512 bytes and more.
+  - Tried and dropped, 2026-11-02: lifted code's MFC parameter-channel writes (LSA/EAH/EAL/Size/TagID/
+    WrTagMask) as inline stores instead of `spu_wrch` calls. Job lab, new capture cap_4 (`work/jobcap4`: 400
+    EDGE jobs, 1 in 500 after 150 s, runLabW in call mode; cap_3 no longer replays on any exe since 10-29,
+    diverging at the first job's event #17): 400/400 identical both ways; sum of per-job minimums, REPEAT=50,
+    five alternated pairs, call 36.5 / inline 36.2 ms median (spread ±10% with the host in use). Under 1%, so
+    not kept; the patch is `work/wrch_inline_x302.patch`.
 - **M1.01: SPU indirect-branch dispatch takes a frame-less fast path (2026-11-01).**
   - Why: under load the frame is throughput-bound (x277-x279 below), so CPU per frame is the lever. A loaded
     profile of the audio workload (x280: runWz, two busy processes, `SPURS_PM_PROF`, `PS3_SAMPLE_HOST` with

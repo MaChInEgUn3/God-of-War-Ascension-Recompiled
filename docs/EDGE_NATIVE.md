@@ -1077,3 +1077,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   (`GOW_A67_NOISE`, default native, generator `port/gen_a67e_noise_lift.py`). Replay: 300/300 identical,
   1.74 -> 0.92 ms per job (-47%). In game General6's thread time fell 77% -> 52% and the corridor frame rate stayed
   the same (10.36 vs 10.35, STATUS M0.88): a faster job only pays when the frame waits for that workload.
+- 2026-11-02: cap_3 retired as the EDGE gate. No current exe replays it (runLabG6 of 10-29 and runLabW both
+  diverge at the first job's event #17, a GETLLAR of another line), so captures go stale as the runtime moves.
+  **cap_4** (`work/jobcap4`; `SPU_JOB_CAPTURE_N=400 SPU_JOB_CAPTURE_EVERY=500 SPU_JOB_CAPTURE_T0=150`, lab exe
+  runLabW, 300 s run) is the gate now: 400/400 identical, sum of per-job minimums ~36 ms at REPEAT=50.
+  `work/x58_run.sh` replays `$CAP` (default jobcap4) under a 900 s timeout and stops its exe afterwards. Re-capture
+  when a gate fails on an unchanged lab exe.

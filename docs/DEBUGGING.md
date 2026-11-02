@@ -258,12 +258,28 @@ Lessons that cost days; keep them.
   wait since the last line. A wait over 5 ms also prints `[lockline-long] <QPC s> waited <ms>: waiter tid <host>
   rva 0x.., holder tid <host> rva 0x..` (the first 200); the RVAs are return addresses into the code that took
   the lock -- add 0x140000000 and look the address up in the build's `MyGameRecomp.map` (the same build's map).
+  Each `[lockline]` line is followed by `[lockline-ra] coh_ctxs <n>, <k> acquisitions by site: 0x<rva>=<count>
+  ... other=<count>`: the length of the reservation-holder list (`s_coh_ctxs`, which every notifier walks) and the
+  top twelve call sites that took the line since the last report (all acquisitions, contended or not).
   `SPURS_RCSTORE_LOG` lines carry host and guest tids, which names a PPU holder. Since M1.02 a waiter sleeps
   (`Sleep(1)`) after ~1 ms of spinning; `SPU_LOCKLINE_SLEEP=0` restores the plain spin. The port runs its
   process above normal (`GOW_PROC_PRIO=0` leaves the class alone); a harness that sets the class after launch
   must use AboveNormal, or it undoes that.
 * **Before reading a run as a regression**: check its `_cpu.txt` (cpuwatch) for other programs; x290 "never
   left the opening" because other sessions were compiling (host at 100%), and the rerun was normal.
+* **A/B protocol for a frame-rate claim** (M1.02 on):
+  - Both arms are the same exe with the change behind an environment switch where possible (a second exe changes
+    code layout too). Run one warm-up instance first and discard it, then alternate arms (old new new old).
+  - Report two columns: quiet (nothing else running; host under ~10% before the run, checked with two process
+    samples a few seconds apart) and loaded (`burn.py 2` plus the pad masher, the recipe above). A change that
+    only helps one column says so. A quiet column measured while someone uses the PC is not a quiet column: mark
+    it owed instead.
+  - Read each run's `_cpu.txt` before its number. A run with another program over ~0.5 core that the other arm
+    did not have is void, not a data point.
+  - Harness scripts that set the game's priority class after launch use AboveNormal (the port's own default).
+  - A single loaded run carries about +-15% noise here. An effect below ~5% is out of reach in game: time it in
+    the job lab instead (pinned replay of `work/jobcap3`, sum of per-job minimums, EDGE_NATIVE.md), where one
+    build repeats within ~1%.
 * **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:
