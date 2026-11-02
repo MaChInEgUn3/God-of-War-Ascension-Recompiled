@@ -12752,7 +12752,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..4a3af35f 100644
+index 59f5e4b8..5431092c 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -12948,7 +12948,7 @@ index 59f5e4b8..4a3af35f 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4156 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4171 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -16344,16 +16344,31 @@ index 59f5e4b8..4a3af35f 100644
 +                             ctx->dec_base_ns = spu_host_ns();              break;
 +    case SPU_WrEventMask:    ctx->event_mask = v;                           break; /* WrEventMask */
 +    case SPU_WrEventAck:
-+        /* No lock-line lock. It was taken here so that a concurrent
-+         * |= SPU_EVENT_LR from another thread (the PPU coherent store, a peer
-+         * SPU's PUTLLC, PUTLLUC or plain PUT) could not land inside a plain
-+         * read-modify-write and be written back away. SPU_EVENT_CLEAR and
-+         * SPU_EVENT_SET are atomic now (spu_context.h), so the clear alone
-+         * cannot lose that edge. The re-raise below reads list_stall_stat,
-+         * which only this context's own thread writes (lists run inline), so
-+         * it needs no lock either. GoW:A acknowledges ~40k events a second
-+         * (the WWS job manager's stall-and-notify interrupts); the lock made
-+         * that a quarter of all lock-line acquisitions. */
++        /* Under the lock-line lock by default. For correctness the lock is no
++         * longer needed: SPU_EVENT_CLEAR and SPU_EVENT_SET are atomic
++         * (spu_context.h), so a concurrent |= SPU_EVENT_LR from another
++         * thread cannot be written back away, and list_stall_stat is only
++         * written by this context's own thread (lists run inline). But
++         * dropping it (SPU_EVACK_LOCK=0) made the lock line's tails worse
++         * under an oversubscribed host: GoW:A, same exe, 300 s each with five
++         * busy processes, waits over 5 ms 0 / 0 with the lock against 2 / 55
++         * without (longest 24 ms), and fewer game frames in both pairs. The
++         * ack is ~40k acquisitions a second there, a quarter of the total;
++         * presumably they keep the waiters' spin-then-sleep cycling, which
++         * gets a preempted holder back on a CPU sooner. Not proven. */
++        { static int s_lk = -1;
++          if (__builtin_expect(s_lk < 0, 0)) {
++              const char* e = getenv("SPU_EVACK_LOCK");
++              s_lk = !(e && e[0] == '0');
++          }
++          if (s_lk) {
++              spu_lockline_lock();
++              SPU_EVENT_CLEAR(ctx, v);
++              if ((v & 0x2u) && ctx->list_stall_stat)
++                  SPU_EVENT_SET(ctx, 0x2u);
++              spu_lockline_unlock();
++              break;
++          } }
 +        SPU_EVENT_CLEAR(ctx, v);
 +        /* A stall-and-notify nobody has read yet stays pending. We run a
 +         * resumed list inline, inside the MFC_WrListStallAck that resumes it,

@@ -809,10 +809,23 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Result (x308 = x301 recipe on runXc, loaded EDGE profile from 120 s, against x307): `spu_coh_notify_write`
     2.92% -> 1.16% of EDGE samples, `spu_wrch_impl` 1.50% -> 1.08%; `spu_lockline_lock` 2.09% -> 2.20%. 480 s,
     no stall.
-  - Frame rate: the paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load, warm-up then old
-    new new old) is the measurement; the profile runs' game-frame rates (x301 3.4, x307 4.9, x308 6.6 game
-    frames/s over 120-480 s) had other programs at 1.5-3.3 cores at peaks and are not a frame-rate claim.
-- **M1.03: SPU event acknowledgements no longer take the lock line (2026-11-02).**
+  - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
+    warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
+    (warm-up, new exe: 13.58), but other programs averaged 2.6-6 cores in every arm, so by the A/B protocol it
+    carries no frame-rate number. The profile runs' rates (x301 3.4, x307 4.9, x308 6.6 over 120-480 s) are not
+    a claim either.
+  - x309's new arms had long lock-line waits (`[lockline-long]` 19 and 89, longest 80 and 49 ms; holders PUTLLC
+    and `vm_write32`), the old arms none. That was M1.03, not this: in x310 (below) the arms with M1.04 and the
+    ack lock had none.
+- **M1.03, reverted the same day: SPU event acknowledgements without the lock line (2026-11-02).**
+  - Reverted (toolkit b2b3dcca: the ack takes the lock again by default, `SPU_EVACK_LOCK=0` drops it). The
+    lock is not needed for correctness, but without it the lock line's tails got worse under an oversubscribed
+    host. x310: runXd, same exe, `SPU_EVACK_LOCK=1` against unset, order L N N L, 300 s each with five busy
+    processes: waits over 5 ms 0 / 2 / 55 / 0 (longest 18.7 and 24.2 ms, lock-free arms only), game frames/s
+    over 120-300 s 5.64 / 4.42 / 6.40 / 7.89. Hard page faults do not explain it (L1 had the most, 1741/s mean).
+    Presumably the ack's ~40k acquisitions a second kept the waiters' spin-then-sleep cycling, which gets a
+    preempted holder back on a CPU sooner; not proven. A cheaper lock line has to keep that property.
+  - What it measured while it was in:
   - Why: `[lockline-ra]` on the loaded recipe (x306: runXa, two busy processes, 300 s) counted 165k lock-line
     acquisitions a second from 38 registered contexts (steady, none leaked): PUTLLC 31%, PPU `vm_write32` 29%,
     `SPU_WrEventAck` 25%. The ack is the WWS job manager acknowledging its ~40k stall-and-notify interrupts a
