@@ -799,6 +799,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M1.03: SPU event acknowledgements no longer take the lock line (2026-11-02).**
+  - Why: `[lockline-ra]` on the loaded recipe (x306: runXa, two busy processes, 300 s) counted 165k lock-line
+    acquisitions a second from 38 registered contexts (steady, none leaked): PUTLLC 31%, PPU `vm_write32` 29%,
+    `SPU_WrEventAck` 25%. The ack is the WWS job manager acknowledging its ~40k stall-and-notify interrupts a
+    second, and its lock dated from before event updates were atomic (upstream #492).
+  - Change (toolkit `spu_channels.c`): the ack clears with the atomic `SPU_EVENT_CLEAR` and re-raises a pending
+    Sn without the lock; `list_stall_stat` is only written by the context's own thread.
+  - Result (x307 = x301 recipe on runXb, loaded EDGE profile from 120 s): acquisitions 165k/s -> 118k/s;
+    `spu_lockline_lock` 3.33% -> 2.09% of EDGE samples, `spu_coh_notify_write` 3.19% -> 2.92%, `spu_wrch_impl`
+    1.88% -> 1.50%; the native stages' share rose (`g73_loop1` 5.6% -> 6.7%). 480 s of play, no stall.
+  - Frame rate: not claimed. x307's game-frame rate was higher than x301's, but `x307_cpu.txt` shows WmiPrvSE at
+    ~1.6 cores mid-run, so by the A/B protocol (DEBUGGING.md) that run cannot carry a frame-rate number.
 - **M1.02: no more long stalls on the SPU lock line under load (2026-11-01).**
   - Observed (x295, x296, details under M1.01): under load, single waits on the global SPU lock line of up to
     86 ms, several SPU threads waiting at once, with a normal-priority PPU thread holding the line (a store to an
