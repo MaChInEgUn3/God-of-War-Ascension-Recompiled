@@ -670,6 +670,19 @@ int main(int argc, char** argv)
      * processes) 7.8 against 5.9 game frames/s over four runs each (x253, x254).
      * SPURS_KERN_PRIO=0 runs them at normal priority. */
     if (!getenv("SPURS_KERN_PRIO")) _putenv_s("SPURS_KERN_PRIO", "1");
+    /* GOW_PROC_PRIO=1 (M1.02, default): the game runs its process above normal. Under
+     * load, single waits on the SPU lock line reached 86 ms (x295): a PPU thread at
+     * normal priority, storing to an SPU-reserved line, was descheduled by the other
+     * busy programs while it held the line. Above normal it wins those contests; the
+     * toolkit's lock-line spin now sleeps after ~1 ms, so the kernel threads (one
+     * level higher still) cannot starve it either -- without that, raising the
+     * process made it worse (x296: up to 425 ms). Both together (x298): 3 waits over
+     * 5 ms in 480 s, the longest 12.9 ms. A/B under load (x300, warm-up then o n n o):
+     * longest wait 7.4 / 14.0 ms against 34 / 179 ms; game frames/s 8.16 / 8.65 against
+     * 8.57 / 2.78 (the second old run collapsed with the host at 100%).
+     * GOW_PROC_PRIO=0 leaves the class alone. */
+    { const char* p = getenv("GOW_PROC_PRIO");
+      if (!(p && p[0] == '0')) SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS); }
     /* SPURS_IDLE_MAX=2 (M1.00): probe an idle module at least every 4th kernel
      * pass (toolkit default 4 = every 16th). Stalls of 39-149 ms ended each time
      * one of CollisL, MeshProcJobs or RsxSync was next dispatched; probing idle

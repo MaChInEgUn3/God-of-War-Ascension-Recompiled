@@ -799,6 +799,24 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M1.02: no more long stalls on the SPU lock line under load (2026-11-01).**
+  - Observed (x295, x296, details under M1.01): under load, single waits on the global SPU lock line of up to
+    86 ms, several SPU threads waiting at once, with a normal-priority PPU thread holding the line (a store to an
+    SPU-reserved line). Raising the whole process made it worse (x296: up to 425 ms, 42 events in 480 s): the
+    holder was being kept off the CPU by the above-normal SPURS kernel threads spinning for it, whose
+    `SwitchToThread` yield only reaches threads queued on the same processor.
+  - Toolkit a35b95c2: after ~1 ms of spinning (six rounds of 4096 pauses) the waiter `Sleep(1)`s
+    (`SPU_LOCKLINE_SLEEP=0` turns it off). Port (`main.cpp`): the game runs its process above normal
+    (`GOW_PROC_PRIO=0` turns it off), so the holder also wins against other programs. Either alone was partial
+    (x297: sleep only, longest 57 ms); both (x298, x299): 3 and 1 waits over 5 ms in 480 s, longest 12.9 and
+    8.1 ms.
+  - A/B under load (x300: two busy processes, runWz, warm-up then old new new old, 480 s each; old =
+    `GOW_PROC_PRIO=0 SPU_LOCKLINE_SLEEP=0`, process Normal): longest wait 7.4 / 14.0 ms against 34 / 179 ms;
+    waits over 5 ms 3 / 38 against 72 / 200+; game frames/s over 360-480 s 8.16 / 8.65 against 8.57 / 2.78. The
+    second old run collapsed when the host reached 100%, the starvation this removes; without it the arms are
+    level. A quiet column is still owed (not valid while the PC is in use).
+  - Harness: the scratchpad `fixgame.ps1` used to force the game's class to Normal, which would undo this; its
+    default is AboveNormal now.
 - **M1.01: SPU indirect-branch dispatch takes a frame-less fast path (2026-11-01).**
   - Why: under load the frame is throughput-bound (x277-x279 below), so CPU per frame is the lever. A loaded
     profile of the audio workload (x280: runWz, two busy processes, `SPURS_PM_PROF`, `PS3_SAMPLE_HOST` with
