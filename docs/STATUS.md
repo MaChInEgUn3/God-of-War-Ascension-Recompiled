@@ -799,6 +799,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Inside the five hottest EDGE functions, context-memory accesses are 11-24% of samples and stack spills 11-16%.
     Register promotion in the lifter is the remaining double-digit lever, with a risk of trading context loads for
     spills.
+- **M1.04: the reservation-holder walk is an array scan (2026-11-02).**
+  - Why: after M1.03 the lock line is mostly PUTLLC and PPU stores to marked lines, and each of those walks
+    every registered holder with the line held (38 in GoW:A). x301 put 77% of `spu_coh_notify_write` on the
+    load of a holder's `resv_valid`; the linked list added a miss per holder for its malloc'd node.
+  - Change (toolkit `spu_coherency.c`): `s_coh_ctxs` is a contiguous array of context pointers (append on first
+    reservation, swap-remove on unregister and `spu_coh_forget_range`), and the notify walks prefetch
+    `resv_valid` four holders ahead. Same lock, same membership rules, same Dekker argument.
+  - Result (x308 = x301 recipe on runXc, loaded EDGE profile from 120 s, against x307): `spu_coh_notify_write`
+    2.92% -> 1.16% of EDGE samples, `spu_wrch_impl` 1.50% -> 1.08%; `spu_lockline_lock` 2.09% -> 2.20%. 480 s,
+    no stall.
+  - Frame rate: the paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load, warm-up then old
+    new new old) is the measurement; the profile runs' game-frame rates (x301 3.4, x307 4.9, x308 6.6 game
+    frames/s over 120-480 s) had other programs at 1.5-3.3 cores at peaks and are not a frame-rate claim.
 - **M1.03: SPU event acknowledgements no longer take the lock line (2026-11-02).**
   - Why: `[lockline-ra]` on the loaded recipe (x306: runXa, two busy processes, 300 s) counted 165k lock-line
     acquisitions a second from 38 registered contexts (steady, none leaked): PUTLLC 31%, PPU `vm_write32` 29%,
