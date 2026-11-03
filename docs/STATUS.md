@@ -836,6 +836,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         compares, one atomic exchange per method), not a wait-for-put loop.
       - The window is 20 s of one corridor section (max frame 173 ms: a loading spike is in it); a baseline, not
         the whole game.
+      - The walker's biggest item, vertex fetch, was worked before (see "Vertex fetch conclusion" further down):
+        SIMD and GPU decode were both exact and neither paid, because the cost is the walker's first touch of the
+        vertex bytes the SPU threads just wrote, not the decode. With the walker at ~92%, what is left is moving
+        work off its one thread (fetching ahead on another core, or splitting FIFO decode from draw building),
+        and the GPU path's gather for deduplicated references (only ~55% of draws qualified). Multi-day items.
       - Two resources are near saturation together, the SPU pool and the single RSX walker thread. That is why
         cutting one stage (General6 -47% at M0.88, texture hashing in x314) barely moves the frame: the other
         one takes over as the limit. A real step needs both to gain, so the RSX walker (vertex fetch 26%, FIFO
