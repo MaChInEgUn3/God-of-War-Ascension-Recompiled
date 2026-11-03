@@ -889,6 +889,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       interrupt entry (LS 0x3FEC0, 76 `stqd`/`lqd` and a `bi`): ~3% of EDGE.
     - `spu_overlay_note_get` (every GET): mostly the overlay hash-table probe and the content-signature scan
       for GETs of 512 bytes and more.
+    - x308 (runXc) inside `spu_indirect_branch_slow` (5.8% of EDGE there): 72% of its samples in the
+      `spu_smc_microstep` quadword loop, which is already decode-plus-`pshufb` per instruction; the heaviest
+      bucket is the load of the next instruction word. A decoded-stub cache would save the decode only (~1-2% of
+      EDGE at best). `spu_lookup` is 1.4% on its own, mostly one probe load.
   - Tried and dropped, 2026-11-02: lifted code's MFC parameter-channel writes (LSA/EAH/EAL/Size/TagID/
     WrTagMask) as inline stores instead of `spu_wrch` calls. Job lab, new capture cap_4 (`work/jobcap4`: 400
     EDGE jobs, 1 in 500 after 150 s, runLabW in call mode; cap_3 no longer replays on any exe since 10-29,
