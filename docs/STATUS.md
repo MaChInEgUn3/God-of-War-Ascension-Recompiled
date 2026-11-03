@@ -881,6 +881,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       lowers is what the sibling loses.
     - Three O arms of the same exe and env on a quiet host spanned 11.83-13.08 game frames/s (10%). Levers of
       3-6% cannot be read on frame rate alone here; see the A/B protocol in DEBUGGING.md.
+    - Spin hint on the main thread's polls (x318, 2026-11-03 07:21-08:38, runXg = runXf + a `PPU_SPIN_LABELS`
+      lift of `0x466EB8` and `0x416338` (toolkit 336ce82e; the exe has the pause instructions in both, the loop
+      unrolled), A = `PPU_SPIN_PAUSE=0`, B = 16, warm-up then A B B A quiet, then A B B A with `burn.py 2`, 480 s,
+      `PS3_FTRACE` 300-320 s in every arm):
+      - Quiet, game frames/s over 360-480 s: A 13.32 / 13.07, B 12.44 / 13.38. Frames in the 20 s trace window:
+        A 259 / 251, B 272 / 277. Median frame A 67.5 / 74.1 ms, B 69.2 / 69.7. Walker drain over the window
+        16.7 / 16.0 s in A, 15.6 / 16.5 s in B; SPU busy per frame 56.6 / 60.1 against 57.3 / 56.7 ms. The
+        two measures disagree on direction, and neither is outside the spread.
+      - Loaded (python ~2.0 cores in every arm): A 11.64 / 10.42, B 9.00 / 13.62 game frames/s. lB2 ran faster
+        than either quiet A arm with the same burners: the loaded column's spread (9.0-13.6) carries no claim.
+      - Neutral at the resolution available. With ~7.3 busy threads on six cores only about one pair shares a
+        physical core at a time, so the sibling the polls slow is often idle; the effect a pause can have is
+        small. `PPU_SPIN_PAUSE` stays 0 (the hint is in the lift, a no-op unless set).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
