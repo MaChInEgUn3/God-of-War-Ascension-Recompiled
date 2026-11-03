@@ -852,6 +852,35 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       most, inside the noise. Not the lever, so the default stays 8 (rarer full hashes would leave a small write
       to a big texture unseen for longer). x246's `[eng-stats]` had put ~30 full hashes of big textures per frame,
       ~16 MB hashed a frame.
+    - Causal probes (x316, 2026-11-03 04:22-05:22, quiet, same exe runXf = runXe + the new diagnostic
+      `SPU_SLOW_PCT`, warm-up then O R S S R O, 480 s, pad masher only). R = `RSX_SLOW_PCT=25` (the walker
+      busy-waits 25% of each pass), S = `SPU_SLOW_PCT=25` (each SPURS kernel thread busy-waits 25% of each module
+      run). A fully binding stage gives -20%. Game frames/s over 360-480 s:
+      - O 11.83 / 12.72, R 11.62 / 11.18, S 10.92 / 10.67. The order S < R < O holds in every window
+        (300-480, 360-420, 420-480).
+      - Raw: R -7%, inside the O arms' own 7.5% spread; S -12%, outside it.
+      - The probes are not equal loads: S spins five busy threads (~1.1 extra cores; the game drew 7.6-8.5 cores
+        against 7.0-7.3 in O), R one (~0.23 core).
+    - Control (x317, 05:30-05:57, same exe, B = plain run plus `burn.py 1`, B O B): B2 12.23 against O3 13.08,
+      -6.5% for one normal-priority busy core. B1 is void with a reason: a different trajectory from minute 2
+      (36 game frames/s in that minute against ~62 in every other run, then 3 for three minutes) while the game
+      drew less CPU (5.0-6.6 cores against 7+), which a normal-priority burner cannot cause in an AboveNormal
+      process. It is a different game state, not contention; if a loaded arm does that again it is a robustness
+      bug, not noise.
+    - Corrected for the extra CPU each probe drew, R and S both land near -5.5%, ~0.28 of a fully binding stage
+      each. The co-saturation reading of x315 stands: the walker alone (the lookahead/prefetch design) and the
+      SPU side alone are each worth about a quarter of their own gain.
+    - The SPU count is not a lever: the port already runs six kernel threads (`SPURS_KERN_SPUS=0,1,2,3,4,5`, the
+      game's `nSpus`), and one fewer did not help (x279).
+    - The larger finding: one core of ordinary background load costs 6.5% on a quiet host. The game itself runs
+      ~7.3 busy logical threads on six physical cores, so its own polling threads sit on the hyperthread siblings
+      of its working threads. The main PPU thread is ~0.8 core and blocked only 14 of 67 ms (x315); the rest is
+      its two job-list polls (`00416338`, `00466E38`). Making those polls lighter on the sibling is the one lever
+      that can lift the SPU side and the walker together, and it is also the robustness direction. x201 (sleep
+      every 64th call) judged that by the thread's own CPU, which a pause or yield does not lower; what it
+      lowers is what the sibling loses.
+    - Three O arms of the same exe and env on a quiet host spanned 11.83-13.08 game frames/s (10%). Levers of
+      3-6% cannot be read on frame rate alone here; see the A/B protocol in DEBUGGING.md.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the

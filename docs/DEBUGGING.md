@@ -292,9 +292,18 @@ Lessons that cost days; keep them.
     the same exe with an env switch, under an oversubscribed host (`burn.py 5`), L N N L, and compare the
     `[lockline-long]` count and maximum. M1.03 cut acquisitions by 28% and looked better in the profile, but it
     was reverted on this test.
+  - Same-exe, same-env quiet runs spread ~10% in game frames/s (x316/x317: 11.83 / 12.72 / 13.08 over 360-480
+    s). For a lever of 3-6%, make the primary metric a per-stage time per frame from a short `PS3_FTRACE` window
+    in each arm (walker drain ms, SPU busy ms, main-thread blocked ms; `tools/ftrace_report.py`), or pair
+    same-spot windows as in x193. Frame rate is then the secondary column.
+  - A causal probe that spins (`RSX_SLOW_PCT`, `SPU_SLOW_PCT`) also adds host CPU. Correct it with a control arm
+    that burns the same number of cores (`burn.py N`): one busy core cost 6.5% in x317, so `SPU_SLOW_PCT=25`
+    (~1.1 extra cores) loses about half its drop to contention.
 * **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
-  n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:
+  n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. `SPU_SLOW_PCT=<n>`
+  (2026-11-03, diagnostic, default 0) is the SPU side: each SPURS kernel thread busy-waits n% of each module run.
+  Run both against a `burn.py` control arm (see the A/B protocol). Per-thread host CPU:
   `RSX_PIPE_FAST=0` (M0.81) brings back the per-draw linear pipeline scan and fragment-program walks, to check whether
   a pipeline mix-up comes from the index or the memo. `VK_DRAW_PROF=<s>` splits the Vulkan draw into lookup,
   descriptors, copies, recording and flush per draw, and counts render passes; `VK_PASS_MERGE=1` (toolkit default off, GoW:A port default on since M0.89) lets

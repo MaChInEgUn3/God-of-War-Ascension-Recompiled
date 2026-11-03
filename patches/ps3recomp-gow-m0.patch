@@ -24889,7 +24889,7 @@ index 20089610..784535b1 100644
      CloseHandle(th);   /* detached */
  #else
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 905b3517..d49443d0 100644
+index 905b3517..a6f4b349 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -26,6 +26,8 @@
@@ -25196,7 +25196,7 @@ index 905b3517..d49443d0 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -391,7 +586,149 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -391,7 +586,162 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -25226,6 +25226,19 @@ index 905b3517..d49443d0 100644
 +        g_spurs_kt_wid[kt] = (long)wid;
 +    }
      const int pm_halted = spu_run_with_halt(entry, ctx);
++#ifdef _WIN32
++    /* SPU_SLOW_PCT=<n> (diagnostic, default 0): after each module run, busy-wait
++     * n% of the time the run took, on the same kernel thread. The SPU side of
++     * RSX_SLOW_PCT's causal probe: if SPU throughput limits frames/s, frames/s
++     * falls by about n/(100+n). */
++    { static int s_slow = -1;
++      if (__builtin_expect(s_slow < 0, 0)) { const char* e = getenv("SPU_SLOW_PCT"); s_slow = e ? atoi(e) : 0; }
++      if (s_slow > 0) {
++          LARGE_INTEGER sl1; QueryPerformanceCounter(&sl1);
++          const LONGLONG until = sl1.QuadPart + (sl1.QuadPart - prof_t0.QuadPart) * s_slow / 100;
++          do { YieldProcessor(); QueryPerformanceCounter(&sl1); } while (sl1.QuadPart < until);
++      } }
++#endif
 +    if (kt < SPURS_KT_MAX) g_spurs_kt_wid[kt] = -1;
 +    if (ft_t0) {
 +        const uint64_t ft_t1 = ps3_ft_now();
@@ -25346,7 +25359,7 @@ index 905b3517..d49443d0 100644
      /* A lane's run should only end through exitToKernel. Anything else strands
       * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
      if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-@@ -429,12 +766,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -429,12 +779,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */
