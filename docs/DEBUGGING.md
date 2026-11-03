@@ -183,6 +183,9 @@ Lessons that cost days; keep them.
   (`GetThreadTimes`), the A/B control metric that other processes' load does not inflate. Methods are only
   counted (`methods N 0 ms`): timing each of ~2.5M methods a second with two clock reads cost the walker a large
   share of its time. `ENG_PHASE_STATS_METHODS=1` brings the per-method clocks back.
+  Texture change detection: a sparse hash every frame, and a full hash when it differs, for a texture of 16 KB
+  or less, or every `PS3RECOMP_ENG_TEXHASH_EVERY` frames (a power of two, default 8; STATUS x314 found 64 inside
+  the noise). `PS3RECOMP_ENG_TEXHASH_FULL=1` hashes everything in full every frame.
 * **Slow Vulkan driver calls**: `VK_SLOW_MS=<ms>` logs every queue-lock wait, submit, fence wait, allocate, map,
   free and idle that takes longer, with the thread and the number of live `VkDeviceMemory` objects (up to 3000
   lines). This is how the M0.59e hang was found: seconds inside `vkFreeMemory`/`vkAllocateMemory`, outside any

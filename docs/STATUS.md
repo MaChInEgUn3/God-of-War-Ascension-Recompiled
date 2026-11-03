@@ -823,7 +823,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       `sink_end_draw` 8%.
     - So with the host quiet, the frame's critical path looks like the RSX thread, with the PPU waiting, not SPU
       throughput. What `00466E38` waits on, and whether the RSX thread is the one it waits for, is the next
-      question; texture hashing is the first RSX cost to look at.
+      question.
+    - Texture hashing tried first (x314, quiet, same exe runXe, `PS3RECOMP_ENG_TEXHASH_EVERY` unset = 8 against 64,
+      warm-up then A B B A, 480 s): 13.23 / 13.16 / 13.66 / 12.63 game frames/s over 360-480 s, 11.21 / 11.74 /
+      12.17 / 11.57 over 120-480 s. B is ahead by ~4-5% on average, but the first pair is level: a few percent at
+      most, inside the noise. Not the lever, so the default stays 8 (rarer full hashes would leave a small write
+      to a big texture unseen for longer). x246's `[eng-stats]` had put ~30 full hashes of big textures per frame,
+      ~16 MB hashed a frame.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
