@@ -824,6 +824,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - So with the host quiet, the frame's critical path looks like the RSX thread, with the PPU waiting, not SPU
       throughput. What `00466E38` waits on, and whether the RSX thread is the one it waits for, is the next
       question.
+    - Critical path, quiet (x315: runXd, `PS3_FTRACE` 20 s from t=300, `tools/ftrace_report.py`): 269 frames,
+      median 67.1 ms (14.9 fps), min 50.1, max 173.3. Per frame on average:
+      - SPUs: five of the six ~90% busy (61.7 / 59.2 / 60.7 / 61.6 / 60.8 ms), the sixth 48%.
+      - RSX walker: in drain 61.6 ms (~92%).
+      - The main PPU thread: blocked only 14 ms; the rest is busy, mostly the job-list polls above.
+      - Two resources are near saturation together, the SPU pool and the single RSX walker thread. That is why
+        cutting one stage (General6 -47% at M0.88, texture hashing in x314) barely moves the frame: the other
+        one takes over as the limit. A real step needs both to gain, so the RSX walker (vertex fetch 26%, FIFO
+        14%, texture hashing 17%, remap 10% of its samples) is now as much a target as SPU throughput,
+        including taking work off its one thread.
     - Texture hashing tried first (x314, quiet, same exe runXe, `PS3RECOMP_ENG_TEXHASH_EVERY` unset = 8 against 64,
       warm-up then A B B A, 480 s): 13.23 / 13.16 / 13.66 / 12.63 game frames/s over 360-480 s, 11.21 / 11.74 /
       12.17 / 11.57 over 120-480 s. B is ahead by ~4-5% on average, but the first pair is level: a few percent at
