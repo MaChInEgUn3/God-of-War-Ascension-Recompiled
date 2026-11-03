@@ -808,8 +808,22 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     `resv_valid` four holders ahead. Same lock, same membership rules, same Dekker argument.
   - Result (x308 = x301 recipe on runXc, loaded EDGE profile from 120 s, against x307): `spu_coh_notify_write`
     2.92% -> 1.16% of EDGE samples, `spu_wrch_impl` 1.50% -> 1.08%; `spu_lockline_lock` 2.09% -> 2.20%. 480 s,
-    no stall. Both runs had M1.03 in; the shipped state (M1.04 with the ack lock back) is not yet profiled. Its
-    tail evidence is x310's locked arms: no wait over 5 ms with five busy processes.
+    no stall. Both runs had M1.03 in. The shipped state (M1.04 with the ack lock back), x313 on runXd with the same
+    recipe, against x301 (M1.02): `spu_lockline_lock` 3.33% -> 2.26%, `spu_coh_notify_write` 3.19% -> 1.16%,
+    `spu_wrch_impl` 1.88% -> 0.78% of EDGE samples; 13 waits over 5 ms in 480 s (M1.02's exe: 1-38 per run on
+    this recipe). Tails with five busy processes: x310's locked arms, none over 5 ms. Upstream: PR #672.
+  - Quiet baseline, whole process (x312: runXd, 480 s, pad masher only, PM/main profiling on, `PS3_SAMPLE` with no
+    workload filter, samples from 120 s; 13.0-13.5 game frames/s on this recipe):
+    - The two busiest host threads are a PPU thread (30% of all samples) and the RSX thread (28%). Every SPU
+      thread is far below them (13.5%, then 6% each).
+    - The PPU thread is 44% in game function `00416338` (the job-list counter poll noted in the a67e work) and
+      31% in `00466E38`: it mostly waits.
+    - The RSX thread: `rsx_vertex_fetch_many` 26%, `gcm_rsx_process_fifo_unlocked` 14%, texture content hashing
+      17% (`eng_texture_content_hash` 10.7 + `eng_texture_sparse_hash` 6.0), `rsx_vertex_remap_build` 10%,
+      `sink_end_draw` 8%.
+    - So with the host quiet, the frame's critical path looks like the RSX thread, with the PPU waiting, not SPU
+      throughput. What `00466E38` waits on, and whether the RSX thread is the one it waits for, is the next
+      question; texture hashing is the first RSX cost to look at.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
