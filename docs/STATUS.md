@@ -815,6 +815,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     (warm-up, new exe: 13.58), but other programs averaged 2.6-6 cores in every arm, so by the A/B protocol it
     carries no frame-rate number. The profile runs' rates (x301 3.4, x307 4.9, x308 6.6 over 120-480 s) are not
     a claim either.
+  - Quiet column (x311, 2026-11-02 21:26-22:08, started after three load samples under 1.3 cores; runWz = M1.02
+    against runXd = shipped M1.04, warm-up then old new new old, 480 s, pad masher only): 13.05 / 13.17 / 13.53 /
+    13.13 game frames/s over 360-480 s (warm-up 13.47), 10.40 / 12.06 / 12.11 / 11.85 over 120-480 s; waits over
+    5 ms 2 / 3 / 0 / 1. The new exe is level or slightly ahead in each pair (~+2% late), inside the noise: no
+    frame-rate gain claimed, and no regression. During every arm explorer and System rose to 2.5-3.3 cores
+    (under 1 core before each run), so that load comes with the game, not from another program.
   - x309's new arms had long lock-line waits (`[lockline-long]` 19 and 89, longest 80 and 49 ms; holders PUTLLC
     and `vm_write32`), the old arms none. That was M1.03, not this: in x310 (below) the arms with M1.04 and the
     ack lock had none.
@@ -861,8 +867,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     level. A quiet column is still owed (not valid while the PC is in use).
   - Harness: the scratchpad `fixgame.ps1` used to force the game's class to Normal, which would undo this; its
     default is AboveNormal now.
-  - Quiet column, 2026-11-02 01:00: still owed. The host was at ~22% before the run (a terminal and explorer
-    about a core each), above the ~10% a quiet run needs.
+  - Quiet column: owed at 01:00 (host at ~22%). Measured for the shipped state at 21:26 (x311, under M1.04):
+    M1.02's exe ran 13.05 / 13.13 game frames/s over 360-480 s on a quiet host, against 8.16-8.65 in x300's
+    loaded arms. M1.02's own old-against-new quiet A/B (priority and sleep switched off) was not run.
   - EDGE after M1.02, loaded (x301: runWz, two busy processes, `PS3_SAMPLE_WIDS=15 SPU_LOCKLINE_STATS=1`,
     480 s, samples from 120 s; `_cpu.txt` shows the burners, a terminal and explorer, nothing else):
     - Lock waits are gone as a cost: per `[lockline]` line, 33-66 ms waited in total by all threads, over
