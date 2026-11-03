@@ -828,7 +828,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       median 67.1 ms (14.9 fps), min 50.1, max 173.3. Per frame on average:
       - SPUs: five of the six ~90% busy (61.7 / 59.2 / 60.7 / 61.6 / 60.8 ms), the sixth 48%.
       - RSX walker: in drain 61.6 ms (~92%).
-      - The main PPU thread: blocked only 14 ms; the rest is busy, mostly the job-list polls above.
+      - The main PPU thread: blocked only 14 ms; the rest is busy, mostly polls. `00466E38` is one too (163 lines:
+        reads the u16 completion counters of the job lists under `lwsync` and loops), like `00416338`, so the
+        main thread waits; it is not a third saturated resource.
+      - The walker's drain is its own work, not a wait for SPU-built commands: the hot buckets of
+        `gcm_rsx_process_fifo_unlocked` (x312) are the per-method decode and dispatch (a byte swap, method
+        compares, one atomic exchange per method), not a wait-for-put loop.
+      - The window is 20 s of one corridor section (max frame 173 ms: a loading spike is in it); a baseline, not
+        the whole game.
       - Two resources are near saturation together, the SPU pool and the single RSX walker thread. That is why
         cutting one stage (General6 -47% at M0.88, texture hashing in x314) barely moves the frame: the other
         one takes over as the limit. A real step needs both to gain, so the RSX walker (vertex fetch 26%, FIFO
