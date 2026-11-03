@@ -812,15 +812,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     tail evidence is x310's locked arms: no wait over 5 ms with five busy processes.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
-    (warm-up, new exe: 13.58), but other programs averaged 2.6-6 cores in every arm, so by the A/B protocol it
-    carries no frame-rate number. The profile runs' rates (x301 3.4, x307 4.9, x308 6.6 over 120-480 s) are not
+    (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
+    terminal up to 1.0 in n2 and o2; first read as 2.6-6 cores before the watcher's own WMI share and a
+    double-listing were taken out). Spread that wide carries no frame-rate number by the A/B protocol. The profile runs' rates (x301 3.4, x307 4.9, x308 6.6 over 120-480 s) are not
     a claim either.
   - Quiet column (x311, 2026-11-02 21:26-22:08, started after three load samples under 1.3 cores; runWz = M1.02
     against runXd = shipped M1.04, warm-up then old new new old, 480 s, pad masher only): 13.05 / 13.17 / 13.53 /
     13.13 game frames/s over 360-480 s (warm-up 13.47), 10.40 / 12.06 / 12.11 / 11.85 over 120-480 s; waits over
     5 ms 2 / 3 / 0 / 1. The new exe is level or slightly ahead in each pair (~+2% late), inside the noise: no
-    frame-rate gain claimed, and no regression. During every arm explorer and System rose to 2.5-3.3 cores
-    (under 1 core before each run), so that load comes with the game, not from another program.
+    frame-rate gain claimed, and no regression. Other programs averaged 1.1-1.4 cores in each arm (explorer
+    ~0.65, then CrossDeviceService and the terminal); the WmiPrvSE share `_cpu.txt` showed was the watcher's own
+    query (see DEBUGGING.md).
   - x309's new arms had long lock-line waits (`[lockline-long]` 19 and 89, longest 80 and 49 ms; holders PUTLLC
     and `vm_write32`), the old arms none. That was M1.03, not this: in x310 (below) the arms with M1.04 and the
     ack lock had none.
@@ -847,8 +849,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
   - Result (x307 = x301 recipe on runXb, loaded EDGE profile from 120 s): acquisitions 165k/s -> 118k/s;
     `spu_lockline_lock` 3.33% -> 2.09% of EDGE samples, `spu_coh_notify_write` 3.19% -> 2.92%, `spu_wrch_impl`
     1.88% -> 1.50%; the native stages' share rose (`g73_loop1` 5.6% -> 6.7%). 480 s of play, no stall.
-  - Frame rate: not claimed. x307's game-frame rate was higher than x301's, but `x307_cpu.txt` shows WmiPrvSE at
-    ~1.6 cores mid-run, so by the A/B protocol (DEBUGGING.md) that run cannot carry a frame-rate number.
+  - Frame rate: not claimed. x307's game-frame rate was higher than x301's, but two profile runs on different
+    exes are not an A/B. (The WmiPrvSE ~1.6 cores first read from `x307_cpu.txt` was the watcher's own query.)
 - **M1.02: no more long stalls on the SPU lock line under load (2026-11-01).**
   - Observed (x295, x296, details under M1.01): under load, single waits on the global SPU lock line of up to
     86 ms, several SPU threads waiting at once, with a normal-priority PPU thread holding the line (a store to an

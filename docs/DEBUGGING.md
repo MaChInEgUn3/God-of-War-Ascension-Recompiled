@@ -276,7 +276,11 @@ Lessons that cost days; keep them.
     only helps one column says so. A quiet column measured while someone uses the PC is not a quiet column: mark
     it owed instead.
   - Read each run's `_cpu.txt` before its number. A run with another program over ~0.5 core that the other arm
-    did not have is void, not a data point.
+    did not have is void, not a data point. In `_cpu.txt`, the `perf=` list is a performance-counter value read
+    at the instant of the watcher's own WMI query, so WmiPrvSE and powershell there are mostly the watcher itself
+    (~2 and ~1.3 cores with no game running). Since 2026-11-02 22:30 the watcher leaves them out. Average a
+    process over the run from the Get-Process list after `perf=` (the same names appear in both lists; count
+    them once).
   - Harness scripts that set the game's priority class after launch use AboveNormal (the port's own default).
   - A single loaded run carries about +-15% noise here. An effect below ~5% is out of reach in game: time it in
     the job lab instead (pinned replay of `work/jobcap4`, sum of per-job minimums, EDGE_NATIVE.md), where one
