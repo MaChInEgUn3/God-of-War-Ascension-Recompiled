@@ -808,7 +808,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     `resv_valid` four holders ahead. Same lock, same membership rules, same Dekker argument.
   - Result (x308 = x301 recipe on runXc, loaded EDGE profile from 120 s, against x307): `spu_coh_notify_write`
     2.92% -> 1.16% of EDGE samples, `spu_wrch_impl` 1.50% -> 1.08%; `spu_lockline_lock` 2.09% -> 2.20%. 480 s,
-    no stall.
+    no stall. Both runs had M1.03 in; the shipped state (M1.04 with the ack lock back) is not yet profiled. Its
+    tail evidence is x310's locked arms: no wait over 5 ms with five busy processes.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58), but other programs averaged 2.6-6 cores in every arm, so by the A/B protocol it
@@ -825,6 +826,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     over 120-300 s 5.64 / 4.42 / 6.40 / 7.89. Hard page faults do not explain it (L1 had the most, 1741/s mean).
     Presumably the ack's ~40k acquisitions a second kept the waiters' spin-then-sleep cycling, which gets a
     preempted holder back on a CPU sooner; not proven. A cheaper lock line has to keep that property.
+  - Who held the line in N2's 55 long waits: PPU stores 29 (`vm_write32` 13, `vm_write8` 10, `ppu_stdcx64` 6),
+    SPU PUTLLC 19, `cellSpursReadyCountStore` 3; one thread was the holder in 36 of them. The same shape as
+    M1.02's: a Normal-priority holder kept off the CPU by the game's own above-normal threads. With the ack's
+    lock, SPU threads reach the waiters' `Sleep(1)` often, which frees cores for it. The lever this points at is
+    the holder's scheduling (thread priorities inside the game), a design item, not the acquisition count.
   - What it measured while it was in:
   - Why: `[lockline-ra]` on the loaded recipe (x306: runXa, two busy processes, 300 s) counted 165k lock-line
     acquisitions a second from 38 registered contexts (steady, none leaked): PUTLLC 31%, PPU `vm_write32` 29%,

@@ -262,7 +262,8 @@ Lessons that cost days; keep them.
   ... other=<count>`: the length of the reservation-holder list (`s_coh_ctxs`, which every notifier walks) and the
   top twelve call sites that took the line since the last report (all acquisitions, contended or not).
   `SPURS_RCSTORE_LOG` lines carry host and guest tids, which names a PPU holder. Since M1.02 a waiter sleeps
-  (`Sleep(1)`) after ~1 ms of spinning; `SPU_LOCKLINE_SLEEP=0` restores the plain spin. The port runs its
+  (`Sleep(1)`) after ~1 ms of spinning; `SPU_LOCKLINE_SLEEP=0` restores the plain spin. `SPU_EVACK_LOCK=0`
+  lets `SPU_WrEventAck` skip the line (correct, but worse tails under load: STATUS M1.03). The port runs its
   process above normal (`GOW_PROC_PRIO=0` leaves the class alone); a harness that sets the class after launch
   must use AboveNormal, or it undoes that.
 * **Before reading a run as a regression**: check its `_cpu.txt` (cpuwatch) for other programs; x290 "never
@@ -278,8 +279,12 @@ Lessons that cost days; keep them.
     did not have is void, not a data point.
   - Harness scripts that set the game's priority class after launch use AboveNormal (the port's own default).
   - A single loaded run carries about +-15% noise here. An effect below ~5% is out of reach in game: time it in
-    the job lab instead (pinned replay of `work/jobcap3`, sum of per-job minimums, EDGE_NATIVE.md), where one
+    the job lab instead (pinned replay of `work/jobcap4`, sum of per-job minimums, EDGE_NATIVE.md), where one
     build repeats within ~1%.
+  - A change to how often or where the lock line is taken also needs a tail test, not just a profile share. Run
+    the same exe with an env switch, under an oversubscribed host (`burn.py 5`), L N N L, and compare the
+    `[lockline-long]` count and maximum. M1.03 cut acquisitions by 28% and looked better in the profile, but it
+    was reverted on this test.
 * **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. Per-thread host CPU:
