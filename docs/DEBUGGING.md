@@ -303,7 +303,11 @@ Lessons that cost days; keep them.
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. `SPU_SLOW_PCT=<n>`
   (2026-11-03, diagnostic, default 0) is the SPU side: each SPURS kernel thread busy-waits n% of each module run.
-  Run both against a `burn.py` control arm (see the A/B protocol). Per-thread host CPU:
+  Run both against a `burn.py` control arm (see the A/B protocol). Lift-time `PPU_SPIN_LABELS=<addr>,...`
+  (toolkit 336ce82e) puts `ppu_spin_hint()` at those guest addresses; run-time `PPU_SPIN_PAUSE=<n>` (default 0,
+  a no-op) runs n pause instructions there. It is for the main thread's job-list polls (`0x466EB8`, the head of
+  `00466E38`'s counter loop, and the entry of `00416338`), so their spinning leaves more of the core to the
+  hyperthread sibling. Per-thread host CPU:
   `RSX_PIPE_FAST=0` (M0.81) brings back the per-draw linear pipeline scan and fragment-program walks, to check whether
   a pipeline mix-up comes from the index or the memo. `VK_DRAW_PROF=<s>` splits the Vulkan draw into lookup,
   descriptors, copies, recording and flush per draw, and counts render passes; `VK_PASS_MERGE=1` (toolkit default off, GoW:A port default on since M0.89) lets

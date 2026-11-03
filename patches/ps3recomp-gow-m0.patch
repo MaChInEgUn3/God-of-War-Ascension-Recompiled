@@ -11392,7 +11392,7 @@ index b44816b0..305d9fcf 100644
  
      /* sys_process_exit (abort path): dump the guest back-chain so we see WHO aborted.
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index f54150d9..6e67fea3 100644
+index f54150d9..15135eb6 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -34,11 +34,13 @@
@@ -12305,7 +12305,7 @@ index f54150d9..6e67fea3 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4051,3 +4620,157 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4051,3 +4620,167 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -12329,6 +12329,16 @@ index f54150d9..6e67fea3 100644
 + * <= 0 or PPU_TRACE_ADDRS selects no lifted function (ab_exe.sh's ADDRS=0), and
 + * at run time by the tracer itself once its cap is spent with no extra set. */
 +extern "C" int ppu_trace_live = 1;
++/* PPU_SPIN_PAUSE=<n> (default 0): pause instructions per ppu_spin_hint(), the
++ * hint a PPU_SPIN_LABELS lift puts at the head of named guest spin loops. */
++extern "C" int ppu_spin_pause = 0;
++static struct PpuSpinPauseInit {
++    PpuSpinPauseInit() {
++        const char* e = getenv("PPU_SPIN_PAUSE");
++        const int n = e ? atoi(e) : 0;
++        ppu_spin_pause = n < 0 ? 0 : n > 4096 ? 4096 : n;
++    }
++} s_ppu_spin_pause_init;
 +static struct PpuTraceLiveInit {
 +    PpuTraceLiveInit() {
 +        if (getenv("PPU_DESC_CHECK") || getenv("PPU_DELAY_FN") || getenv("PPU_TRACE_DUMP") ||
@@ -26718,10 +26728,10 @@ index 1c07c887..5422cb78 100644
          # (`4 ila | entry | size | 0 | 0 | C0DEC0DE | 0 | 0 | n`). Usually it is
          # reached by a branch and found anyway, but in two modules it is a bare
 diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
-index 9d9df717..adcddf17 100644
+index 9d9df717..e65de298 100644
 --- a/tools/ppu_lifter.py
 +++ b/tools/ppu_lifter.py
-@@ -20,6 +20,12 @@ import time
+@@ -20,6 +20,16 @@ import time
  from collections import Counter
  from dataclasses import dataclass, field
  
@@ -26730,11 +26740,15 @@ index 9d9df717..adcddf17 100644
 +# processes too, since they inherit the environment).
 +_TRACE_ALL = os.environ.get("PPU_TRACE_FUNCS", "").strip().lower() == "all"   # every function; filter at run time with PPU_TRACE_ADDRS
 +_TRACE_FUNCS = {int(x, 16) for x in os.environ.get("PPU_TRACE_FUNCS", "").replace("0x", "").replace("0X", "").split(",") if x.strip() and x.strip().lower() != "all"}
++# PPU_SPIN_LABELS=0x466eb8,0x416338,...: emit ppu_spin_hint() at those guest addresses, a branch target
++# inside a function (after its label) or a function entry (after the tracer call). Name the head of a
++# loop that only polls memory; the hint is a no-op until the runtime's PPU_SPIN_PAUSE sets a count.
++_SPIN_LABELS = {int(x, 16) for x in os.environ.get("PPU_SPIN_LABELS", "").replace("0x", "").replace("0X", "").split(",") if x.strip()}
 +
  # ---------------------------------------------------------------------------
  # We import the disassembler from the same directory.
  # ---------------------------------------------------------------------------
-@@ -215,11 +221,96 @@ static inline uint64_t vm_read64_inl(uint64_t a)
+@@ -215,11 +225,123 @@ static inline uint64_t vm_read64_inl(uint64_t a)
  #define vm_read64(a) vm_read64_inl(a)
  #endif
  
@@ -26828,20 +26842,58 @@ index 9d9df717..adcddf17 100644
 +#ifndef PPU_NO_INLINE_LOADS
 +#define ppu_trace_enter(a, c) (__builtin_expect(ppu_trace_live, 0) ? ppu_trace_enter(a, c) : (void)0)
 +#endif
++
++/* A PPU_SPIN_LABELS lift puts ppu_spin_hint() at the head of the guest spin
++ * loops it names. The hint runs ppu_spin_pause pause instructions (runtime
++ * PPU_SPIN_PAUSE, default 0), which hand the core to its hyperthread sibling
++ * while the loop waits; the guest's own polling is unchanged. */
++#ifdef __cplusplus
++extern "C" {
++#endif
++extern int ppu_spin_pause;
++#ifdef __cplusplus
++}
++#endif
++#if defined(_MSC_VER) && !defined(__clang__)
++#  include <intrin.h>
++#  if defined(_M_X64) || defined(_M_IX86)
++#    define PPU_CPU_PAUSE() _mm_pause()
++#  else
++#    define PPU_CPU_PAUSE() __yield()
++#  endif
++#elif defined(__x86_64__) || defined(__i386__)
++#  define PPU_CPU_PAUSE() __builtin_ia32_pause()
++#elif defined(__aarch64__)
++#  define PPU_CPU_PAUSE() __asm__ __volatile__("yield")
++#else
++#  define PPU_CPU_PAUSE() ((void)0)
++#endif
++#define ppu_spin_hint() do { for (int i_ = ppu_spin_pause; i_ > 0; i_--) PPU_CPU_PAUSE(); } while (0)
  
  /* Thread-local storage qualifier. The runtime's boot scaffold declares the
   * same objects the generated code does (g_active_ctx, g_trampoline_fn), so
-@@ -944,6 +1035,9 @@ class PPULifter:
+@@ -944,6 +1066,11 @@ class PPULifter:
              self.functions.append(func)
              return func
  
 +        if _TRACE_ALL or start in _TRACE_FUNCS:
 +            func.body_lines.append(f"    ppu_trace_enter(0x{start:08X}u, ctx);")
++        if start in _SPIN_LABELS:
++            func.body_lines.append("    ppu_spin_hint();")
 +
          # Instructions in [start, end), located via a cached sorted index so
          # this is O(log N + span) rather than a full O(N) scan per call.
          range_insns = self._range_insns(instructions, start, end)
-@@ -1076,7 +1170,10 @@ class PPULifter:
+@@ -979,6 +1106,8 @@ class PPULifter:
+             if insn.addr in internal_targets:
+                 func.body_lines.append(f"loc_{insn.addr:08X}:")
+                 emitted_labels.add(insn.addr)
++                if insn.addr in _SPIN_LABELS:
++                    func.body_lines.append("    ppu_spin_hint();")
+ 
+             c_line = self._translate(insn, func)
+             if c_line:
+@@ -1076,7 +1205,10 @@ class PPULifter:
          # carry forms (addic/addc/adde/addze/subfc/subfic) are emitted as
          # `{ uint64_t _a = ...; ctx->gpr[N] = _r; ... }`, so they were invisible: a
          # single spill/reload of a register set by one of them passed as a callee-save
