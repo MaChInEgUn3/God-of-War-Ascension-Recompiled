@@ -12790,7 +12790,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..5431092c 100644
+index 59f5e4b8..b5528654 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -12986,7 +12986,7 @@ index 59f5e4b8..5431092c 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4171 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4278 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -17162,6 +17162,17 @@ index 59f5e4b8..5431092c 100644
 +static int s_ovl_sig[SPU_OVL_SRC_MAX];
 +static int s_ovl_sig_count = 0;
 +static inline unsigned spu_ovl_hash(uint32_t ea) { return ((ea >> 4) ^ (ea >> 16)) & (SPU_OVL_HASH - 1u); }
++/* Signature entries by a hash of their first 8 bytes (chains hold index+1, 0 ends, in registration
++ * order), so a large GET probes one chain instead of comparing against every signature.
++ * PS3_OVL_SIG_SCAN=1 restores the linear scan. */
++#define SPU_OVL_SIG_HASH 1024u
++static int s_ovl_sig_head[SPU_OVL_SIG_HASH];
++static int s_ovl_sig_next[SPU_OVL_SRC_MAX];
++static inline unsigned spu_ovl_sig_hash(const uint8_t* p)
++{
++    uint64_t v; memcpy(&v, p, 8);
++    return (unsigned)((v * 0x9E3779B97F4A7C15ull) >> 54) & (SPU_OVL_SIG_HASH - 1u);
++}
 +
 +void spu_overlay_register_source(uint32_t content_ea, int image_id)
 +{
@@ -17310,6 +17321,9 @@ index 59f5e4b8..5431092c 100644
 +        memcpy(s_ovl_src[s_ovl_src_count].sig, sig, 16);
 +        s_ovl_src[s_ovl_src_count].has_sig = 1;
 +        s_ovl_sig[s_ovl_sig_count++] = s_ovl_src_count;
++        { int* link = &s_ovl_sig_head[spu_ovl_sig_hash(sig)];
++          while (*link) link = &s_ovl_sig_next[*link - 1];
++          *link = s_ovl_src_count + 1; s_ovl_sig_next[s_ovl_src_count] = 0; }
 +        s_ovl_src_count++;
 +    }
 +}
@@ -17406,9 +17420,18 @@ index 59f5e4b8..5431092c 100644
 +    }
 +    /* The first registered entry that matches wins, as in a scan in order. */
 +    int best = -1;
-+    if (size >= 512)
-+        for (int k = 0; k < s_ovl_sig_count; k++)
-+            if (memcmp(ls, s_ovl_src[s_ovl_sig[k]].sig, 16) == 0) { best = s_ovl_sig[k]; break; }
++    if (size >= 512 && s_ovl_sig_count) {
++        static int s_scan = -1;
++        if (s_scan < 0) { const char* e = getenv("PS3_OVL_SIG_SCAN"); s_scan = e && e[0] == '1'; }
++        if (s_scan) {
++            for (int k = 0; k < s_ovl_sig_count; k++)
++                if (memcmp(ls, s_ovl_src[s_ovl_sig[k]].sig, 16) == 0) { best = s_ovl_sig[k]; break; }
++        } else {
++            /* Chains are in registration order, the scan's order: the first match wins. */
++            for (int j = s_ovl_sig_head[spu_ovl_sig_hash(ls)]; j; j = s_ovl_sig_next[j - 1])
++                if (memcmp(ls, s_ovl_src[j - 1].sig, 16) == 0) { best = j - 1; break; }
++        }
++    }
 +    for (int j = s_ovl_head[spu_ovl_hash(ea)]; j; j = s_ovl_next[j - 1]) {
 +        const spu_ovl_src* o = &s_ovl_src[j - 1];
 +        if (!o->has_sig && o->src_ea == ea && (!o->lsa || o->lsa == lsa) && (best < 0 || j - 1 < best))
@@ -17652,6 +17675,42 @@ index 59f5e4b8..5431092c 100644
 + * the small instruction set such stubs use, and exit back into lifted code at
 + * the first branch (trampoline re-dispatch). Returns 1 if it executed to a
 + * branch, 0 on an unknown opcode (caller falls through to BRANCH-TO-0). */
++/* PS3_SMC_STATS=1: every 10 s, [smc-stats] microstepper calls per second, rdtsc cycles per call and
++ * the most frequent entry pcs -- how often runtime-generated code (the WWS handler's interrupt
++ * save/restore stubs at LS 0x3FEC0) runs and what one call costs. Called around each microstep call. */
++static int spu_smc_microstep(spu_context* ctx);
++static void spu_smc_stats(uint64_t t0, uint32_t pc_entry)
++{
++    static volatile LONG64 s_calls, s_cyc, s_t_last;
++    static volatile LONG s_pc[64][2];
++    const uint64_t t1 = __rdtsc();
++    InterlockedIncrement64(&s_calls);
++    InterlockedExchangeAdd64(&s_cyc, (LONG64)(t1 - t0));
++    const unsigned h = (pc_entry >> 2) & 63;
++    if (s_pc[h][0] == 0) InterlockedCompareExchange(&s_pc[h][0], (LONG)pc_entry | 1, 0);
++    if ((uint32_t)(s_pc[h][0] & ~1) == pc_entry) InterlockedIncrement(&s_pc[h][1]);
++    LARGE_INTEGER q, f; QueryPerformanceCounter(&q); QueryPerformanceFrequency(&f);
++    const LONG64 last = s_t_last;
++    if (!last) { InterlockedCompareExchange64(&s_t_last, q.QuadPart, 0); return; }
++    if (q.QuadPart - last < 10 * f.QuadPart || InterlockedCompareExchange64(&s_t_last, q.QuadPart, last) != last) return;
++    const LONG64 c = InterlockedExchange64(&s_calls, 0), y = InterlockedExchange64(&s_cyc, 0);
++    const double secs = (double)(q.QuadPart - last) / f.QuadPart;
++    char buf[400]; int k = 0;
++    for (int i = 0; i < 64 && k < (int)sizeof buf - 40; i++)
++        if (s_pc[i][1] > c / 50) k += snprintf(buf + k, sizeof buf - k, " %05X:%ld", (unsigned)(s_pc[i][0] & ~1),
++                                               (long)InterlockedExchange(&s_pc[i][1], 0));
++        else InterlockedExchange(&s_pc[i][1], 0);
++    fprintf(stderr, "[smc-stats] %.0f calls/s, %.0f cycles/call; pcs (calls in the window)%s\n",
++            c / secs, c ? (double)y / c : 0.0, buf);
++}
++static int s_smc_st = -1;
++#define SPU_SMC_TIMED(ctx, okvar) do {                                                       \
++        if (__builtin_expect(s_smc_st < 0, 0)) s_smc_st = getenv("PS3_SMC_STATS") ? 1 : 0;   \
++        const uint32_t _pe = (ctx)->pc & SPU_LS_MASK; const uint64_t _t0 = s_smc_st ? __rdtsc() : 0; \
++        okvar = spu_smc_microstep(ctx);                                                     \
++        if (s_smc_st) spu_smc_stats(_t0, _pe);                                              \
++    } while (0)
++
 +static int spu_smc_microstep(spu_context* ctx)
 +{
 +    uint32_t pc = ctx->pc & SPU_LS_MASK & ~3u;
@@ -18827,14 +18886,19 @@ index 59f5e4b8..5431092c 100644
 + * register (job entry) and the code slots live; the image-23 and 0xA70 paths,
 + * which read local store, are never cached. Any registration -- function, task
 + * entry or task ELF -- bumps s_ibc_epoch, which empties the table. PS3_SPU_IBC=0 turns it off, as does
-+ * any trace switch spu_indirect_branch reads. */
-+enum { IBC_SIZE = 512 };
-+static SPU_THREAD_LOCAL struct { uint64_t key; spu_fn fn; } t_ibc[IBC_SIZE];
++ * any trace switch spu_indirect_branch reads. PS3_SPU_IBC_SIZE=<n> (a power of two, 64..4096, default
++ * 512) sets how many entries each thread uses. */
++enum { IBC_SIZE = 512, IBC_MAX = 4096 };
++static SPU_THREAD_LOCAL struct { uint64_t key; spu_fn fn; } t_ibc[IBC_MAX];
 +static SPU_THREAD_LOCAL uint32_t t_ibc_gen;
++static uint32_t s_ibc_mask = IBC_SIZE - 1;
 +static int s_ibc_on = -1;
 +static __attribute__((noinline)) int spu_ibc_init(void)
 +{
 +    const char* e = getenv("PS3_SPU_IBC");
++    { const char* z = getenv("PS3_SPU_IBC_SIZE");
++      const unsigned n = z ? (unsigned)atoi(z) : IBC_SIZE;
++      if (n >= 64 && n <= IBC_MAX && !(n & (n - 1))) s_ibc_mask = n - 1; }
 +    s_ibc_on = !(e && e[0] == '0') &&
 +        !getenv("SPU_IBCOV") && !getenv("SPU_IB_STATS") && !getenv("SPU_POLLTRACE") &&
 +        !getenv("YDKJ_POLTRACE") && !getenv("SPU_JOBTRACE") && !getenv("SPU_JOBEXEC") &&
@@ -18851,7 +18915,7 @@ index 59f5e4b8..5431092c 100644
 +    if (img >= 0x1000u || ovl >= 0x1000u) return 0;
 +    *key = (uint64_t)ctx->pc | (uint64_t)img << 18 | (uint64_t)ovl << 30 |
 +           (uint64_t)(ctx->policy_mode != 0) << 42 | 1ull << 43;
-+    *slot = ((ctx->pc >> 2) ^ (img * 0x9E37u) ^ (ovl * 0x85EBu)) & (IBC_SIZE - 1);
++    *slot = ((ctx->pc >> 2) ^ (img * 0x9E37u) ^ (ovl * 0x85EBu)) & s_ibc_mask;
 +    return 1;
 +}
 +static inline spu_fn spu_ibc_probe(const spu_context* ctx)
@@ -18859,7 +18923,8 @@ index 59f5e4b8..5431092c 100644
 +    uint64_t key; uint32_t slot;
 +    if (!spu_ibc_key(ctx, &key, &slot)) return NULL;
 +    const uint32_t gen = spu_ibc_gen();
-+    if (__builtin_expect(gen != t_ibc_gen, 0)) { memset(t_ibc, 0, sizeof t_ibc); t_ibc_gen = gen; return NULL; }
++    if (__builtin_expect(gen != t_ibc_gen, 0)) {
++        memset(t_ibc, 0, sizeof t_ibc[0] * (s_ibc_mask + 1)); t_ibc_gen = gen; return NULL; }
 +    return t_ibc[slot].key == key ? t_ibc[slot].fn : NULL;
 +}
 +static inline void spu_ibc_fill(const spu_context* ctx, spu_fn fn)
@@ -18867,7 +18932,7 @@ index 59f5e4b8..5431092c 100644
 +    uint64_t key; uint32_t slot;
 +    if (!spu_ibc_key(ctx, &key, &slot)) return;
 +    const uint32_t gen = spu_ibc_gen();
-+    if (gen != t_ibc_gen) { memset(t_ibc, 0, sizeof t_ibc); t_ibc_gen = gen; }
++    if (gen != t_ibc_gen) { memset(t_ibc, 0, sizeof t_ibc[0] * (s_ibc_mask + 1)); t_ibc_gen = gen; }
 +    t_ibc[slot].key = key; t_ibc[slot].fn = fn;
 +}
 +
@@ -18885,6 +18950,45 @@ index 59f5e4b8..5431092c 100644
 +static uint32_t s_ibs_wids;
 +static SPU_THREAD_LOCAL int t_ibs_take;
 +#define IBS(i) do { if (__builtin_expect(s_ibs_on > 0, 0) && t_ibs_take) InterlockedIncrement64(&s_ibs[i]); } while (0)
++/* ...and which targets miss: per (pc, image, overlay), misses and later cache fills, the top ones
++ * printed with each [ibc-count] line as [ibc-miss]. A key filled about as often as it misses is
++ * evicted by another (table conflict); one never filled resolves on a path the cache skips. */
++enum { IBM_SIZE = 4096 };
++static struct { volatile LONG64 key; volatile LONG miss, fill; } s_ibm[IBM_SIZE];
++static void spu_ibm_note(const spu_context* ctx, int fill)
++{
++    if (!(s_ibs_on > 0 && t_ibs_take)) return;
++    const LONG64 key = (LONG64)((uint64_t)(ctx->pc & SPU_LS_MASK) | (uint64_t)(ctx->image_id & 0xFFF) << 18 |
++                                (uint64_t)(ctx->resident_ovl & 0xFFF) << 30 | 1ull << 42);
++    for (uint32_t i = (uint32_t)(((uint64_t)key * 0x9E3779B97F4A7C15ull) >> 52), n = 0; n < 64; n++, i = (i + 1) & (IBM_SIZE - 1)) {
++        const LONG64 k = s_ibm[i].key;
++        if (k == key || (k == 0 && InterlockedCompareExchange64(&s_ibm[i].key, key, 0) == 0) || s_ibm[i].key == key) {
++            InterlockedIncrement(fill ? &s_ibm[i].fill : &s_ibm[i].miss);
++            return;
++        }
++    }
++}
++static void spu_ibm_print(void)
++{
++    int top[12]; int nt = 0;
++    for (int i = 0; i < IBM_SIZE; i++) {
++        if (!s_ibm[i].key) continue;
++        int j;
++        if (nt < 12) j = nt++;
++        else if (s_ibm[top[11]].miss >= s_ibm[i].miss) continue;
++        else j = 11;
++        top[j] = i;
++        for (; j > 0 && s_ibm[top[j - 1]].miss < s_ibm[top[j]].miss; j--) { int t = top[j]; top[j] = top[j - 1]; top[j - 1] = t; }
++    }
++    char buf[900]; int k = 0;
++    for (int j = 0; j < nt && k < (int)sizeof buf - 64; j++) {
++        const uint64_t key = (uint64_t)s_ibm[top[j]].key;
++        k += snprintf(buf + k, sizeof buf - k, " pc=%05X img=%u ovl=%u miss=%ld fill=%ld",
++                      (unsigned)(key & SPU_LS_MASK), (unsigned)(key >> 18 & 0xFFF), (unsigned)(key >> 30 & 0xFFF),
++                      (long)s_ibm[top[j]].miss, (long)s_ibm[top[j]].fill);
++    }
++    fprintf(stderr, "[ibc-miss]%s\n", buf);
++}
 +static __attribute__((noinline)) void spu_ibs_entry(const spu_context* ctx)
 +{
 +    if (s_ibs_on < 0) {
@@ -18910,6 +19014,7 @@ index 59f5e4b8..5431092c 100644
 +        for (int i = 0; i < IBS_N; i++)
 +            k += snprintf(buf + k, sizeof buf - k, " %s=%lld", nm[i], (long long)s_ibs[i]);
 +        fprintf(stderr, "[ibc-count]%s\n", buf);
++        spu_ibm_print();
 +    }
 +}
 +
@@ -19017,7 +19122,7 @@ index 59f5e4b8..5431092c 100644
 +#endif
 +            }
 +            IBS(IBS_NOTRY);
-+        } else IBS(IBS_MISS);
++        } else { IBS(IBS_MISS); if (__builtin_expect(s_ibs_on > 0, 0)) spu_ibm_note(ctx, 0); }
 +    } else IBS(IBS_NOTRY);
 +    /* SPURS kernel services (policy-module runs only): the HLE kernel plants
 +     * these two reserved addresses as exitToKernelAddr / selectWorkloadAddr in
@@ -19551,7 +19656,10 @@ index 59f5e4b8..5431092c 100644
 +                  s_dumped = 1; } } }
 +    }
 +    if (fn) {
-+        if (ibc_fill && fn == ibc_fn) { spu_ibc_fill(ctx, fn); IBS(IBS_FILL); }
++        if (ibc_fill && fn == ibc_fn) {
++            spu_ibc_fill(ctx, fn); IBS(IBS_FILL);
++            if (__builtin_expect(s_ibs_on > 0, 0)) spu_ibm_note(ctx, 1);
++        }
 +        /* After the overlay match above, so the header names the overlay this
 +         * entry resolved to. */
 +        if (jc_link) spu_jobcap_open(ctx, jc_link);
@@ -19685,8 +19793,7 @@ index 59f5e4b8..5431092c 100644
 +     * WWS jobmanager writes a save/restore stub above its static
 +     * image and calls it). Interpret the live LS bytes; on success the next
 +     * branch re-enters lifted code via the trampoline. */
-+    if (spu_smc_microstep(ctx))
-+        return;
++    { int ok; SPU_SMC_TIMED(ctx, ok); if (ok) return; }
 +    /* SPU_INTERP_UNLIFTED=1 covers this site too: code staged at a placement no
 +     * lift saw (GoW:A's EDGE fragments land at a second set of LS addresses when
 +     * the WWS manager pipelines jobs) runs in the interpreter, which rejoins the

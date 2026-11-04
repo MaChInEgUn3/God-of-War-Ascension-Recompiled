@@ -296,6 +296,11 @@ Lessons that cost days; keep them.
     s). For a lever of 3-6%, make the primary metric a per-stage time per frame from a short `PS3_FTRACE` window
     in each arm (walker drain ms, SPU busy ms, main-thread blocked ms; `tools/ftrace_report.py`), or pair
     same-spot windows as in x193. Frame rate is then the secondary column.
+  - The still scene (no pad input after the menu: the player stands at the bench checkpoint) has the same
+    ~+-10% run-to-run spread in game frames/s as the corridor (x328-x331), and the middle arms of one A B B A
+    sequence can lose ~10% whatever they run. For runtime changes (dispatch, channels, coherency) measure the
+    per-symbol share on the threads the change touches: `PS3_SAMPLE=1 PS3_SAMPLE_HOST=1` with
+    `PS3_SAMPLE_WIDS=<wids>`, resolved per thread (it repeats within ~0.5 points of share).
   - A causal probe that spins (`RSX_SLOW_PCT`, `SPU_SLOW_PCT`) also adds host CPU. Correct it with a control arm
     that burns the same number of cores (`burn.py N`): one busy core cost 6.5% in x317, so `SPU_SLOW_PCT=25`
     (~1.1 extra cores) loses about half its drop to contention.
@@ -303,6 +308,11 @@ Lessons that cost days; keep them.
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. `SPU_SLOW_PCT=<n>`
   (2026-11-03, diagnostic, default 0) is the SPU side: each SPURS kernel thread busy-waits n% of each module run.
+  SPU dispatch (2026-11-04): `SPU_IBC_COUNT=1` (`SPU_IBC_COUNT_WIDS=<w>,...` to filter) prints `[ibc-count]` and
+  `[ibc-miss]` (the most-missed pc/image/overlay targets with misses and cache fills; it forces the slow path, so
+  frame rates mean nothing); `PS3_SPU_IBC_SIZE=<n>` sizes the per-thread dispatch cache (default 512);
+  `PS3_SMC_STATS=1` prints `[smc-stats]` every 10 s: microstepper calls a second, cycles a call, busiest entry pcs
+  (the WWS interrupt stubs at `0x3FEC0`); `PS3_OVL_SIG_SCAN=1` restores the linear overlay-signature scan.
   Run both against a `burn.py` control arm (see the A/B protocol). Lift-time `PPU_SPIN_LABELS=<addr>,...`
   (toolkit 336ce82e) puts `ppu_spin_hint()` at those guest addresses; run-time `PPU_SPIN_PAUSE=<n>` (default 0,
   a no-op) runs n pause instructions there. It is for the main thread's job-list polls (`0x466EB8`, the head of

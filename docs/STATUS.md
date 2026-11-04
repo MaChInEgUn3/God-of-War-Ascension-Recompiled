@@ -915,6 +915,43 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       same symptom (runs that dip slow) has been reported fixed elsewhere by splitting the global lock-line lock
       into per-line locks; post-reboot non-reproduction fits a host cause and a timing-window race equally, so if
       it recurs on a fresh host, lock granularity is the lead.
+    - SPU runtime overhead on the EDGE threads (2026-11-04). Still scene, host sampler (x325, runXg, 300 s):
+      - Unfiltered, each busy SPU kernel thread spends 43-61% of its samples in dispatch (`spu_indirect_branch`,
+        `_slow`, `spu_lookup`, `spu_drain_call`), 14-19% in channels/MFC, 3-15% in coherency and 5-21% in lifted
+        code. Most of that is outside the EDGE jobs (policy modules, audio).
+      - EDGE only (`PS3_SAMPLE_WIDS=15,16,17`, four threads, 38k samples): dispatch ~26%, native stages ~24%,
+        channels/MFC ~15%, lifted ~14%, coherency ~12%, overlay tracking ~5%. By symbol: `g73_loop1` 10.6%,
+        `spu_indirect_branch_slow` 10.3%, `spu_lockline_lock` 6.5%, `spu_indirect_branch` 5.7%,
+        `spu_overlay_note_get` 5.0%, `spu_wrch` 4.9%, `spu_drain_call` 4.4%.
+      - How EDGE's indirect branches resolve (x326/x327, `SPU_IBC_COUNT=1 SPU_IBC_COUNT_WIDS=15,16,17`, new
+        `[ibc-miss]` list of the most-missed targets): ~336M dispatches in 300 s, 73% cache hits, 24% misses. The
+        single largest miss is LS `0x3FEC0` (~33M, never cacheable): the save/restore stubs the WWS job manager
+        generates on each stall-and-notify interrupt, run by the microstepper only after every lookup has missed.
+        Then the kernel-service addresses `0x9C0`/`0x9D0` (exit, select workload) and two policy-module targets,
+        ~4M each, also never cached; 22.5M misses are conflicts in the 512-entry table.
+      - A larger table: `PS3_SPU_IBC_SIZE=4096` (new, default 512) cut EDGE's conflict fills 22.5M -> 4.5M. In
+        frame rate it is undecided: x328 (A B B A) read 9.91 / 9.41 / 9.31 / 10.38 game frames/s, but x329 and
+        x331 (below) show the middle arms of such a sequence can lose ~10% whatever they run. 512 stays.
+      - `spu_overlay_note_get` compared the first 16 bytes of every GET of 512 bytes or more against every
+        registered overlay signature in turn; the signatures are now chained by a hash of their first 8 bytes
+        (same first-registered-wins result; `PS3_OVL_SIG_SCAN=1` restores the scan; toolkit 489f6382). EDGE-only
+        sampler: 5.0% -> 3.3% of the EDGE threads' samples in that function (x325e vs x332e/x333e). Kept.
+      - Tried, not kept: a shortcut sending the WWS stub calls straight to the microstepper, and decoded "plans"
+        of the stubs' load/store runs keyed by their exact bytes (diff in `work/spu_runtime_x324_x334_full.patch`).
+        The shortcut only moved the time (`spu_indirect_branch_slow` 10.3% -> 1.1%, the now separate
+        `spu_smc_microstep` 0 -> 10.4%: the lookups were never the cost), and the plans did not lower it
+        (10.8%; 3000 cycles a call against 2525 without). The first plan build also hung the game at boot (a failed
+        build left a slot's old bytes with half-overwritten operations); fixed before the measurement.
+      - What the stubs cost is how often they run: `PS3_SMC_STATS=1` (new, toolkit 489f6382) counts ~290-325k
+        microstepper calls a second on the still scene, ~2500 cycles each (~0.2 cores), ~215k of them at
+        `0x3FEC0`: about 107k stall-and-notify interrupts a second, not the ~40k noted at M0.63. The lever is the
+        interrupt count: whether the runtime raises stall-and-notify more often than the hardware would (once per
+        list element with the stall flag) is the next check.
+      - Fps on the still scene has the corridor's spread: x329 (A B B A, both changes against neither) read
+        10.22 / 8.86 / 8.53 / 10.29, x330 each change alone 9.21 / 9.45, and x331 (B A A B, the same settings)
+        9.73 / 9.34 / 9.30 / ~9.1. The B arms lost in the middle of one sequence and led at its ends in the other.
+        x319's 3% agreement was luck. For runtime changes the EDGE-only sampler's per-symbol share is the
+        measure (it reproduced `spu_smc_microstep` at 10.35 / 10.76 across two runs).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the

@@ -1083,3 +1083,14 @@ Status: design, started 2026-10-24. Progress log at the end.
   runLabW, 300 s run) is the gate now: 400/400 identical, sum of per-job minimums ~36 ms at REPEAT=50.
   `work/x58_run.sh` replays `$CAP` (default jobcap4) under a 900 s timeout and stops its exe afterwards. Re-capture
   when a gate fails on an unchanged lab exe.
+- 2026-11-04: where EDGE job time goes now (x324: lab exe runLabW, cap_4, `PS3_SAMPLE=1 PS3_SAMPLE_HOST=1`,
+  REPEAT=500; 400/400 identical, sum of per-job minimums 39.3 ms with the sampler on). Of 5627 samples outside the
+  replay thread's own loop: native stages 26.6%, lifted overlay fragments (`edgefrag_*`, 86 of them) 17.4%, lifted
+  d935 16.8%, replay hooks 16.7%, runtime 21.7%.
+  - **Caveat:** `SPU_JOB_REPLAY` turns `SPU_DIRECT` off (it counts hops), so every cross-function branch goes
+    through `spu_drain_call_loop` in the lab: its 9.7% is a lab artifact and does not exist in game. Without the
+    hooks and that loop, ~74% of the samples are real job time: native ~36%, lifted d935 ~23%, fragments ~23%,
+    runtime ~12% (`spu_lookup` and `spu_indirect_branch_slow` are real).
+  - Largest single lifted function: `DCC0` (index decompression) 3.2% of all samples. The fragment mass is spread:
+    image `719900` 6.5%, `71fa90` 3.5%, `71c310` 2.4%; no fragment above 1.3%.
+  - In game the runtime matters more than either: see STATUS.md (x325-x329, SPU runtime overhead).
