@@ -893,7 +893,25 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         than either quiet A arm with the same burners: the loaded column's spread (9.0-13.6) carries no claim.
       - Neutral at the resolution available. With ~7.3 busy threads on six cores only about one pair shares a
         physical core at a time, so the sibling the polls slow is often idle; the effect a pause can have is
-        small. `PPU_SPIN_PAUSE` stays 0 (the hint is in the lift, a no-op unless set).
+        small. `PPU_SPIN_PAUSE` stays 0 (the hint is in the lift, a no-op unless set). The A arms ran the same
+        code: the pause loop is bounded by a global the compiler cannot fold, so with 0 the hint still costs a
+        load and a branch per poll round, which makes A a fair control.
+    - A still scene as the A/B bench (x319, 2026-11-03): no pad input after the menu, so the player stands at the
+      bench checkpoint (frame dumps show the same view in every run). s2 / s3 7.19 / 6.99 game frames/s over
+      240-420 s (3% apart, against ~10% for the corridor recipe). The view is heavier than the corridor, so its
+      stage shares are not the corridor's. `tools/ftrace_report.py --csv` (toolkit 1664d1c6) writes one row per
+      frame for share-of-frame comparisons.
+    - A slow mode, now attributed to the host: x319 s1, x320 t1 / t2 and x322 t (the x320 trigger: `burn.py 10`
+      for the first 150 s of a still-scene run) ran the same view at 2.9-4.2 game frames/s with less game CPU.
+      The main thread waited at `0x3436BC` (`func_003A5AA4`: usleep 30 us per round until the counter at
+      `0x983168` reaches the batch size at `0x98317C`) for half the window or more. Wid 0 (`Wws_Job`, image 16)
+      jobs bump that counter with PUTLLC, five a batch; the main thread kicks wid 0 (ReadyCountStore, value 8)
+      and the kernel picks a kick up in ~0.4 ms in both modes (`[rc-lat]` and the trace marks), but a batch
+      took 34 ms (steps ~5 ms) against 1.5 ms. The host was degraded that day (shell commands of a second took
+      over two minutes before a reboot). After the reboot (x323, 2026-11-04, same trigger and view, three
+      settings) none of the runs went slow: defaults 9.56, `SPURS_IDLE_MAX=0` 9.36, `PS3_USLEEP_WAIT_US=0` 8.96
+      game frames/s, and the plain view itself faster than x319's normal runs (~9.5 against ~7.1). Not a game
+      bug found; if it shows up again on a fresh host, the scripts are scratchpad `deadgap.py`, `kick0.py`.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the

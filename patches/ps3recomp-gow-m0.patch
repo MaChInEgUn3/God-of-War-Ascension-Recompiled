@@ -26671,7 +26671,7 @@ index 00000000..151e8568
 +    return 0;
 +}
 diff --git a/tools/ftrace_report.py b/tools/ftrace_report.py
-index d324e9ba..c13c4cb3 100644
+index d324e9ba..c3d2ab70 100644
 --- a/tools/ftrace_report.py
 +++ b/tools/ftrace_report.py
 @@ -23,18 +23,20 @@ import sys
@@ -26698,6 +26698,46 @@ index d324e9ba..c13c4cb3 100644
  
  
  def load(path):
+@@ -64,6 +66,8 @@ def main():
+     ap.add_argument("--frames", type=int, default=3, help="frames drawn as a timeline")
+     ap.add_argument("--ms-per-col", type=float, default=1.0)
+     ap.add_argument("--threads", default="", help="PPU tids to draw (default: the six least blocked)")
++    ap.add_argument("--csv", metavar="PATH", help="also write one row per frame (ms): start, frame, walker "
++                    "drain, GPU waits, main-thread blocked, SPU busy summed and per SPU")
+     args = ap.parse_args()
+ 
+     header, names, spans = load(args.trace)
+@@ -84,6 +88,8 @@ def main():
+     rsx = collections.defaultdict(list)
+     tids = sorted({s[1] for s in spans if s[0] in (SYSCALL, USLEEP)})
+     spus = sorted({s[1] for s in spans if s[0] in (SPU_BUSY, SPU_WAIT)})
++    main_tid = next((t for t in tids if names.get(t) == "main"), None)
++    csv_rows = []
+     lo = frames[0][0]
+     j0 = 0
+     for f0, f1 in frames:
+@@ -125,8 +131,21 @@ def main():
+             spu_busy[sp].append(acc[("spu", sp)])
+         for what in RSX_ROWS:
+             rsx[what].append(acc[("rsx", what)])
++        if args.csv:
++            busy = [acc[("spu", sp)] for sp in spus]
++            csv_rows.append([f0 / 1000, f1 - f0, acc[("rsx", "drain")],
++                             sum(v for key, v in acc.items() if key[0] == "rsx" and key[1].startswith("gpu wait")),
++                             sum(v for key, v in acc.items() if key[0] == "ppu" and key[1] == main_tid),
++                             sum(busy)] + busy)
+         lo = f0
+ 
++    if args.csv:
++        with open(args.csv, "w") as f:
++            f.write(",".join(["start_s", "frame", "drain", "gpu_wait", "main_blocked", "spu_busy"] +
++                             [f"spu{sp}" for sp in spus]) + "\n")
++            for row in csv_rows:
++                f.write(",".join(f"{v:.3f}" for v in row) + "\n")
++
+     n = len(frames)
+     med = statistics.median(durs)
+ 
 diff --git a/tools/lift_jobmods.py b/tools/lift_jobmods.py
 index 1c07c887..5422cb78 100644
 --- a/tools/lift_jobmods.py
