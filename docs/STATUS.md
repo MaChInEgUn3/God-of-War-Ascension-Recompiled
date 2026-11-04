@@ -911,7 +911,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       over two minutes before a reboot). After the reboot (x323, 2026-11-04, same trigger and view, three
       settings) none of the runs went slow: defaults 9.56, `SPURS_IDLE_MAX=0` 9.36, `PS3_USLEEP_WAIT_US=0` 8.96
       game frames/s, and the plain view itself faster than x319's normal runs (~9.5 against ~7.1). Not a game
-      bug found; if it shows up again on a fresh host, the scripts are scratchpad `deadgap.py`, `kick0.py`.
+      bug found; if it shows up again on a fresh host, the scripts are scratchpad `deadgap.py`, `kick0.py`. The
+      same symptom (runs that dip slow) has been reported fixed elsewhere by splitting the global lock-line lock
+      into per-line locks; post-reboot non-reproduction fits a host cause and a timing-window race equally, so if
+      it recurs on a fresh host, lock granularity is the lead.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
