@@ -19,6 +19,9 @@ offset and the shapes to check. Two blobs so far:
    1 native, 3 check). Its exit tail (the stack restores, SPU_RET) must equal the reference placement's.
    `--body` writes GOW_O719_REGS/LOAD/STORE/BODY from the reference's loop (ctx->gpr[N] -> rN, LS access
    -> LD/ST): the loop has no LS address of its own (no load or store at a constant address: checked).
+3. 71fa90, 71c310 (input decode) and 723300 (output packing with an 11/11/10 field: the loop at blob+0x2B8,
+   placement 11340: function 115F8 and the one it chains to, back edge on r9; GOW_EDGE_O723300, port
+   gow_edge_native_o723300.c) the same way as 719900, each from its BLOBS entry.
 
 Head H = lsa + offset. The placements' lifts split the code at different points, so the loop comes in two
 shapes; the switch always sits on the edge that enters the loop from the prologue, never on the back edge:
@@ -74,6 +77,12 @@ BLOBS = {
                    first="ctx->gpr[25] = spu_and(ctx->gpr[3], ctx->gpr[68]);",
                    tail=None, cond="if (ctx->gpr[32]._u32[0] != 0)", sw="o71c310", native="gow_edge_o71c310_loop",
                    env="GOW_EDGE_O71C310", body="GOW_O71C"),
+    "723300": dict(off=0x2B8, ref="11340",
+                   first="ctx->gpr[5] = spu_fma(ctx->gpr[62], ctx->gpr[39], ctx->gpr[61]);",
+                   tail=None, cond="if (ctx->gpr[9]._u32[0] != 0)", sw="o723300", native="gow_edge_o723300_loop",
+                   env="GOW_EDGE_O723300", body="GOW_O723",
+                   consts=[44, 54, 55, 56, 57, 58, 59, 65, 66, 67, 68, 69, 70, 71, 72, 73],
+                   fma=[62, 61, 51, 60, 26]),
 }
 SKIP = ("/* nop */;", "/* branch hint (ignored) */;")
 

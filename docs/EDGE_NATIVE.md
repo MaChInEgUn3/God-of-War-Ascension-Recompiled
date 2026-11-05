@@ -1140,3 +1140,11 @@ Status: design, started 2026-10-24. Progress log at the end.
   call. cap_4: 400/400 off/on/check for both; check 114 / 75 calls, 0 differ; faults caught; job time -3.0% /
   -1.6% (median of 3 pairs). In game, check mode in the corridor (x352, 480 s): 71fa90 1,122,305 calls, 0 differ,
   173 vs 370 tsc per iteration; 71c310 679,937 calls, 0 differ, 406 vs 510.
+- 2026-11-05: O723300, the 11/11/10 output-packing blob, then the default (`GOW_EDGE_O723300=1`; same modes). Each
+  iteration packs 2 vertices into 72 bytes (36 a vertex: passthrough xyz, s16 normalized xyzw by
+  `fma(32767.5 x - 0.5)` and `cflts 157`, one 11/11/10 word from `fma` with pool scale/bias, `cflts 142` and a
+  rotate by a prologue register, passthrough xyz); record k from input pair k-3. v3 packs one record per step (8
+  lanes) with the same lifted head and tail as O719900. All 19 placements (4 label-loop, 15 chained). cap_4: 400/400
+  in every mode, 23 calls checked, 0 differ, faults 1-4 caught; job time inside the noise (cap_4 holds only 23
+  calls of it). In game, check mode in the corridor (x354, 480 s): 372,738 calls, 0 differ, 58.8 vs 302.4 tsc
+  per iteration.

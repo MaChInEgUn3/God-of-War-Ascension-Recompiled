@@ -878,6 +878,11 @@ int main(int argc, char** argv)
      * the corridor (x352): 1.12M / 0.68M calls, 0 differ. 0 runs the lift. */
     if (!getenv("GOW_EDGE_O71FA90")) _putenv_s("GOW_EDGE_O71FA90", "1");
     if (!getenv("GOW_EDGE_O71C310")) _putenv_s("GOW_EDGE_O71C310", "1");
+    /* GOW_EDGE_O723300=1 (2026-11-05): packed v3 of EDGE blob 723300's output packing (s16 normalized,
+     * 11/11/10 word, passthrough xyz; 36 bytes a vertex), all 19 placements. cap_4 400/400 in every mode,
+     * faults caught; in game, check mode in the corridor (x354): 373k calls, 0 differ, 59 vs 302 tsc per
+     * iteration. 0 runs the lift. */
+    if (!getenv("GOW_EDGE_O723300")) _putenv_s("GOW_EDGE_O723300", "1");
     if (!getenv("PS3_VM_WRITE_WATCH")) _putenv_s("PS3_VM_WRITE_WATCH", "1");
     if (!getenv("RSX_TEX_WRITEWATCH")) _putenv_s("RSX_TEX_WRITEWATCH", "1");
     /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,
