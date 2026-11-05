@@ -1148,3 +1148,12 @@ Status: design, started 2026-10-24. Progress log at the end.
   in every mode, 23 calls checked, 0 differ, faults 1-4 caught; job time inside the noise (cap_4 holds only 23
   calls of it). In game, check mode in the corridor (x354, 480 s): 372,738 calls, 0 differ, 58.8 vs 302.4 tsc
   per iteration.
+- 2026-11-05: the copy family, blobs 7298f0 and 728a90, then the defaults (`GOW_EDGE_O7298F0=1`,
+  `GOW_EDGE_O728A90=1`; same modes). 7298f0 packs x y z of each float4 of the attribute-1 slot array to 12 bytes
+  (two vertices an iteration, any output alignment, whole aligned 16-byte blocks, the bytes before the output
+  start kept); 728a90 stores the first 12 bytes of each 18-byte record as an aligned float4 with w from a
+  constant the setup loads. v3 copies records 3..n-2 directly with the usual lifted head and tail. 38 and 36
+  placements. cap_4: 400/400 in every mode, 206 / 109 calls checked, 0 differ, a fault caught each; job time
+  29.05 -> 27.34 ms together (-5.9%, median of 3 pairs). In game, check mode in the corridor (x356, 480 s):
+  1,626,114 / 696,321 calls, 0 differ, 10.6 / 10.8 vs 70.7 / 70.1 tsc per iteration. With this every overlay
+  blob the x324 profile ranks above 1% runs native by default.

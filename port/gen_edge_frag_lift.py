@@ -22,6 +22,10 @@ offset and the shapes to check. Two blobs so far:
 3. 71fa90, 71c310 (input decode) and 723300 (output packing with an 11/11/10 field: the loop at blob+0x2B8,
    placement 11340: function 115F8 and the one it chains to, back edge on r9; GOW_EDGE_O723300, port
    gow_edge_native_o723300.c) the same way as 719900, each from its BLOBS entry.
+4. 7298f0 (output side, float4 -> packed float3: the loop at blob+0xD0, placement 11530: function 11600, back
+   edge on r43; GOW_EDGE_O7298F0, port gow_edge_native_o7298f0.c) and 728a90 (input side, packed float3 ->
+   float4 with a constant w: the loop at blob+0x154, placement 11a20: function 11B74, back edge on r64;
+   GOW_EDGE_O728A90, port gow_edge_native_o728a90.c), the family-C copies, the same way.
 
 Head H = lsa + offset. The placements' lifts split the code at different points, so the loop comes in two
 shapes; the switch always sits on the edge that enters the loop from the prologue, never on the back edge:
@@ -83,6 +87,14 @@ BLOBS = {
                    env="GOW_EDGE_O723300", body="GOW_O723",
                    consts=[44, 54, 55, 56, 57, 58, 59, 65, 66, 67, 68, 69, 70, 71, 72, 73],
                    fma=[62, 61, 51, 60, 26]),
+    "7298f0": dict(off=0xD0, ref="11530",
+                   first="ctx->gpr[44] = spu_a(ctx->gpr[23], ctx->gpr[14]);",
+                   tail=None, cond="if (ctx->gpr[43]._u32[0] != 0)", sw="o7298f0", native="gow_edge_o7298f0_loop",
+                   env="GOW_EDGE_O7298F0", body="GOW_O729", consts=[8, 18, 24, 25, 26]),
+    "728a90": dict(off=0x154, ref="11a20",
+                   first="ctx->gpr[65] = spu_ori(ctx->gpr[15], 0);",
+                   tail=None, cond="if (ctx->gpr[64]._u32[0] != 0)", sw="o728a90", native="gow_edge_o728a90_loop",
+                   env="GOW_EDGE_O728A90", body="GOW_O728", consts=[17, 18, 19, 20, 21]),
 }
 SKIP = ("/* nop */;", "/* branch hint (ignored) */;")
 
@@ -250,9 +262,9 @@ if consts_mode:   # the loop's controls and masks at its entry, for the native f
             if hm:
                 nxt = [g for g in fns if g[3] == int(hm.group(1), 16) and g[2] == hm.group(2)]
                 break
-            st = SST.match(s) if "stack" in B else None
+            st = SST.match(s)
             if st:   # a store: kept if it is to the stack frame (the table), else not followed (ctx fields)
-                if st.group(1) == "1":
+                if st.group(1) == "1" and "stack" in B:
                     stack[int(st.group(2), 16)] = regs.get(int(st.group(3)))
                 continue
             a = ASSIGN.match(s)
