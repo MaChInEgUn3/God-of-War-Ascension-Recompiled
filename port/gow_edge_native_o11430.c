@@ -573,8 +573,19 @@ static long s14_calls, s14_bad, s14_iters;
 static uint64_t s14_cyc_nat, s14_cyc_lift;
 static int s14_atexit;
 
+/* Calls checked per placement (the blob's LS address the generated switch passes; 0 = a lift that calls the
+ * old gow_edge_o11430_check_begin without one). */
+#define GO14_SITES 32
+static unsigned s14_site_lsa[GO14_SITES];
+static long s14_site_calls[GO14_SITES];
+static _Thread_local unsigned t14_site;
+
 static void go14_check_report(void)
 {
+    char buf[GO14_SITES * 20] = "", *p = buf;
+    for (int i = 0; i < GO14_SITES && s14_site_calls[i]; i++)
+        p += snprintf(p, sizeof(buf) - (size_t)(p - buf), " %X:%ld", s14_site_lsa[i], s14_site_calls[i]);
+    fprintf(stderr, "[edge-o11430-check] calls by placement (blob LS address:calls):%s\n", buf);
     fprintf(stderr, "[edge-o11430-check] %ld calls checked, %ld differ; %ld iterations (2 vertices each); tsc: native "
                     "%.1f M, lifted %.1f M (%.1f vs %.1f per iteration)\n",
             s14_calls, s14_bad, s14_iters, s14_cyc_nat / 1e6, s14_cyc_lift / 1e6,
@@ -609,6 +620,13 @@ void gow_edge_o11430_check_begin(spu_context* ctx)
     c->t_lift0 = __rdtsc();
 }
 
+/* The generated switches: check_begin with the placement (the blob's LS address), counted at check_end. */
+void gow_edge_o11430_check_begin_at(spu_context* ctx, unsigned site)
+{
+    t14_site = site;
+    gow_edge_o11430_check_begin(ctx);
+}
+
 void gow_edge_o11430_check_end(spu_context* ctx)
 {
     go14_check_state* c = t14_chk;
@@ -616,6 +634,13 @@ void gow_edge_o11430_check_end(spu_context* ctx)
     s14_cyc_lift += __rdtsc() - c->t_lift0;
     c->pending = 0;
     const long call = s14_calls++;
+    for (int i = 0; i < GO14_SITES; i++) {   /* matching or first free slot (not atomic, like s14_calls) */
+        if (s14_site_calls[i] && s14_site_lsa[i] != t14_site) continue;
+        s14_site_lsa[i] = t14_site;
+        s14_site_calls[i]++;
+        break;
+    }
+    t14_site = 0;
     int bad = 0;
     for (int r = 0; r < 128; r++) {
         if (!memcmp(&c->nat_gpr[r], &ctx->gpr[r], 16)) continue;

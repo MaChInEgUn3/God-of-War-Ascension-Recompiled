@@ -222,20 +222,27 @@ if(PORT_ENABLE_SPU)
                 COMMENT "Generating the 6AC8 loop nest from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_6ac8.c" "${EDGE_BODY6A}")
         endif()
-        # Overlay fragment 7228c0_11150: function 11430's loop at loc_11460 (gow_edge_native_o11430.c, switch
-        # GOW_EDGE_O11430, default lifted). The fragment is its own lift; gen_edge_frag_lift.py writes it
-        # with the switch into the build tree, and that copy is compiled instead of the original, which is
-        # only read. The loop macros are generated from the same lift. Neither is committed.
+        # Overlay blob 7228c0: its loop at blob+0x310 (in placement 11150: function 11430's loop at loc_11460;
+        # gow_edge_native_o11430.c, switch GOW_EDGE_O11430, default lifted), in every placement lift of the
+        # blob (spu/edgefrag_7228c0_<lsa>). Each placement is its own lift; gen_edge_frag_lift.py writes it
+        # with the switch into the build tree (checking its loop against 11150's), and that copy is compiled
+        # instead of the original, which is only read. The loop macros are generated from the 11150 lift.
+        # Neither is committed.
         set(EDGEFRAG_O1_LIFT "${SPU_DIR}/edgefrag_7228c0_11150/spu_recomp.c")
         if(EXISTS "${EDGEFRAG_O1_LIFT}")
             find_package(Python3 COMPONENTS Interpreter REQUIRED)
-            set(EDGEFRAG_O1_SWITCHED "${CMAKE_CURRENT_BINARY_DIR}/edgefrag_7228c0_11150_native.c")
-            add_custom_command(OUTPUT "${EDGEFRAG_O1_SWITCHED}"
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" "${EDGEFRAG_O1_LIFT}" "${EDGEFRAG_O1_SWITCHED}"
-                DEPENDS "${EDGEFRAG_O1_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
-                COMMENT "Adding the native switch to the edgefrag_7228c0_11150 lift")
-            list(REMOVE_ITEM SPU_SOURCES "${EDGEFRAG_O1_LIFT}")
-            list(APPEND SPU_SOURCES "${EDGEFRAG_O1_SWITCHED}")
+            file(GLOB EDGEFRAG_O1_PLACEMENTS "${SPU_DIR}/edgefrag_7228c0_*/spu_recomp.c")
+            foreach(o1_lift IN LISTS EDGEFRAG_O1_PLACEMENTS)
+                get_filename_component(o1_dir "${o1_lift}" DIRECTORY)
+                get_filename_component(o1_name "${o1_dir}" NAME)
+                set(o1_switched "${CMAKE_CURRENT_BINARY_DIR}/${o1_name}_native.c")
+                add_custom_command(OUTPUT "${o1_switched}"
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" "${o1_lift}" "${o1_switched}" "${EDGEFRAG_O1_LIFT}"
+                    DEPENDS "${o1_lift}" "${EDGEFRAG_O1_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                    COMMENT "Adding the native switch to the ${o1_name} lift")
+                list(REMOVE_ITEM SPU_SOURCES "${o1_lift}")
+                list(APPEND SPU_SOURCES "${o1_switched}")
+            endforeach()
             set(EDGE_BODYO1 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_o11430_body.h")
             add_custom_command(OUTPUT "${EDGE_BODYO1}"
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_o11430_body.py" "${EDGEFRAG_O1_LIFT}" "${EDGE_BODYO1}"

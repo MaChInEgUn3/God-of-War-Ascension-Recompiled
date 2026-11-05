@@ -1094,3 +1094,14 @@ Status: design, started 2026-10-24. Progress log at the end.
   - Largest single lifted function: `DCC0` (index decompression) 3.2% of all samples. The fragment mass is spread:
     image `719900` 6.5%, `71fa90` 3.5%, `71c310` 2.4%; no fragment above 1.3%.
   - In game the runtime matters more than either: see STATUS.md (x325-x329, SPU runtime overhead).
+- 2026-11-05: O11430 on every placement, then the default. The fragment lifts are 26 distinct blobs, each lifted
+  once per LS placement (`work/edgefrag_scope.md`: dispatch through context words at ctx+0x7C/0x80 for input
+  decode and ctx+0x8C for output packing; families A input decode ~10% of real job time, B output packing ~9.5%,
+  C copies ~3.3%). The native loop sat in placement `7228c0_11150` only; `gen_edge_frag_lift.py` now finds the
+  loop at blob offset 0x310 in all 22 placement lifts of 7228c0 (two lift layouts: a label with a back edge in
+  one function, or a head function whose loop runs through chained functions; the generator fails unless each
+  site is found once and each loop equals 11150's, 53 statements). cap_4 on lab exe runLabX: 400/400 off, on and
+  check (0 differ), sum of per-job minimums 34.44 vs 34.04 ms (median of 3 pairs, inside the noise). In game,
+  check mode in the corridor (x347, 480 s): 1,331,202 calls on 17 placements, 0 differ, 238M iterations, 50.4 vs
+  239.0 tsc per iteration. Port default `GOW_EDGE_O11430=1` since then. Next by size: blob 719900 (output
+  packing, ~8.8% of job time) and the input-decode family.
