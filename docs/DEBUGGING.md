@@ -186,6 +186,11 @@ Lessons that cost days; keep them.
   Texture change detection: a sparse hash every frame, and a full hash when it differs, for a texture of 16 KB
   or less, or every `PS3RECOMP_ENG_TEXHASH_EVERY` frames (a power of two, default 8; STATUS x314 found 64 inside
   the noise). `PS3RECOMP_ENG_TEXHASH_FULL=1` hashes everything in full every frame.
+  Since 2026-11-05 the GoW:A port turns on write-watch tracking first (`PS3_VM_WRITE_WATCH=1` reserves guest
+  memory with `MEM_WRITE_WATCH`, `RSX_TEX_WRITEWATCH=1` uses it): a texture whose pages nothing wrote since its
+  last check skips both hashes, and the staggered full hash runs every `RSX_TEX_WW_FULL_EVERY` frames (default
+  64) as the net for writes Windows does not report. `[eng-stats]` counts the skips. Either switch at 0 restores
+  plain hashing.
 * **Slow Vulkan driver calls**: `VK_SLOW_MS=<ms>` logs every queue-lock wait, submit, fence wait, allocate, map,
   free and idle that takes longer, with the thread and the number of live `VkDeviceMemory` objects (up to 3000
   lines). This is how the M0.59e hang was found: seconds inside `vkFreeMemory`/`vkAllocateMemory`, outside any

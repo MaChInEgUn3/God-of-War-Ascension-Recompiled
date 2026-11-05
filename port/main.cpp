@@ -473,7 +473,11 @@ static bool alloc_guest_vm(void)
 {
 #ifdef _WIN32
     AddVectoredExceptionHandler(1, vm_commit_veh);
-    vm_base = (uint8_t*)VirtualAlloc(NULL, VM_SIZE, MEM_RESERVE, PAGE_READWRITE);
+    /* PS3_VM_WRITE_WATCH=1: reserve with MEM_WRITE_WATCH (toolkit vm.h has the same switch), so the RSX
+     * draw engine can ask which guest pages were written instead of hashing textures (RSX_TEX_WRITEWATCH). */
+    { const char* ww = getenv("PS3_VM_WRITE_WATCH");
+      vm_base = (uint8_t*)VirtualAlloc(NULL, VM_SIZE,
+                                       MEM_RESERVE | ((ww && ww[0] == '1') ? MEM_WRITE_WATCH : 0), PAGE_READWRITE); }
     ppu_vm_size = 0;              /* the whole space is backed; no OOB guard needed */
 #else
     /* No vectored exception handlers off Windows, so the arena is committed up
@@ -847,6 +851,12 @@ int main(int argc, char** argv)
      * wait long, those spins took a core the SPU threads needed. Same-spot
      * pair (x193, a terminal at ~0.9 cores in both): 11.53 against 10.35. */
     if (!getenv("PS3_USLEEP_WAIT_US")) _putenv_s("PS3_USLEEP_WAIT_US", "20");
+    /* PS3_VM_WRITE_WATCH=1 + RSX_TEX_WRITEWATCH=1 (2026-11-05): a cached texture whose guest
+     * pages nothing has written since its last check skips its content hashes. Walker thread,
+     * still scene (x337, one run each): hashing 13.3% -> 1.1% of its samples, 9% fewer samples,
+     * ~5% less time in draw ENDs; the frame dumps match. Either at 0 restores the hashing. */
+    if (!getenv("PS3_VM_WRITE_WATCH")) _putenv_s("PS3_VM_WRITE_WATCH", "1");
+    if (!getenv("RSX_TEX_WRITEWATCH")) _putenv_s("RSX_TEX_WRITEWATCH", "1");
     /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,
      * analysis/lift_reloc_blobs.py) stay interpreted. Lifted, they cut interpreted SPU
      * time from 13.6 to 4.4 s per 20 s and the workload from 77% to 29% busy (x136), but

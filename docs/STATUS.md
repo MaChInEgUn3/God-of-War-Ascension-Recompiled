@@ -952,6 +952,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         9.73 / 9.34 / 9.30 / ~9.1. The B arms lost in the middle of one sequence and led at its ends in the other.
         x319's 3% agreement was luck. For runtime changes the EDGE-only sampler's per-symbol share is the
         measure (it reproduced `spu_smc_microstep` at 10.35 / 10.76 across two runs).
+    - Texture dirty tracking by host write watch (2026-11-05, toolkit 78f78789, port default on). The walker
+      hashed every cached texture each frame (sparse hash, full hash when it differed or for textures of 16 KB or
+      less): 13.3% of its samples. Guest memory is now reserved with `MEM_WRITE_WATCH`; once a frame the engine
+      resets the watch and stamps the written pages, and a texture whose pages nothing wrote since its last check
+      skips both hashes (a full hash every 64 frames stays as the net). x336/x337 (still scene, one run each,
+      same reservation in both arms): ~92k skips per 30 s, full hashes ~41k -> ~2.6k and 4-11 GB -> 0.5-1.5 GB
+      hashed per 30 s; walker samples in hashing 13.3% -> 1.1%, 9% fewer walker samples in all, ~5% less wall
+      time in draw ENDs (`ENG_PHASE_STATS`, which includes the kernel's write-watch calls). The frame dumps
+      match. Frame rate not claimed (9.97 against 9.53, one run each, inside the bench's spread).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
