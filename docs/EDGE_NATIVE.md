@@ -1116,3 +1116,15 @@ Status: design, started 2026-10-24. Progress log at the end.
   mode 158 calls on 20 placements, 0 differ, 344 vs 527 tsc per iteration (the lift's figure includes the lab's
   per-hop overhead); fault 1 caught (1 byte). Sum of per-job minimums 32.95 vs 32.43 ms (median of 3 pairs,
   inside the noise). Not in game yet; 17 placements not in cap_4. Next: a packed v3, as O11430 went.
+- 2026-11-05: O719900 v3, then the default (`GOW_EDGE_O719900=1`; 2 = v1 only, 3 = check v3, 4 = check v1; faults
+  1-4). Each step packs one whole 2-vertex record (8 lanes, AVX2): native fma with the helper's lane rule (a record
+  whose lanes fail goes to the helper), truncating saturating conversions, half and 11/11/10 packing as integer
+  ops, the 108 bytes assembled with shuffles and blends. Records k >= 3 come from input pair k-3; each call runs
+  iterations 0-2 lifted, records 3..n-2 packed, then n-4..n-2 lifted again with stores off and the last one
+  lifted, so the carried registers end exactly as the lift leaves them (calls under 8 iterations stay on v1). The
+  entry check compares the shuffle controls and masks with values `gen_edge_frag_lift.py --consts` derives at
+  build time by replaying the 11340 prologue over the EBOOT's constant pool (a generated header in the build
+  tree; no game bytes in the source). cap_4 (lab exe runLabZ): 400/400 v3 on, check (158 calls, 0 differ) and
+  off; faults caught; sum of per-job minimums 32.53 -> 29.29 ms (median of 3 pairs, -10%). In game, check mode in
+  the corridor (x349, 480 s): 1,576,961 calls, 0 differ, 299M iterations, 91.9 vs 562.8 tsc per iteration; 2610
+  short calls left to v1, 10739 records through the fma helper.

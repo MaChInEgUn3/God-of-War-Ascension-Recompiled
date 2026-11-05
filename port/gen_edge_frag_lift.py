@@ -60,13 +60,20 @@ BLOBS = {
     "719900": dict(off=0x600, ref="11340",
                    first="ctx->gpr[19] = spu_a(ctx->gpr[103], ctx->gpr[41]);",
                    tail=None, cond="if (ctx->gpr[2]._u32[0] != 0)", sw="o719900", native="gow_edge_o719900_loop",
-                   env="GOW_EDGE_O719900", body="GOW_O719"),
+                   env="GOW_EDGE_O719900", body="GOW_O719",
+                   consts=[60, 63, 64, 67, 68, 69, 70, 71, 85, 95, 96, 97, 98, 99, 101, 104, 105, 107, 108, 109,
+                           110, 111, 112, 113, 114, 115, 116, 117],
+                   fma=[84, 94, 106, 100, 93]),
 }
 SKIP = ("/* nop */;", "/* branch hint (ignored) */;")
 
 body_mode = len(sys.argv) > 1 and sys.argv[1] == "--body"
 if body_mode:
     sys.argv.pop(1)
+consts_mode = len(sys.argv) > 1 and sys.argv[1] == "--consts"
+if consts_mode:
+    sys.argv.pop(1)
+    eboot = sys.argv.pop(2)
 src, dst = sys.argv[1], sys.argv[2]
 text = open(src, newline="").read()
 nl = "\r\n" if "\r\n" in text else "\n"
@@ -85,7 +92,7 @@ B = BLOBS[blob]
 SW, NATIVE = B["sw"], B["native"]
 H = lsa + B["off"]
 h = f"{H:08X}"
-if not body_mode and f"{NATIVE}(" in text:
+if not body_mode and not consts_mode and f"{NATIVE}(" in text:
     open(dst, "w", newline="").write(nl.join(lines))
     sys.exit(print(f"{dst}: the switch is already there; copied"))
 
@@ -172,6 +179,92 @@ fns = functions(lines)
 body, back, bf = loop_body(lines, fns, H, src)
 if not body or body[0] != B["first"]:
     sys.exit(f"{src}: the loop at 0x{H:X} does not start with {B['first']}")
+
+if consts_mode:   # the loop's controls and masks at its entry, for the native file's entry check
+    if "consts" not in B:
+        sys.exit(f"{src}: blob {blob} has no --consts registers")
+    import struct
+    elf = open(eboot, "rb").read()
+    phoff, phent, phnum = struct.unpack(">Q", elf[0x20:0x28])[0], *struct.unpack(">HH", elf[0x36:0x3A])
+
+    def blob_quad(lsa_addr):   # the blob's bytes at that LS address of this placement, from the EBOOT
+        va = int(blob, 16) + lsa_addr - lsa
+        for i in range(phnum):
+            _, _, off, vaddr, _, filesz = struct.unpack(">IIQQQQ", elf[phoff + i * phent:phoff + i * phent + 40])
+            if vaddr <= va and va + 16 <= vaddr + filesz:
+                return list(elf[off + va - vaddr:off + va - vaddr + 16])
+        sys.exit(f"{eboot}: blob byte 0x{va:X} not in a loadable segment")
+
+    # Run the prologue (the placement's entry function and the functions it falls through to, up to the loop
+    # head) on constants only: every register starts unknown, a value is known only if it comes from
+    # immediates and blob bytes through the ops below; the controls must all come out known.
+    W = lambda q: [int.from_bytes(bytes(q[4 * i:4 * i + 4]), "big") for i in range(4)]
+    Q = lambda ws: [b for w in ws for b in (w & 0xFFFFFFFF).to_bytes(4, "big")]
+    sx = lambda v, bits: v - (1 << bits) if v & (1 << (bits - 1)) else v
+    OPS = {
+        "il": lambda i: Q([sx(i & 0xFFFF, 16)] * 4), "ilh": lambda i: Q([((i & 0xFFFF) << 16) | (i & 0xFFFF)] * 4),
+        "ilhu": lambda i: Q([(i & 0xFFFF) << 16] * 4), "iohl": lambda a, i: Q([w | (i & 0xFFFF) for w in W(a)]),
+        "fsmbi": lambda i: [0xFF if (i >> (15 - k)) & 1 else 0 for k in range(16)],
+        "xorbi": lambda a, i: [b ^ (i & 0xFF) for b in a], "orbi": lambda a, i: [b | (i & 0xFF) for b in a],
+        "andbi": lambda a, i: [b & i & 0xFF for b in a],
+        "ori": lambda a, i: Q([w | sx(i & 0x3FF, 10) for w in W(a)]),
+        "ai": lambda a, i: Q([w + sx(i & 0x3FF, 10) for w in W(a)]),
+        "a": lambda a, b: Q([x + y for x, y in zip(W(a), W(b))]), "sf": lambda a, b: Q([y - x for x, y in zip(W(a), W(b))]),
+        "and": lambda a, b: [x & y for x, y in zip(a, b)], "andc": lambda a, b: [x & ~y & 0xFF for x, y in zip(a, b)],
+        "selb": lambda a, b, m: [(x & ~k | y & k) & 0xFF for x, y, k in zip(a, b, m)],
+        "shlqbyi": lambda a, n: [a[k + (n & 31)] if k + (n & 31) < 16 else 0 for k in range(16)],
+        "rotqbyi": lambda a, n: [a[(k + n) & 15] for k in range(16)],
+        "rotqmbyi": lambda a, n: [a[k - ((-n) & 31)] if k - ((-n) & 31) >= 0 else 0 for k in range(16)],
+    }
+    regs = {}
+    ASSIGN = re.compile(r"^ctx->gpr\[(\d+)\] = spu_(\w+)\((.*)\);$")
+    f = next((f for f in fns if f[3] == lsa), None)
+    while f is not None and f[3] != H:
+        nxt = None
+        for s in (x.strip() for x in lines[f[0] + 1:f[1]]):
+            if s in SKIP or s.startswith("spu_ls_write128(ctx, ctx->gpr[1]._u32[0] + -0x"):
+                continue
+            hm = HOP.match(s)
+            if hm:
+                nxt = [g for g in fns if g[3] == int(hm.group(1), 16) and g[2] == hm.group(2)]
+                break
+            a = ASSIGN.match(s)
+            if not a:
+                sys.exit(f"{src}: unexpected statement in the prologue: {s}")
+            d, op, args = int(a.group(1)), a.group(2), [x.strip() for x in a.group(3).split(",")]
+            vals = []
+            for x in args:
+                g = re.fullmatch(r"ctx->gpr\[(\d+)\]", x)
+                vals.append(regs.get(int(g.group(1))) if g else (int(x, 0) if re.fullmatch(r"-?(0x[0-9A-Fa-f]+|\d+)", x) else None))
+            if op == "ls_read128" and len(args) == 2 and isinstance(vals[1], int):
+                regs[d] = blob_quad(vals[1])
+            elif op in OPS and None not in vals:
+                regs[d] = OPS[op](*vals)
+            else:
+                regs.pop(d, None)
+        if not nxt or len(nxt) != 1:
+            sys.exit(f"{src}: the prologue does not fall through to the loop head 0x{H:X}")
+        f = nxt[0]
+    if f is None:
+        sys.exit(f"{src}: no function at the placement's entry 0x{lsa:X}")
+    miss = [r for r in B["consts"] + B.get("fma", []) if r not in regs]
+    if miss:
+        sys.exit(f"{src}: the prologue does not set r{miss} from constants alone")
+    P = B["body"]
+    o = [f"/* generated by gen_edge_frag_lift.py --consts from {os.path.basename(os.path.dirname(os.path.abspath(src)))}"
+         f" and the blob's bytes in the EBOOT: the {len(B['consts'])} controls and masks the loop at blob {blob} + "
+         f"0x{B['off']:X} gets from its prologue (SPU words). Game data: not committed. */",
+         f"#define {P}_NCTL {len(B['consts'])}",
+         f"#define {P}_CTL {{ \\"]
+    o += [f"    {{ {r}, {{ " + ", ".join(f"0x{w:08X}u" for w in W(regs[r])) + " } }, \\" for r in B["consts"]]
+    o += ["}"]
+    if B.get("fma"):   # the fma operands and shift counts the prologue sets (the native file's self-test uses them)
+        o += [f"#define {P}_FMA {{ \\"]
+        o += [f"    {{ {r}, {{ " + ", ".join(f"0x{w:08X}u" for w in W(regs[r])) + " } }, \\" for r in B["fma"]]
+        o += ["}"]
+    o += [""]
+    open(dst, "w", newline="\n").write("\n".join(o))
+    sys.exit(print(f"{dst}: {blob}: {len(B['consts'])} controls and {len(B.get('fma', []))} fma operands from the prologue"))
 
 if body_mode:   # the loop macros for the native file, from this (the reference) lift
     if "body" not in B:

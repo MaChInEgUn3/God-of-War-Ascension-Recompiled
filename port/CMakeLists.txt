@@ -276,7 +276,17 @@ if(PORT_ENABLE_SPU)
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --body "${EDGEFRAG_O2_LIFT}" "${EDGE_BODYO2}"
                 DEPENDS "${EDGEFRAG_O2_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
                 COMMENT "Generating the 719900 loop from the edgefrag_719900_11340 lift")
-            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o719900.c" "${EDGE_BODYO2}")
+            # The controls and masks v3 checks at the loop's entry (and the self-test's fma operands): the
+            # 11340 prologue run on constants, with the blob's bytes read from the EBOOT (--consts). Game
+            # data: written into the build tree only.
+            set(GOW_EBOOT_ELF "${CMAKE_CURRENT_SOURCE_DIR}/../../vfs/PS3_GAME/USRDIR/EBOOT.elf" CACHE FILEPATH
+                "The game's decrypted EBOOT.elf (blob bytes for the generated EDGE headers)")
+            set(EDGE_CONSTSO2 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_o719900_consts.h")
+            add_custom_command(OUTPUT "${EDGE_CONSTSO2}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --consts "${EDGEFRAG_O2_LIFT}" "${GOW_EBOOT_ELF}" "${EDGE_CONSTSO2}"
+                DEPENDS "${EDGEFRAG_O2_LIFT}" "${GOW_EBOOT_ELF}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                COMMENT "Generating the 719900 loop's controls from the edgefrag_719900_11340 prologue")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o719900.c" "${EDGE_BODYO2}" "${EDGE_CONSTSO2}")
         endif()
         # General6's job module a67e: function 4930 (Perlin noise) native (gow_a67e_noise.c, switch
         # GOW_A67_NOISE, default native). gen_a67e_noise_lift.py writes the lift with the switch beside the

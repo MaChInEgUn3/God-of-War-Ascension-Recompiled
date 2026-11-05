@@ -867,6 +867,11 @@ int main(int argc, char** argv)
      * 0x310). cap_4 400/400 off/on/check; in game, check mode in the corridor (x347): 1.33M calls
      * on 17 placements, 0 differ, 50 vs 239 tsc per iteration. 0 runs the lift. */
     if (!getenv("GOW_EDGE_O11430")) _putenv_s("GOW_EDGE_O11430", "1");
+    /* GOW_EDGE_O719900=1 (2026-11-05): packed v3 of EDGE overlay blob 719900's output packing
+     * (v1 as fallback), all 37 placements. cap_4 400/400 off/on/check, replay -10% (32.53 -> 29.29
+     * ms); in game, check mode in the corridor (x349): 1.58M calls, 0 differ, 92 vs 563 tsc per
+     * iteration. 0 runs the lift. */
+    if (!getenv("GOW_EDGE_O719900")) _putenv_s("GOW_EDGE_O719900", "1");
     if (!getenv("PS3_VM_WRITE_WATCH")) _putenv_s("PS3_VM_WRITE_WATCH", "1");
     if (!getenv("RSX_TEX_WRITEWATCH")) _putenv_s("RSX_TEX_WRITEWATCH", "1");
     /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,
