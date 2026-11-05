@@ -968,6 +968,28 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       - Open: the per-frame reset is a process-wide TLB flush per chunk. In x337 the SPU threads' sample totals
         were 3-5% lower with it on, in line with that arm's ~4% fewer frames in the window; one run each cannot
         separate a cost from noise.
+    - The lock line on the still scene (x340, runXn, `SPU_LOCKLINE_STATS=1`, 240 s): ~420k acquisitions a second,
+      6% of them contended, 25-30 ms waited per ~2.6 s window (~1% of one thread). So its 6.5% of the EDGE threads'
+      samples is the uncontended exchange moving the one lock word between cores, not waiting. 65% of the
+      acquisitions come from three sites in `spu_wrch_impl` (the SPU's channel writes), the next from
+      `cellSpursReadyCountStore`, `spu_taskset_task_exited` and `mfc_do_transfer`. Per-line (striped) locks
+      would cut the bouncing; the call-site inventory is the next step before any code.
+    - Striped lock-line design (2026-11-05, not built yet). Inventory of the 29 `spu_lockline_lock` sites outside
+      the tests: 26 write one 128-byte line whose EA is known at the call (SPU GETLLAR slow path, PUTLLC, PUTLLUC
+      in `spu_mfc_atomic`; PPU `stwcx`/`stdcx` and `VM_WRITE_COH`; cellSync, cellSpurs event flags and ready
+      counts, taskset bitsets), 7 cover a range (`mfc_do_transfer` SDCRZ and PUT over reserved lines,
+      `vm_memcpy_to`, `vm_memset`, `gcm_row_copy`, `spu_taskset_task_exited`), 3 touch no guest memory
+      (`SPU_WrEventAck`, `spu_coh_unregister`, `spu_coh_forget_range`). Plan:
+      - 64 stripe locks, stripe chosen by `ea >> 10` (8 lines per stripe), so the `s_coh_bitmap` byte that
+        covers those 8 lines stays under one lock (its read-modify-write is not atomic today).
+      - The holder list per stripe: `s_coh_ctxs[64]`, `coh_listed` becomes a 64-bit mask; the unlocked GETLLAR
+        fast path also requires stripe(ea)'s bit; notify walks only stripe(line).
+      - Range and global sites take their stripes in ascending order, or all 64 (unregister, forget_range, the
+        ack lock). Lock order stays `resv_lock(L)` then the stripe; still not recursive.
+      - Known gap to keep or fix: `VM_WRITE_COH` notifies only the line of `addr`, so an unaligned write that
+        spills into the next line is not notified today; with stripes it would also need the second stripe.
+      - Gate: the coherency unit tests, then the M1.03 tail test (same exe, env switch, `burn.py 5`, L N N L,
+        `[lockline-long]` count and maximum) before any default, judged by the EDGE threads' sampler share.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
