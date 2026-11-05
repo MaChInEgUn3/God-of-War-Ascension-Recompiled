@@ -999,6 +999,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         DEBUGGING.md. The `[lockline-ra]` sites at small RVAs are the PPU's own stores: `vm_write32` (~28% of
         all acquisitions), `vm_write8`, `ppu_stdcx64`, `ppu_stwcx32`. A line once reserved stays marked in
         `s_coh_bitmap` for good, so every later PPU store to it takes the lock and walks the holder list.
+    - A seventh kernel lane for tasksets (an idea from elsewhere: tasksets on an extra SPU, off the EDGE SPUs)
+      does not carry over. Every workload GoW:A adds through `AddWorkload` here is a WWS job list (wids 0-18);
+      the four `CreateTaskset` workloads never show SPU busy time in the traces (MLAA runs as HLE), and the work
+      moved there (MeshProc, GeneralPurpose) is WWS job lists in this port (wid 13 `MeshProcJobs`, ...), whose
+      job-list headers only have room for six SPUs. A lane playing a seventh SPU would have to run those, so it
+      was written (`SPURS_KERN_LANE_WIDS`) and removed before any run.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
