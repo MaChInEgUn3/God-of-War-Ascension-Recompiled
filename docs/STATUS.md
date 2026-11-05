@@ -1018,6 +1018,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       all-stripes path: `spu_taskset_task_exited`, `spu_taskset2_set_exit`, `spu_signalled_update`, the event-flag
       and `AddWorkload` sites, unregister/forget_range. Known gap kept: a store that spills from an unmarked line
       into a marked next line is not notified (as before).
+    - The night's defaults together (x351, 2026-11-05, corridor with the pad masher, warm-up then A B B A, 480 s,
+      `PS3_FTRACE` 300-320 s; A = runXk before them, B = runXr with texture write watch, striped lock line, O11430
+      on all placements and O719900 v3): game frames/s over 300-450 s A 12.01 / 12.75, B 13.34 / 13.58 (360-450 s:
+      11.54 / 12.94 against 13.41 / 13.38); frames in the trace window 246 / 257 against 263 / 285; median frame
+      75.9 / 75.6 against 73.7 / 65.5 ms; the main thread blocked 23% / 11% of each frame against 6.7% / 6.0%. B leads
+      in each pair and in both windows: about +9%, near the edge of this recipe's spread but consistent across
+      every measure. Two exes, so code layout differs too.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
