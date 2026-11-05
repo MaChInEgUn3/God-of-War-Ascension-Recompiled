@@ -990,6 +990,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         spills into the next line is not notified today; with stripes it would also need the second stripe.
       - Gate: the coherency unit tests, then the M1.03 tail test (same exe, env switch, `burn.py 5`, L N N L,
         `[lockline-long]` count and maximum) before any default, judged by the EDGE threads' sampler share.
+      - Measured before building (x341, `SPU_LOCKLINE_STATS=1` now also prints `[getllar]`): the GETLLAR fast path
+        hits 99.8% (~127k GETLLARs a second), so the hot `spu_wrch_impl` sites are PUTLLC and the event ack. The
+        traffic is concentrated: six lines take ~50% of the GETLLARs, `0x81600680` ~9.7%, three lines
+        `0x83D57980` / `0x83D6BC00` / `0x83D7FE80` ~8.5% each (one per EDGE workload, by the look of it),
+        `0x8001AD00` (the SPURS instance) ~7%. Per-workload lines on separate stripes would stop bouncing one
+        word between every lane, so the design still holds; it goes to a fresh context with the inventory in
+        DEBUGGING.md. The `[lockline-ra]` sites at small RVAs are the PPU's own stores: `vm_write32` (~28% of
+        all acquisitions), `vm_write8`, `ppu_stdcx64`, `ppu_stwcx32`. A line once reserved stays marked in
+        `s_coh_bitmap` for good, so every later PPU store to it takes the lock and walks the holder list.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the

@@ -666,3 +666,29 @@ The project is indexed in a local RAG server (collections `gow-recomp` for this 
 `scripts/rag-manifest.json` declares what is ingested; `scripts/rag_hook.py` is a Claude Code `PostToolUse` hook
 (registered in the parent folder's `.claude/settings.json`) that stages patches/JSON as `.txt` and asks the assistant to
 re-ingest after each `git commit`/`git push`. Never add game data, firmware or lifted output to the manifest.
+
+## Lock-line call sites (inventory, 2026-11-05)
+
+Brief for a striped lock-line rewrite (STATUS, "Striped lock-line design"). Sites of `spu_lockline_lock` outside the
+tests, toolkit paths:
+
+- Single line, EA known at the call (26): `spu_mfc_atomic` GETLLAR slow path (`spu_channels.c`, only when
+  `spu_coh_reserve_fast` fails), PUTLLC, PUTLLUC/PUTQLLUC; `mfc_do_transfer` PUT re-check after an unlocked copy
+  (`spu_dma.h`); `spu_taskset2_set_exit`, `spu_signalled_update` (`spu_workload.c`); `VM_WRITE_COH` (both
+  `ppu_memory.h` and `ppu_loader.cpp`), `ppu_stwcx`, `ppu_stdcx`, `ppu_stwcx32`, `ppu_stdcx64` (the last two inside
+  `resv_lock(L)`); cellSync `sync_cas`, `cellSyncMutexInitialize`, `sq_apply`, `sq_and`; taskset
+  `spurs_taskset_bitset_update`, `spurs_taskset_take_slot`; cellSpurs `spurs_ef_set_locked`,
+  `cellSpursAddWorkload`, `cellSpursReadyCountStore`, `spurs_ready_exchange`, `cellSpursEventFlagWait`,
+  `TryWait`, `Clear` (all released through `ef_line_end`).
+- Range (7): `mfc_do_transfer` SDCRZ (up to 16 KB) and PUT over reserved lines, `vm_memcpy_to`, `vm_memset`,
+  `gcm_row_copy` (`cellGcmSys.c`), `spu_taskset_task_exited` (writes one line, reads task info and ELF headers).
+- No guest memory (3): `SPU_WrEventAck` (`SPU_EVACK_LOCK`, on by default; M1.03 showed dropping it costs tails),
+  `spu_coh_unregister`, `spu_coh_forget_range`.
+- Every "notify" (`spu_coh_notify_write`) walks all of `s_coh_ctxs`, clears holders' `resv_valid`, sets their
+  event and wakes them (`spu_ch_wake`, their SRW lock), and calls `ppu_resv_break_line` (walks `g_resv_ctxs`).
+- Notes: (a) `VM_WRITE_COH` notifies only the line of `addr`; an unaligned 4/8-byte write that spills into the
+  next line is not notified. (b) Lock order is `resv_lock(L)` then the lock line; it is not recursive, which is
+  why HLE sites use raw byte accesses while holding it. (c) `spu_coh_reserve` does a plain read-modify-write of a
+  `s_coh_bitmap` byte that covers 8 lines (1 KB): stripes must share that byte (key `ea >> 10`) or the update must
+  be atomic. (d) `s_coh_ctxs` holds every context that has ever reserved (`coh_listed`), not current holders; the
+  unlocked GETLLAR fast path relies on it, moving `resv_ea` to any marked line while listed.

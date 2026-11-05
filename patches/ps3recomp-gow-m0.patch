@@ -12946,7 +12946,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..b5528654 100644
+index 59f5e4b8..12faed9b 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13142,7 +13142,7 @@ index 59f5e4b8..b5528654 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4278 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4310 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -14788,6 +14788,38 @@ index 59f5e4b8..b5528654 100644
 +         * the lock; any write the copy misses ends that reservation (see
 +         * spu_coh_reserve_fast). Anything else takes the lock as before. */
 +        const int llar_fast = spu_coh_reserve_fast(ctx, ea);
++        /* SPU_LOCKLINE_STATS=1: every 2^20 GETLLARs, [getllar] fast hits and why the others were
++         * slow (context not listed / line not marked), with the busiest lines' share. */
++        { static int s_gs = -1;
++          if (__builtin_expect(s_gs < 0, 0)) s_gs = getenv("SPU_LOCKLINE_STATS") ? 1 : 0;
++          if (s_gs) {
++              static volatile LONG64 s_all, s_fast, s_unlisted, s_unmarked;
++              static volatile LONG s_line[256][2];
++              const LONG64 n = InterlockedIncrement64(&s_all);
++              if (llar_fast) InterlockedIncrement64(&s_fast);
++              else if (!__atomic_load_n(&ctx->coh_listed, __ATOMIC_RELAXED)) InterlockedIncrement64(&s_unlisted);
++              else InterlockedIncrement64(&s_unmarked);
++              const uint32_t ln = (uint32_t)(ea & ~127ull);
++              const unsigned h = (ln >> 7) * 2654435761u >> 24;
++              if (s_line[h][0] == 0) InterlockedCompareExchange(&s_line[h][0], (LONG)(ln | 1), 0);
++              if ((uint32_t)(s_line[h][0] & ~1) == ln) InterlockedIncrement(&s_line[h][1]);
++              if ((n & ((1 << 20) - 1)) == 0) {
++                  int top[6] = {-1, -1, -1, -1, -1, -1};
++                  for (int i = 0; i < 256; i++)
++                      for (int k = 0; k < 6; k++)
++                          if (top[k] < 0 || s_line[i][1] > s_line[top[k]][1]) {
++                              for (int j = 5; j > k; j--) top[j] = top[j - 1];
++                              top[k] = i; break;
++                          }
++                  char b[300]; int o = 0;
++                  for (int k = 0; k < 6 && top[k] >= 0; k++)
++                      o += snprintf(b + o, sizeof b - o, " %08X:%.1f%%", (unsigned)(s_line[top[k]][0] & ~1),
++                                    100.0 * s_line[top[k]][1] / (double)(1 << 20));
++                  fprintf(stderr, "[getllar] %lld: fast %.1f%%, slow unlisted %.1f%% unmarked %.1f%%; top lines (share of last 2^20)%s\n",
++                          (long long)n, 100.0 * s_fast / n, 100.0 * s_unlisted / n, 100.0 * s_unmarked / n, b);
++                  for (int i = 0; i < 256; i++) InterlockedExchange(&s_line[i][1], 0);
++              }
++          } }
 +        if (!llar_fast) {
 +            spu_lockline_lock();
 +            /* Tell the PPU store paths this line is live, so a store into it goes
