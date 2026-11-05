@@ -857,6 +857,11 @@ int main(int argc, char** argv)
      * ~5% less time in draw ENDs; the frame dumps match. Check mode in the corridor (x339,
      * RSX_TEX_WRITEWATCH=2, 480 s of loads, streaming and fights): 1.18M clean verdicts, 0 wrong.
      * Either at 0 restores the hashing. */
+    /* PS3_LOCKLINE_STRIPES=1 (2026-11-05): 64 lock-line stripes keyed by ea >> 10 instead of one
+     * global lock. EDGE threads, still scene (x344): lock + coherency 13.1% -> 7.6% of their samples.
+     * Tail test under burn.py 5 (x345, L N N L): waits over 5 ms 8 / 1 / 3 / 5, longest 15.4 / 9.5 /
+     * 8.9 / 7.8 ms. 0 restores the global lock. */
+    if (!getenv("PS3_LOCKLINE_STRIPES")) _putenv_s("PS3_LOCKLINE_STRIPES", "1");
     if (!getenv("PS3_VM_WRITE_WATCH")) _putenv_s("PS3_VM_WRITE_WATCH", "1");
     if (!getenv("RSX_TEX_WRITEWATCH")) _putenv_s("RSX_TEX_WRITEWATCH", "1");
     /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,

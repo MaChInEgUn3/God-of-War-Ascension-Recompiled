@@ -1005,6 +1005,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       moved there (MeshProc, GeneralPurpose) is WWS job lists in this port (wid 13 `MeshProcJobs`, ...), whose
       job-list headers only have room for six SPUs. A lane playing a seventh SPU would have to run those, so it
       was written (`SPURS_KERN_LANE_WIDS`) and removed before any run.
+    - Striped lock line built and shipped (2026-11-05, toolkit f24e9049, port default `PS3_LOCKLINE_STRIPES=1`; the
+      design above, with the per-stripe holder lists). First A/B (x343): the lock's share of the EDGE threads
+      went UP (~6% -> ~20%): `SPU_WrEventAck` still took all 64 stripes ~40k times a second. With the ack on
+      the stripe of `resv_ea` (the one a notify that raises its event takes), x344 (still scene, EDGE-only
+      sampler, one exe, env switch): lock + coherency 13.1% -> 7.6% of the EDGE threads' samples
+      (`ll_contended` 6.3 -> 2.0, `spu_coh_notify_write` 2.4 -> 0.9), the native stages' share up. Tail test
+      (x345, `burn.py 5`, L N N L, 300 s): waits over 5 ms 8 / 1 / 3 / 5, longest 15.4 / 9.5 / 8.9 / 7.8 ms; game
+      frames/s under that load 8.24 / 8.05 / 7.96 / 8.03 (flat). Corridor with the pad masher on the shipped
+      defaults (x346, 480 s): no hang, no guard or branch-to-0 lines, 12-13 game frames/s at the end, 4 waits over
+      5 ms. `test_spu_coherency` 195/195 with the switch off and on (built with clang on this host). Still on the
+      all-stripes path: `spu_taskset_task_exited`, `spu_taskset2_set_exit`, `spu_signalled_update`, the event-flag
+      and `AddWorkload` sites, unregister/forget_range. Known gap kept: a store that spills from an unmarked line
+      into a marked next line is not notified (as before).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the

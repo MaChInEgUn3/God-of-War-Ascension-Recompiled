@@ -669,7 +669,8 @@ re-ingest after each `git commit`/`git push`. Never add game data, firmware or l
 
 ## Lock-line call sites (inventory, 2026-11-05)
 
-Brief for a striped lock-line rewrite (STATUS, "Striped lock-line design"). Sites of `spu_lockline_lock` outside the
+Built 2026-11-05 (toolkit f24e9049, `PS3_LOCKLINE_STRIPES=1`, GoW:A port default; 0 = the global lock). The inventory
+that briefed it: Brief for a striped lock-line rewrite (STATUS, "Striped lock-line design"). Sites of `spu_lockline_lock` outside the
 tests, toolkit paths:
 
 - Single line, EA known at the call (26): `spu_mfc_atomic` GETLLAR slow path (`spu_channels.c`, only when
