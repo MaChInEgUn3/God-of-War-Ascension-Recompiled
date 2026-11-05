@@ -288,6 +288,66 @@ if(PORT_ENABLE_SPU)
                 COMMENT "Generating the 719900 loop's controls from the edgefrag_719900_11340 prologue")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o719900.c" "${EDGE_BODYO2}" "${EDGE_CONSTSO2}")
         endif()
+        # Overlay blob 71fa90 (input decode: positions and two packed unit vectors): its loop at blob+0x2E8
+        # (placement 12210: loc_124F8; gow_edge_native_o71fa90.c, switch GOW_EDGE_O71FA90, default lifted), in
+        # every placement lift of the blob (spu/edgefrag_71fa90_<lsa>), the same way as 719900 above: the loop
+        # macros from the 12210 lift (--body), the controls, fma operands and the prologue's table from its
+        # prologue and the EBOOT (--consts). Game code and data: written into the build tree only.
+        set(EDGEFRAG_O3_LIFT "${SPU_DIR}/edgefrag_71fa90_12210/spu_recomp.c")
+        if(EXISTS "${EDGEFRAG_O3_LIFT}")
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            file(GLOB EDGEFRAG_O3_PLACEMENTS "${SPU_DIR}/edgefrag_71fa90_*/spu_recomp.c")
+            foreach(o3_lift IN LISTS EDGEFRAG_O3_PLACEMENTS)
+                get_filename_component(o3_dir "${o3_lift}" DIRECTORY)
+                get_filename_component(o3_name "${o3_dir}" NAME)
+                set(o3_switched "${CMAKE_CURRENT_BINARY_DIR}/${o3_name}_native.c")
+                add_custom_command(OUTPUT "${o3_switched}"
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" "${o3_lift}" "${o3_switched}" "${EDGEFRAG_O3_LIFT}"
+                    DEPENDS "${o3_lift}" "${EDGEFRAG_O3_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                    COMMENT "Adding the native switch to the ${o3_name} lift")
+                list(REMOVE_ITEM SPU_SOURCES "${o3_lift}")
+                list(APPEND SPU_SOURCES "${o3_switched}")
+            endforeach()
+            set(EDGE_BODYO3 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_o71fa90_body.h")
+            add_custom_command(OUTPUT "${EDGE_BODYO3}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --body "${EDGEFRAG_O3_LIFT}" "${EDGE_BODYO3}"
+                DEPENDS "${EDGEFRAG_O3_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                COMMENT "Generating the 71fa90 loop from the edgefrag_71fa90_12210 lift")
+            set(GOW_EBOOT_ELF "${CMAKE_CURRENT_SOURCE_DIR}/../../vfs/PS3_GAME/USRDIR/EBOOT.elf" CACHE FILEPATH
+                "The game's decrypted EBOOT.elf (blob bytes for the generated EDGE headers)")
+            set(EDGE_CONSTSO3 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_o71fa90_consts.h")
+            add_custom_command(OUTPUT "${EDGE_CONSTSO3}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --consts "${EDGEFRAG_O3_LIFT}" "${GOW_EBOOT_ELF}" "${EDGE_CONSTSO3}"
+                DEPENDS "${EDGEFRAG_O3_LIFT}" "${GOW_EBOOT_ELF}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                COMMENT "Generating the 71fa90 loop's controls from the edgefrag_71fa90_12210 prologue")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o71fa90.c" "${EDGE_BODYO3}" "${EDGE_CONSTSO3}")
+        endif()
+        # Overlay blob 71c310 (input decode: fixed point and packed unit vectors): its loop at blob+0x4A0
+        # (placement 11db0: loc_12250; gow_edge_native_o71c310.c, v1 only, switch GOW_EDGE_O71C310, default
+        # lifted), in every placement lift of the blob, the same way as 71fa90 above (loop macros from the 11db0
+        # lift). Game code: written into the build tree only.
+        set(EDGEFRAG_O4_LIFT "${SPU_DIR}/edgefrag_71c310_11db0/spu_recomp.c")
+        if(EXISTS "${EDGEFRAG_O4_LIFT}")
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            file(GLOB EDGEFRAG_O4_PLACEMENTS "${SPU_DIR}/edgefrag_71c310_*/spu_recomp.c")
+            foreach(o4_lift IN LISTS EDGEFRAG_O4_PLACEMENTS)
+                get_filename_component(o4_dir "${o4_lift}" DIRECTORY)
+                get_filename_component(o4_name "${o4_dir}" NAME)
+                set(o4_switched "${CMAKE_CURRENT_BINARY_DIR}/${o4_name}_native.c")
+                add_custom_command(OUTPUT "${o4_switched}"
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" "${o4_lift}" "${o4_switched}" "${EDGEFRAG_O4_LIFT}"
+                    DEPENDS "${o4_lift}" "${EDGEFRAG_O4_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                    COMMENT "Adding the native switch to the ${o4_name} lift")
+                list(REMOVE_ITEM SPU_SOURCES "${o4_lift}")
+                list(APPEND SPU_SOURCES "${o4_switched}")
+            endforeach()
+            set(EDGE_BODYO4 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_o71c310_body.h")
+            add_custom_command(OUTPUT "${EDGE_BODYO4}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --body "${EDGEFRAG_O4_LIFT}" "${EDGE_BODYO4}"
+                DEPENDS "${EDGEFRAG_O4_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                COMMENT "Generating the 71c310 loop from the edgefrag_71c310_11db0 lift")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o71c310.c" "${EDGE_BODYO4}")
+        endif()
         # General6's job module a67e: function 4930 (Perlin noise) native (gow_a67e_noise.c, switch
         # GOW_A67_NOISE, default native). gen_a67e_noise_lift.py writes the lift with the switch beside the
         # original (for its includes); that copy is compiled instead. Not committed.

@@ -1128,3 +1128,15 @@ Status: design, started 2026-10-24. Progress log at the end.
   off; faults caught; sum of per-job minimums 32.53 -> 29.29 ms (median of 3 pairs, -10%). In game, check mode in
   the corridor (x349, 480 s): 1,576,961 calls, 0 differ, 299M iterations, 91.9 vs 562.8 tsc per iteration; 2610
   short calls left to v1, 10739 records through the fma helper.
+- 2026-11-05: input decode family, blobs 71fa90 (v1 + packed v3) and 71c310 (v1), then the defaults
+  (`GOW_EDGE_O71FA90=1`, `GOW_EDGE_O71C310=1`; same mode numbers as O719900). 71fa90: 18-byte records, two per
+  iteration; bytes 0-11 a float3 (w from r60), then two packed 24-bit unit vectors (two 10-bit fields with a
+  constant exponent, `fma` to scale, a 4-bit index into a 12-entry table the prologue builds); z rebuilt as
+  `fm(d, fi(d, frsqest(d)))` with `d = 1 - (x^2 + y^2)`, the table's shuffle controls and sign bits placing x, y,
+  z and w = +-1. v3: one record pair per step, 8 lanes; fma/fm/fa/fs native with the helpers' lane rule (a pair
+  with a failing lane goes through the helpers), frsqest/fi/shufb as 8-lane ports of the helpers (start-up
+  self-test, 0 of 40000 differ). The table and controls come from `gen_edge_frag_lift.py --consts` (build tree
+  only). 71c310 stays v1: its fixed-point half takes shift counts and biases from the stream descriptor on every
+  call. cap_4: 400/400 off/on/check for both; check 114 / 75 calls, 0 differ; faults caught; job time -3.0% /
+  -1.6% (median of 3 pairs). In game, check mode in the corridor (x352, 480 s): 71fa90 1,122,305 calls, 0 differ,
+  173 vs 370 tsc per iteration; 71c310 679,937 calls, 0 differ, 406 vs 510.

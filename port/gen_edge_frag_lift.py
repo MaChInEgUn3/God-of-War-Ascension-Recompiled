@@ -64,6 +64,16 @@ BLOBS = {
                    consts=[60, 63, 64, 67, 68, 69, 70, 71, 85, 95, 96, 97, 98, 99, 101, 104, 105, 107, 108, 109,
                            110, 111, 112, 113, 114, 115, 116, 117],
                    fma=[84, 94, 106, 100, 93]),
+    "71fa90": dict(off=0x2E8, ref="12210",
+                   first="ctx->gpr[18] = spu_ori(ctx->gpr[7], 0);",
+                   tail=None, cond="if (ctx->gpr[71]._u32[0] != 0)", sw="o71fa90", native="gow_edge_o71fa90_loop",
+                   env="GOW_EDGE_O71FA90", body="GOW_O71F",
+                   consts=[30, 31, 32, 41, 42, 43, 52, 60, 62, 63, 64, 65, 66, 67, 68, 69, 70],
+                   fma=[55, 54, 56], stack=(0x20, 0xE0)),
+    "71c310": dict(off=0x4A0, ref="11db0",
+                   first="ctx->gpr[25] = spu_and(ctx->gpr[3], ctx->gpr[68]);",
+                   tail=None, cond="if (ctx->gpr[32]._u32[0] != 0)", sw="o71c310", native="gow_edge_o71c310_loop",
+                   env="GOW_EDGE_O71C310", body="GOW_O71C"),
 }
 SKIP = ("/* nop */;", "/* branch hint (ignored) */;")
 
@@ -215,9 +225,12 @@ if consts_mode:   # the loop's controls and masks at its entry, for the native f
         "shlqbyi": lambda a, n: [a[k + (n & 31)] if k + (n & 31) < 16 else 0 for k in range(16)],
         "rotqbyi": lambda a, n: [a[(k + n) & 15] for k in range(16)],
         "rotqmbyi": lambda a, n: [a[k - ((-n) & 31)] if k - ((-n) & 31) >= 0 else 0 for k in range(16)],
+        "shufb": lambda a, b, c: [(0 if x < 0xC0 else 0xFF if x < 0xE0 else 0x80) if x & 0x80 else (a + b)[x & 31]
+                                  for x in c],
     }
-    regs = {}
+    regs, stack = {}, {}   # stack: the quads the prologue stores at r1 + a positive offset (a table the loop reads)
     ASSIGN = re.compile(r"^ctx->gpr\[(\d+)\] = spu_(\w+)\((.*)\);$")
+    SST = re.compile(r"^spu_ls_write128\(ctx, ctx->gpr\[(\d+)\]\._u32\[0\] \+ (0x[0-9A-F]+), ctx->gpr\[(\d+)\]\);$")
     f = next((f for f in fns if f[3] == lsa), None)
     while f is not None and f[3] != H:
         nxt = None
@@ -228,6 +241,11 @@ if consts_mode:   # the loop's controls and masks at its entry, for the native f
             if hm:
                 nxt = [g for g in fns if g[3] == int(hm.group(1), 16) and g[2] == hm.group(2)]
                 break
+            st = SST.match(s) if "stack" in B else None
+            if st:   # a store: kept if it is to the stack frame (the table), else not followed (ctx fields)
+                if st.group(1) == "1":
+                    stack[int(st.group(2), 16)] = regs.get(int(st.group(3)))
+                continue
             a = ASSIGN.match(s)
             if not a:
                 sys.exit(f"{src}: unexpected statement in the prologue: {s}")
@@ -261,6 +279,14 @@ if consts_mode:   # the loop's controls and masks at its entry, for the native f
     if B.get("fma"):   # the fma operands and shift counts the prologue sets (the native file's self-test uses them)
         o += [f"#define {P}_FMA {{ \\"]
         o += [f"    {{ {r}, {{ " + ", ".join(f"0x{w:08X}u" for w in W(regs[r])) + " } }, \\" for r in B["fma"]]
+        o += ["}"]
+    if B.get("stack"):   # the table the prologue writes into its stack frame, r1 + lo .. hi (16-byte entries)
+        lo, hi = B["stack"]
+        bad = [f"0x{x:X}" for x in range(lo, hi, 16) if stack.get(x) is None]
+        if bad:
+            sys.exit(f"{src}: the prologue does not store a constant at r1 + {bad}")
+        o += [f"#define {P}_NTAB {(hi - lo) // 16}", f"#define {P}_TAB0 0x{lo:X}", f"#define {P}_TAB {{ \\"]
+        o += ["    { " + ", ".join(f"0x{w:08X}u" for w in W(stack[x])) + " }, \\" for x in range(lo, hi, 16)]
         o += ["}"]
     o += [""]
     open(dst, "w", newline="\n").write("\n".join(o))
