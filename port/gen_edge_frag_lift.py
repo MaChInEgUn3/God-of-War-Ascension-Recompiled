@@ -1,10 +1,12 @@
 """gen_edge_frag_lift.py <spu_recomp.c> <out.c> [<reference lift>]: an EDGE overlay fragment lift with its
-native-switchable loop (port gow_edge_native_o11430.c), picked at run time by an env variable. The fragments
-are separate lifts (spu/edgefrag_<blob>_<lsa>/spu_recomp.c, registered by spu/edgefrags_register.c), one per
-LS placement <lsa> of an EBOOT code blob, so this is not gen_edge_native_lift.py (the d935 module's switches).
+native-switchable loop, picked at run time by an env variable. The fragments are separate lifts
+(spu/edgefrag_<blob>_<lsa>/spu_recomp.c, registered by spu/edgefrags_register.c), one per LS placement <lsa>
+of an EBOOT code blob, so this is not gen_edge_native_lift.py (the d935 module's switches).
+gen_edge_frag_lift.py --body <reference lift> <out.h>: the loop's macros for the blob's native file (only for
+a blob whose BLOBS entry has `body`; 7228c0's come from gen_edge_o11430_body.py).
 
 The loop is found by its offset in the blob, not by an LS address: BLOBS gives, per blob, the loop head's
-offset and the shapes to check. One blob so far:
+offset and the shapes to check. Two blobs so far:
 
 1. 7228c0 (input decode, A1 fixed point): the loop at blob+0x310 (in placement 11150: loc_00011460 in function
    11430, the loop the native kernel was written from), by GOW_EDGE_O11430 (g_edge_o11430, read once by
@@ -12,6 +14,11 @@ offset and the shapes to check. One blob so far:
    v2), 2 native v1, 3/4 check. Every placement calls the same native function with its live registers (the
    loop has no LS address of its own: gen_edge_o11430_body.py checks that on 11150's copy, and this script
    checks that each placement's loop is that copy, statement for statement).
+2. 719900 (output packing, family B): the loop at blob+0x600 (placement 11340: function 11940 and the four
+   functions it chains to, back edge on r2), by GOW_EDGE_O719900 (port gow_edge_native_o719900.c; 0 lifted,
+   1 native, 3 check). Its exit tail (the stack restores, SPU_RET) must equal the reference placement's.
+   `--body` writes GOW_O719_REGS/LOAD/STORE/BODY from the reference's loop (ctx->gpr[N] -> rN, LS access
+   -> LD/ST): the loop has no LS address of its own (no load or store at a constant address: checked).
 
 Head H = lsa + offset. The placements' lifts split the code at different points, so the loop comes in two
 shapes; the switch always sits on the edge that enters the loop from the prologue, never on the back edge:
@@ -43,13 +50,23 @@ import re
 import sys
 
 BLOBS = {
-    # blob EA: loop head offset, reference placement, first loop statement, exit tail, back-edge condition
+    # blob EA: loop head offset, reference placement, first loop statement, exit tail (None: the reference's),
+    # back-edge condition, switch name (g_edge_<sw>, gow_edge_<sw>_*), native entry, env variable
     "7228c0": dict(off=0x310, ref="11150",
                    first="ctx->gpr[78] = spu_and(ctx->gpr[9], ctx->gpr[33]);",
                    tail=["ctx->gpr[3] = spu_il(0);", "ctx->gpr[1] = spu_ai(ctx->gpr[1], 224);", "SPU_RET(ctx);"],
-                   cond="if (ctx->gpr[19]._u32[0] != 0)"),
+                   cond="if (ctx->gpr[19]._u32[0] != 0)", sw="o11430", native="gow_edge_o11430_11460",
+                   env="GOW_EDGE_O11430"),
+    "719900": dict(off=0x600, ref="11340",
+                   first="ctx->gpr[19] = spu_a(ctx->gpr[103], ctx->gpr[41]);",
+                   tail=None, cond="if (ctx->gpr[2]._u32[0] != 0)", sw="o719900", native="gow_edge_o719900_loop",
+                   env="GOW_EDGE_O719900", body="GOW_O719"),
 }
+SKIP = ("/* nop */;", "/* branch hint (ignored) */;")
 
+body_mode = len(sys.argv) > 1 and sys.argv[1] == "--body"
+if body_mode:
+    sys.argv.pop(1)
 src, dst = sys.argv[1], sys.argv[2]
 text = open(src, newline="").read()
 nl = "\r\n" if "\r\n" in text else "\n"
@@ -65,9 +82,10 @@ if not m or m.group(1) not in BLOBS:
     sys.exit(f"{src}: not a placement lift of a known blob ({', '.join(BLOBS)})")
 blob, lsa = m.group(1), int(m.group(2), 16)
 B = BLOBS[blob]
+SW, NATIVE = B["sw"], B["native"]
 H = lsa + B["off"]
 h = f"{H:08X}"
-if "gow_edge_o11430_11460(" in text:
+if not body_mode and f"{NATIVE}(" in text:
     open(dst, "w", newline="").write(nl.join(lines))
     sys.exit(print(f"{dst}: the switch is already there; copied"))
 
@@ -120,54 +138,122 @@ def loop_body(ls, fns, head, where):
             f = nxt[0]
             i = f[0] + 1
             continue
-        if s and s != "/* nop */;" and not re.match(r"^loc_[0-9A-F]{8}:$", s) and "gow_edge_o11430" not in s \
-                and not s.startswith("gow_") and "if (__builtin_expect(g_edge_o11430" not in s:
+        if s and s not in SKIP and not re.match(r"^loc_[0-9A-F]{8}:$", s) and f"gow_edge_{SW}" not in s \
+                and not s.startswith("gow_") and f"if (__builtin_expect(g_edge_{SW}" not in s:
             if re.search(r"\bgoto\b|SPU_|\bif \(|\breturn\b|\bloc_", s):
                 sys.exit(f"{where}: unexpected control flow in the loop at line {i + 1}: {s}")
             body.append(s)
         i += 1
 
 
+def exit_tail(ls, back, fs=None):
+    """The statements after the back edge up to the end of its function (shape B's exit). With the lift's
+    functions `fs`, a tail split by the lifter continues through its fall-through hops (dropped from the list)
+    into later functions, up to the function that ends without one."""
+    tail, i = [], back + 1
+    cur = max((f for f in fs if f[0] < back), key=lambda f: f[0]) if fs else None
+    while True:
+        while ls[i] != "}":
+            if ls[i].strip():
+                tail.append(ls[i].strip())
+            i += 1
+        hm = HOP.match(tail[-1]) if fs and tail else None
+        if not hm:
+            return tail
+        nxt = [g for g in fs if g[3] == int(hm.group(1), 16) and g[2] == hm.group(2)]
+        if len(nxt) != 1 or nxt[0][3] <= cur[3]:
+            return tail   # not a fall-through hop: left in the tail, the comparison fails
+        tail.pop()
+        cur = nxt[0]
+        i = cur[0] + 1
+
+
 fns = functions(lines)
 body, back, bf = loop_body(lines, fns, H, src)
 if not body or body[0] != B["first"]:
     sys.exit(f"{src}: the loop at 0x{H:X} does not start with {B['first']}")
+
+if body_mode:   # the loop macros for the native file, from this (the reference) lift
+    if "body" not in B:
+        sys.exit(f"{src}: blob {blob} has no --body macros (see its own body generator)")
+    P = B["body"]
+    GPR = re.compile(r"ctx->gpr\[(\d+)\]")
+    ASSIGN = re.compile(r"^ctx->gpr\[(\d+)\] = (spu_\w+)\((.*)\);$")
+    STORE = re.compile(r"^spu_ls_write128\(ctx, (.*), ctx->gpr\[(\d+)\]\);$")
+    regs, written, out_body = set(), [], []
+    for s in body:
+        regs.update(int(x) for x in GPR.findall(s))
+        a, st = ASSIGN.match(s), STORE.match(s)
+        if not a and not st:
+            sys.exit(f"{src}: unexpected statement in the loop: {s}")
+        if a:
+            if int(a.group(1)) not in written:
+                written.append(int(a.group(1)))
+            if a.group(2) == "spu_ls_read128" and not GPR.search(a.group(3)):
+                sys.exit(f"{src}: a load at a constant LS address in the loop: {s}")
+        if st and not GPR.search(st.group(1)):
+            sys.exit(f"{src}: a store at a constant LS address in the loop: {s}")
+        t = s.replace("spu_ls_read128(ctx, ", "LD(").replace("spu_ls_write128(ctx, ", "ST(")
+        if "ctx" in GPR.sub("", t):
+            sys.exit(f"{src}: a statement uses ctx otherwise than through its registers: {s}")
+        out_body.append(GPR.sub(lambda mm: f"r{mm.group(1)}", t))
+    rs = sorted(regs)
+    o = [f"/* generated by gen_edge_frag_lift.py --body from {os.path.basename(os.path.dirname(os.path.abspath(src)))}"
+         f": the loop at blob {blob} + 0x{B['off']:X} (head 0x{H:X}), {len(body)} statements, back edge "
+         f"{B['cond']}. Game code: not committed. */",
+         f"#define {P}_NSTMT {len(body)}",
+         f"#define {P}_REGS() u128 " + ", ".join(f"r{r}" for r in rs) + ";",
+         f"#define {P}_LOAD() " + " ".join(f"r{r} = g[{r}];" for r in rs),
+         f"#define {P}_STORE() " + " ".join(f"g[{r}] = r{r};" for r in sorted(written)),
+         f"#define {P}_BODY() \\"]
+    o += [f"    {s} \\" for s in out_body] + ["    /* end */", ""]
+    open(dst, "w", newline="\n").write("\n".join(o))
+    sys.exit(print(f"{dst}: {blob} loop at 0x{H:X}: {len(body)} statements, {len(rs)} registers, "
+                   f"{len(written)} written"))
+
 ref = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(src))),
                                                          f"edgefrag_{blob}_{B['ref']}", "spu_recomp.c")
 rlines = open(ref, newline="").read().replace("\r\n", "\n").split("\n")
-rbody, _, _ = loop_body(rlines, functions(rlines), int(B["ref"], 16) + B["off"], ref)
+rfns = functions(rlines)
+rbody, rback, _ = loop_body(rlines, rfns, int(B["ref"], 16) + B["off"], ref)
+if B["tail"] is None:   # the exit tail is the reference's (it has no LS address either)
+    B["tail"] = exit_tail(rlines, rback, rfns)
+    if not B["tail"] or B["tail"][-1] != "SPU_RET(ctx);" or any(re.search(r"\bgoto\b|SPU_DIRECT|\bif \(|0x1[0-9A-F]{4}\b", t)
+                                                               for t in B["tail"]):
+        sys.exit(f"{ref}: the reference's exit tail is not straight code ending in SPU_RET: {B['tail']}")
 if body != rbody:
     k = next((k for k, (a, b) in enumerate(zip(body, rbody)) if a != b), min(len(body), len(rbody)))
     sys.exit(f"{src}: the loop at 0x{H:X} differs from {B['ref']}'s ({len(body)} vs {len(rbody)} statements; "
              f"first at {k}: {body[k] if k < len(body) else '-'} | {rbody[k] if k < len(rbody) else '-'})")
 
-mode = ["        if (__builtin_expect(g_edge_o11430 < 0, 0)) g_edge_o11430 = gow_edge_o11430_mode();"]
-check_end = "        if (g_edge_o11430 > 2) gow_edge_o11430_check_end(ctx);"
-begin = f" gow_edge_o11430_check_begin_at(ctx, 0x{lsa:X}u); }}"
+G = f"g_edge_{SW}"
+mode = [f"        if (__builtin_expect({G} < 0, 0)) {G} = gow_edge_{SW}_mode();"]
+check_end = f"        if ({G} > 2) gow_edge_{SW}_check_end(ctx);"
+begin = f" gow_edge_{SW}_check_begin_at(ctx, 0x{lsa:X}u); }}"
 ins = {}   # line index -> lines to put before it
 after = {}  # line index -> lines to put after it
 if lines[back].strip().endswith(f"goto loc_{h};"):   # shape A
     lab = [i for i in range(bf[0] + 1, back) if re.match(rf"^\s*loc_{h}:", lines[i])]
     if len(lab) != 1:
         sys.exit(f"{src}: loc_{h}: {len(lab)} in the back edge's function")
-    ins[lab[0]] = mode + ["        if (g_edge_o11430) { if (g_edge_o11430 <= 2) { gow_edge_o11430_11460(ctx);"
+    ins[lab[0]] = mode + [f"        if ({G}) {{ if ({G} <= 2) {{ {NATIVE}(ctx);"
                           f" goto gow_{h[3:]}_exit; }}" + begin]
     after[back] = [f"gow_{h[3:]}_exit:", check_end]
     shape = "A"
 else:                                                 # shape B
-    tail, i = [], back + 1
-    while lines[i] != "}":
-        if lines[i].strip():
-            tail.append(lines[i].strip())
-        i += 1
+    tail = exit_tail(lines, back, fns if blob != "7228c0" else None)
     if tail != B["tail"]:
         sys.exit(f"{src}: unexpected exit tail after the back edge: {tail}")
     hf = [f for f in fns if f[3] == H][0]
     entry = [i for i, l in enumerate(lines) if l.strip() == f"{{ SPU_DIRECT(ctx, 0x{H:X}, {hf[2]}); }}"]
     if len(entry) != 1:
         sys.exit(f"{src}: {len(entry)} fall-through entries into 0x{H:X} (want 1)")
-    ins[entry[0]] = mode + ["        if (g_edge_o11430) { if (g_edge_o11430 <= 2) { gow_edge_o11430_11460(ctx); "
-                            + " ".join(tail) + " }" + begin]
+    run = [t for t in tail if t not in SKIP]
+    if len(run) <= 3:
+        ins[entry[0]] = mode + [f"        if ({G}) {{ if ({G} <= 2) {{ {NATIVE}(ctx); " + " ".join(run) + " }" + begin]
+    else:
+        ins[entry[0]] = mode + [f"        if ({G}) {{ if ({G} <= 2) {{ {NATIVE}(ctx);"] \
+            + [f"                {t}" for t in run] + ["            }" + begin]
     after[back] = [check_end]
     shape = "B"
 out = []
@@ -175,13 +261,13 @@ for i, l in enumerate(lines):
     out += ins.get(i, [])
     out.append(l)
     out += after.get(i, [])
-decl = ["int gow_edge_o11430_mode(void);",
-        "void gow_edge_o11430_11460(spu_context* ctx);",
-        "void gow_edge_o11430_check_begin_at(spu_context* ctx, unsigned site);",
-        "void gow_edge_o11430_check_end(spu_context* ctx);",
-        "static int g_edge_o11430 = -1;"]
+decl = [f"int gow_edge_{SW}_mode(void);",
+        f"void {NATIVE}(spu_context* ctx);",
+        f"void gow_edge_{SW}_check_begin_at(spu_context* ctx, unsigned site);",
+        f"void gow_edge_{SW}_check_end(spu_context* ctx);",
+        f"static int {G} = -1;"]
 last_inc = max(i for i, l in enumerate(out[:200]) if l.startswith("#include"))
 out[last_inc + 1:last_inc + 1] = decl
 open(dst, "w", newline="").write(nl.join(out))
 print(f"{dst}: {blob} loop at 0x{H:X} (blob+0x{B['off']:X}, shape {shape}, {len(body)} statements) switchable by "
-      f"GOW_EDGE_O11430")
+      f"{B['env']}")

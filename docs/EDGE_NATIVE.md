@@ -1105,3 +1105,14 @@ Status: design, started 2026-10-24. Progress log at the end.
   check mode in the corridor (x347, 480 s): 1,331,202 calls on 17 placements, 0 differ, 238M iterations, 50.4 vs
   239.0 tsc per iteration. Port default `GOW_EDGE_O11430=1` since then. Next by size: blob 719900 (output
   packing, ~8.8% of job time) and the input-decode family.
+- 2026-11-05: O719900 v1, the output-packing blob (`GOW_EDGE_O719900`, default lifted). The loop (2 vertices, 108
+  output bytes per iteration, read from the lift): s16 normalized (`fma(x, 32767.5, -0.5)`, `cflts 157`, high
+  halfwords), float to half by exponent rebias and truncation (|x| top halfword >= 0x4780 clamps to 0x7BFF, below
+  0x3800 gives 0, sign copied), one variable-width fixed-point field, one array passed through; merged, rotated
+  to the output alignment, eight 16-byte stores with the partial last block merged. v1 is the lift's 129
+  statements with registers in C locals in one loop (no chained functions), generated at build time from
+  placement 11340; `gen_edge_frag_lift.py` is now table-driven per blob and patches all 37 placements (loop equal
+  to 11340's in each; 7228c0's generated files unchanged). Lab exe runLabY, cap_4: 400/400 off, on and check; check
+  mode 158 calls on 20 placements, 0 differ, 344 vs 527 tsc per iteration (the lift's figure includes the lab's
+  per-hop overhead); fault 1 caught (1 byte). Sum of per-job minimums 32.95 vs 32.43 ms (median of 3 pairs,
+  inside the noise). Not in game yet; 17 placements not in cap_4. Next: a packed v3, as O11430 went.

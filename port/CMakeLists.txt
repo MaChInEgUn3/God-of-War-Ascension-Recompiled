@@ -250,6 +250,34 @@ if(PORT_ENABLE_SPU)
                 COMMENT "Generating the 11430 loop from the edgefrag_7228c0_11150 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o11430.c" "${EDGE_BODYO1}")
         endif()
+        # Overlay blob 719900 (output packing): its loop at blob+0x600 (placement 11340: function 11940 and the
+        # four it chains to; gow_edge_native_o719900.c, switch GOW_EDGE_O719900, default lifted), in every
+        # placement lift of the blob (spu/edgefrag_719900_<lsa>), the same way as 7228c0 above: each copy
+        # with the switch is written into the build tree (its loop checked against 11340's) and compiled
+        # instead of the original. The loop macros come from the 11340 lift (gen_edge_frag_lift.py --body).
+        # Neither is committed.
+        set(EDGEFRAG_O2_LIFT "${SPU_DIR}/edgefrag_719900_11340/spu_recomp.c")
+        if(EXISTS "${EDGEFRAG_O2_LIFT}")
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            file(GLOB EDGEFRAG_O2_PLACEMENTS "${SPU_DIR}/edgefrag_719900_*/spu_recomp.c")
+            foreach(o2_lift IN LISTS EDGEFRAG_O2_PLACEMENTS)
+                get_filename_component(o2_dir "${o2_lift}" DIRECTORY)
+                get_filename_component(o2_name "${o2_dir}" NAME)
+                set(o2_switched "${CMAKE_CURRENT_BINARY_DIR}/${o2_name}_native.c")
+                add_custom_command(OUTPUT "${o2_switched}"
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" "${o2_lift}" "${o2_switched}" "${EDGEFRAG_O2_LIFT}"
+                    DEPENDS "${o2_lift}" "${EDGEFRAG_O2_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                    COMMENT "Adding the native switch to the ${o2_name} lift")
+                list(REMOVE_ITEM SPU_SOURCES "${o2_lift}")
+                list(APPEND SPU_SOURCES "${o2_switched}")
+            endforeach()
+            set(EDGE_BODYO2 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_o719900_body.h")
+            add_custom_command(OUTPUT "${EDGE_BODYO2}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --body "${EDGEFRAG_O2_LIFT}" "${EDGE_BODYO2}"
+                DEPENDS "${EDGEFRAG_O2_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                COMMENT "Generating the 719900 loop from the edgefrag_719900_11340 lift")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o719900.c" "${EDGE_BODYO2}")
+        endif()
         # General6's job module a67e: function 4930 (Perlin noise) native (gow_a67e_noise.c, switch
         # GOW_A67_NOISE, default native). gen_a67e_noise_lift.py writes the lift with the switch beside the
         # original (for its includes); that copy is compiled instead. Not committed.
