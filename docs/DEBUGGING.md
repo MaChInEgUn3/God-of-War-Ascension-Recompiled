@@ -189,7 +189,8 @@ Lessons that cost days; keep them.
   Since 2026-11-05 the GoW:A port turns on write-watch tracking first (`PS3_VM_WRITE_WATCH=1` reserves guest
   memory with `MEM_WRITE_WATCH`, `RSX_TEX_WRITEWATCH=1` uses it): a texture whose pages nothing wrote since its
   last check skips both hashes, and the staggered full hash runs every `RSX_TEX_WW_FULL_EVERY` frames (default
-  64) as the net for writes Windows does not report. `[eng-stats]` counts the skips. Either switch at 0 restores
+  16) as the net for writes Windows does not report. `[eng-stats]` counts the skips; `RSX_TEX_WRITEWATCH=2` is the
+  check mode (clean verdicts still sparse-hashed and compared, `[eng-ww-check]`). Either switch at 0 restores
   plain hashing.
 * **Slow Vulkan driver calls**: `VK_SLOW_MS=<ms>` logs every queue-lock wait, submit, fence wait, allocate, map,
   free and idle that takes longer, with the thread and the number of live `VkDeviceMemory` objects (up to 3000

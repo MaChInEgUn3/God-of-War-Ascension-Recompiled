@@ -854,7 +854,9 @@ int main(int argc, char** argv)
     /* PS3_VM_WRITE_WATCH=1 + RSX_TEX_WRITEWATCH=1 (2026-11-05): a cached texture whose guest
      * pages nothing has written since its last check skips its content hashes. Walker thread,
      * still scene (x337, one run each): hashing 13.3% -> 1.1% of its samples, 9% fewer samples,
-     * ~5% less time in draw ENDs; the frame dumps match. Either at 0 restores the hashing. */
+     * ~5% less time in draw ENDs; the frame dumps match. Check mode in the corridor (x339,
+     * RSX_TEX_WRITEWATCH=2, 480 s of loads, streaming and fights): 1.18M clean verdicts, 0 wrong.
+     * Either at 0 restores the hashing. */
     if (!getenv("PS3_VM_WRITE_WATCH")) _putenv_s("PS3_VM_WRITE_WATCH", "1");
     if (!getenv("RSX_TEX_WRITEWATCH")) _putenv_s("RSX_TEX_WRITEWATCH", "1");
     /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,

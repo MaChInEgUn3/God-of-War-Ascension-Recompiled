@@ -961,6 +961,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       hashed per 30 s; walker samples in hashing 13.3% -> 1.1%, 9% fewer walker samples in all, ~5% less wall
       time in draw ENDs (`ENG_PHASE_STATS`, which includes the kernel's write-watch calls). The frame dumps
       match. Frame rate not claimed (9.97 against 9.53, one run each, inside the bench's spread).
+      - Check mode (`RSX_TEX_WRITEWATCH=2`: a clean verdict is still sparse-hashed and compared) in the corridor
+        with the pad masher (x339, 480 s of loads, streaming and fights): 1.18M clean verdicts, 0 wrong. The
+        safety full hash now runs every 16 frames (`RSX_TEX_WW_FULL_EVERY`, was 64), and one reset call covers a
+        whole 64 MB chunk (16384 page slots), so a heavy-write frame cannot overflow it.
+      - Open: the per-frame reset is a process-wide TLB flush per chunk. In x337 the SPU threads' sample totals
+        were 3-5% lower with it on, in line with that arm's ~4% fewer frames in the window; one run each cannot
+        separate a cost from noise.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
