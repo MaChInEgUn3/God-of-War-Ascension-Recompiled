@@ -1025,6 +1025,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       75.9 / 75.6 against 73.7 / 65.5 ms; the main thread blocked 23% / 11% of each frame against 6.7% / 6.0%. B leads
       in each pair and in both windows: about +9%, near the edge of this recipe's spread but consistent across
       every measure. Two exes, so code layout differs too.
+    - Same comparison after the day's EDGE work (x358, 2026-11-05 evening; A = runXk, B = runXu with every default
+      of 11-05: write watch, striped lock line, native EDGE blobs 7228c0 / 719900 / 71fa90 / 71c310 / 723300 /
+      7298f0 / 728a90): game frames/s over 300-450 s A 12.43 / 11.73, B 13.33 / 12.30 (+5-7%); main thread blocked
+      11% / 11% against 2.8% / 12.6% of the trace windows. B leads in both pairs again, but the host was not quiet:
+      another Claude session drew 0.8-1.3 cores through every arm. The EDGE natives' own share (cap_4: about -25%
+      of EDGE job time across the seven blobs) is not separable from x351 at this recipe's noise.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
