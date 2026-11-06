@@ -313,7 +313,8 @@ Lessons that cost days; keep them.
 * **Is the RSX walker the limit?** (M0.80): `ENG_PHASE_STATS=30` prints, every 30 s, the walker's time in methods
   and in draw ENDs split by phase (fetch, pipeline, textures, index build, backend). `RSX_SLOW_PCT=<n>` busy-waits
   n% of every walker pass: if frames/s falls by about n/(100+n), the walker is binding. `SPU_SLOW_PCT=<n>`
-  (2026-11-03, diagnostic, default 0) is the SPU side: each SPURS kernel thread busy-waits n% of each module run.
+  (2026-11-03, diagnostic, default 0) is the SPU side: each SPURS kernel thread busy-waits n% of each module run;
+  `SPU_SLOW_WIDS=<w>,...` (2026-11-06) limits it to those workloads, to tell which SPU chain paces the frame (x377).
   SPU dispatch (2026-11-04): `SPU_IBC_COUNT=1` (`SPU_IBC_COUNT_WIDS=<w>,...` to filter) prints `[ibc-count]` and
   `[ibc-miss]` (the most-missed pc/image/overlay targets with misses and cache fills; it forces the slow path, so
   frame rates mean nothing); `PS3_SPU_IBC_SIZE=<n>` sizes the per-thread dispatch cache (default 512);

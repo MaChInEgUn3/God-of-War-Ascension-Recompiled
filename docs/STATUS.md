@@ -1080,6 +1080,24 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       EBOOT blocks staged at LS 0x18000/0x20000 (EA 0x7A8C00/0x7B0C00). Not lifted: at M0.86 lifting this
       workload's blobs cut its interpreted time 13.6 -> 4.4 s per 20 s with no frame-rate change, as it is off
       the frame's path. `SPU_LSA_GETLOG` keeps 2048 distinct GETs; it filled even on LS 0x30000-0x36000 (x372).
+    - Dispatch cache size closed for every workload: the x368 null result covered the EDGE wids only, but
+      General6 alone (x374, wid 3, 512 vs 4096 entries) is 87% its own work with lookups under 1% in both arms.
+      The thread with 65% dispatch in x371 runs the audio modules (d3ee/c5a3/5bc2/3105): fast-path hits,
+      driven by the call count, not frame-paced.
+    - Critical path of production (x375, runY1, quiet, `PS3_FTRACE` 20 s from t=300, corridor): 326 frames,
+      median 58.1 ms (17.2 fps; x315 on runXd: 67.1 ms, 14.9 fps), SPUs 1-5 83-87% busy, SPU 0 53%, walker
+      drain 52.8 ms (91%), GPU waits 4.4 ms per frame, the main thread blocked 5 ms (the rest polls).
+    - Causal probes again (x376, runY1, quiet, O R S S R O, 480 s, game frames/s 360-480 s): O 13.81 / 13.98,
+      R (`RSX_SLOW_PCT=25`) 14.96 / 15.18, S (`SPU_SLOW_PCT=25`) 11.73 / 11.85. The walker no longer paces the
+      frame (slowing it even helped, likely less contention with the SPU threads); the SPU side does (-15%
+      raw against -20% for a fully binding stage, before subtracting the probe's own ~1.1 cores).
+    - Which SPU chain (x377, runY4 = runY1 + new `SPU_SLOW_WIDS`, 50% probes, 360-480 s): O 15.04 (warm-up) /
+      14.65, E (EDGE wids 15-17) 11.10 (-25%), G (General6, wid 3) 13.57 / 12.18 (-8% / -17%). A fully binding
+      stage slowed 50% gives -33%; E also spins ~1.1 cores more than G. The EDGE chain paces the frame most;
+      General6 less and noisily. The E2 and O2 arms were not run (the series was stopped for low host memory,
+      another session active), so E stands on one arm. Next: the EDGE fragment queue (`work/edgefrag_scope.md`).
+    - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
+      (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
