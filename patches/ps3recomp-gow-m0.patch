@@ -13311,7 +13311,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..0e41f301 100644
+index 59f5e4b8..87d986e6 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13507,7 +13507,7 @@ index 59f5e4b8..0e41f301 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4408 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4417 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -18559,6 +18559,9 @@ index 59f5e4b8..0e41f301 100644
 +         * code the module does not contain (runtime-loaded or generated). */
 +        enum { NM = 4096 };
 +        static uint32_t mk[NM]; static int mi[NM], mw[NM]; static unsigned mc[NM]; static long long mt[NM];
++        /* First two words at the target and the link register when it was first seen: code or data, and
++         * who branched there (printed as w= and lr=). */
++        static uint32_t mw0[NM], mw1[NM], mlr[NM];
 +        static SRWLOCK ml = SRWLOCK_INIT;
 +        static int s_im = -1; if (s_im < 0) s_im = getenv("SPU_INTERP_MISS") ? 1 : 0;
 +        int miss_slot = -1;
@@ -18581,7 +18584,12 @@ index 59f5e4b8..0e41f301 100644
 +            unsigned h = (key * 2654435761u ^ (unsigned)im * 40503u ^ (unsigned)(wid + 1) * 977u) % NM;
 +            for (unsigned q = 0; q < NM; q++, h = (h + 1) % NM) {
 +                if (mc[h] && mk[h] == key && mi[h] == im && mw[h] == wid) { mc[h]++; miss_slot = (int)h; break; }
-+                if (!mc[h]) { mk[h] = key; mi[h] = im; mw[h] = wid; mc[h] = 1; mt[h] = 0; miss_slot = (int)h; break; }
++                if (!mc[h]) { mk[h] = key; mi[h] = im; mw[h] = wid; mc[h] = 1; mt[h] = 0; miss_slot = (int)h;
++                              const uint8_t* lp = ctx->ls + (pc_entry & SPU_LS_MASK & ~3u);
++                              mw0[h] = (uint32_t)lp[0] << 24 | (uint32_t)lp[1] << 16 | (uint32_t)lp[2] << 8 | lp[3];
++                              lp = ctx->ls + ((pc_entry + 4) & SPU_LS_MASK & ~3u);
++                              mw1[h] = (uint32_t)lp[0] << 24 | (uint32_t)lp[1] << 16 | (uint32_t)lp[2] << 8 | lp[3];
++                              mlr[h] = ctx->gpr[0]._u32[0] & SPU_LS_MASK; break; }
 +            }
 +            ReleaseSRWLockExclusive(&ml);
 +        }
@@ -19360,8 +19368,9 @@ index 59f5e4b8..0e41f301 100644
 +                        if (mc[k] && !shown[k] && (bb < 0 || mt[k] > mt[bb])) bb = k;
 +                    if (bb < 0 || !mt[bb]) break;
 +                    shown[bb] = 1;
-+                    fprintf(stderr, "[interp-miss]   wid=%d img=%d pc=0x%05X n=%u %.1fms%s\n", mw[bb], mi[bb], mk[bb],
-+                            mc[bb], 1000.0 * mt[bb] / s_f.QuadPart, spu_lookup(mk[bb], mi[bb]) ? " (lifted entry exists)" : "");
++                    fprintf(stderr, "[interp-miss]   wid=%d img=%d pc=0x%05X n=%u %.1fms w=%08X %08X lr=0x%05X%s\n",
++                            mw[bb], mi[bb], mk[bb], mc[bb], 1000.0 * mt[bb] / s_f.QuadPart, mw0[bb], mw1[bb], mlr[bb],
++                            spu_lookup(mk[bb], mi[bb]) ? " (lifted entry exists)" : "");
 +                }
 +                memset(mc, 0, sizeof mc); memset(mt, 0, sizeof mt);
 +                s_w0 = t1;

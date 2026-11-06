@@ -1067,6 +1067,19 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       dispatch stayed 22.2% (x368: lookups 3.2 -> 1.9%, slow path 7.0 -> 6.5%, fast path 5.7 -> 7.6% as the
       64 KB table leaves L1). Default stays 512, one way. The remaining misses are paths the cache never takes
       (the 0x3FEC0 stub, 0x9C0/0x9D0); the cost is the number of dispatches (~3.6M/s), not the hit rate.
+    - The microstepper is inlined into `spu_indirect_branch_slow`; ~75% of that symbol's samples sit in its
+      `stqa`/`lqa` loop (the 0x3FEC0 save/restore stub), ~5% of SPU-thread samples.
+    - All threads (x371, runY1, quiet, 300 s): the main thread ~59% in its two job-list polls (`0x466E38` 30%,
+      `0x416338` 29%); the walker `rsx_vertex_fetch_many` 27%, FIFO decode 14%, `rsx_vertex_remap_build` 10%,
+      `sink_end_draw` 9%; one SPU kernel thread 65% dispatch (`spu_indirect_branch` 35%, `spu_drain_call_loop`
+      13%). `g73_loop1` (12% of the EDGE threads) is already AVX2 packed.
+    - wid 7 (BatchJobList) interprets ~2.4-3.3 s per 20 s again (x369, x373; ~1 s at M0.86), the same with the
+      relocatable lifts on (x370). The targets are real code (`SPU_INTERP_MISS` now prints the first words and the
+      link register: `ila` + `hbrr`, i.e. hinted loops): `0x359C0` (~1.3-1.8 s, called from 0x35C28) and one
+      routine copied to several places (0x18BD0, 0x20BD0, 0x1BF80, 0x23F10 with identical words), which lie in
+      EBOOT blocks staged at LS 0x18000/0x20000 (EA 0x7A8C00/0x7B0C00). Not lifted: at M0.86 lifting this
+      workload's blobs cut its interpreted time 13.6 -> 4.4 s per 20 s with no frame-rate change, as it is off
+      the frame's path. `SPU_LSA_GETLOG` keeps 2048 distinct GETs; it filled even on LS 0x30000-0x36000 (x372).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the

@@ -117,7 +117,7 @@ Lessons that cost days; keep them.
   Measure performance with the defaults.
 * **Interpreted job code**: `SPU_JOBMOD_LOG=1` prints each distinct (code base `LS[0x1320]`, module header) a
   policy module jumps into with no lifted module. `SPU_INTERP_MISS=1` ranks unresolved branch targets by interpreted
-  time every 20 s (`wid img pc n ms`). A target inside a module's image is a missing entry: feed the log to
+  time every 20 s (`wid img pc n ms`, plus `w=` the target's first two words and `lr=` the link register). A target inside a module's image is a missing entry: feed the log to
   `analysis/interp_miss_to_extra.py` and re-lift. A target past the image is code the module does not contain.
   The micro-stepper advances a few instructions before handing off, so only the entry pc is a valid target.
 * **Where blobs land in local store**: `SPU_LSA_GETLOG=<lo>-<hi>` (hex LS) prints each distinct (lsa, ea, size)
