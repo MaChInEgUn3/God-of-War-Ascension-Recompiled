@@ -151,6 +151,28 @@ index 4277c3f2..dd8b2c88 100644
  - **`SPU_POLLTRACE`** — _(no description in source)_
    `runtime/spu/spu_channels.c:289`  _(+3 more sites)_
  - **`SPU_PUTEA`** — SPU_PUTEA=1: the first few FULL destination addresses per SPU. The 1 MB bucket histogram showed spu1..3 writing only bucket 0 and spu0 buckets 1..3, with nothing in bucket 4 -- where the composite samples PS1 VRAM (RSX local + 0x400000). Buckets keep only 4 address bits, so that may be an artifact of where RSX local memory actually sits; the full EA settles it. */
+diff --git a/docs/SPU_LIFTER.md b/docs/SPU_LIFTER.md
+index bdd955b6..308ce395 100644
+--- a/docs/SPU_LIFTER.md
++++ b/docs/SPU_LIFTER.md
+@@ -244,6 +244,17 @@ Still open:
+   branches, zero crashes, zero channel I/O (the bare entry happens to be
+   pure setup with no PPU dependency).
+ 
++  Later seed sources (see the `find_spu_functions.py` docstring): `ila $r0`
++  resume addresses, computed `bi` targets, jump tables, ila continuations,
++  Duff entries, data function-pointer tables, and PC-relative link-offset
++  targets -- `brsl rT,.+4 ; ai rX,rT,imm` names pc+4+imm, used by the
++  interrupt-enable `bihz/bihnz ... rT` idiom (`collect_link_offset_targets`,
++  on by default, `SPU_SEED_LINK_OFFSET=0` disables). With `--merge-chunks`
++  the link-offset entries no other scan found also start merged groups, as
++  `--extra-funcs` entries do. On GoW:A's 33 job modules this reproduced all
++  87 entries previously hand-listed in the port's extra-funcs JSON, with
++  byte-identical lift output.
++
+   Lifter follow-up: the lifter emits direct `spu_func_X(ctx)` calls for
+   every branch target the disassembler resolves, including cross-function
+   branches. emit_source now generates a trivial stub for any target the
 diff --git a/libs/codec/cellVdec.c b/libs/codec/cellVdec.c
 index 204a0055..1f5c7bc8 100644
 --- a/libs/codec/cellVdec.c
@@ -27809,6 +27831,183 @@ index 00000000..151e8568
 +            g_checks);
 +    return 0;
 +}
+diff --git a/tools/find_spu_functions.py b/tools/find_spu_functions.py
+index af16afd8..ef389c21 100644
+--- a/tools/find_spu_functions.py
++++ b/tools/find_spu_functions.py
+@@ -12,6 +12,13 @@ Seeds the function set from four sources:
+   3. All brsl/brasl targets the disassembler can resolve in the code.
+   4. Addresses loaded into $r0 by `il`/`ila` -- the link-register resume
+      idiom (see collect_link_register_targets).
++  5. PC-relative targets `brsl rT,.+4 ; ai rX,rT,imm` (-> pc+4+imm), the
++     interrupt-enable `bi*` idiom (collect_link_offset_targets; on by default,
++     SPU_SEED_LINK_OFFSET=0 disables). spu_lifter --merge-chunks makes the ones
++     no other scan found into merged-group starts, like --extra-funcs entries.
++  (plus other branch targets, computed `bi` targets, jump tables, ila
++  continuations, Duff entries and data function-pointer tables -- see
++  detect_functions.)
+ 
+ For each function start without a symbol-provided size, the end is
+ determined by scanning forward until we hit one of:
+@@ -292,6 +299,123 @@ def collect_computed_branch_targets(insns, window=8):
+     return targets
+ 
+ 
++# Mnemonics whose low 7 bits are NOT a written destination register (stores,
++# channel writes, hints, branches that only read rt, halts, SPR/FPSCR writes).
++# Kept local (spu_lifter.py has the same idea as _NO_RT_WRITE) so this module
++# stays importable on its own.
++_NO_RT_WRITE = {
++    "stop", "stopd", "lnop", "nop", "sync", "syncc", "dsync",
++    "bi", "iret", "biz", "binz", "bihz", "bihnz",
++    "br", "bra", "brz", "brnz", "brhz", "brhnz",
++    "hbr", "hbra", "hbrr",
++    "stqd", "stqa", "stqr", "stqx",
++    "wrch", "mtspr", "fscrwr", "mtfpscr",
++    "hgt", "hlgt", "heq", "hgti", "hlgti", "heqi",
++}
++# RRR-format ops write bits 21-27; their low 7 bits are the rc source.
++_RRR_DEST = {"selb", "shufb", "mpya", "fnms", "fma", "fms"}
++
++
++def _written_reg(ins):
++    """Register number `ins` writes, or None when it writes no GPR."""
++    if ins.mnemonic in _NO_RT_WRITE:
++        return None
++    if ins.mnemonic in _RRR_DEST:
++        return (ins.raw >> 21) & 0x7F
++    return ins.raw & 0x7F
++
++
++def _is_control_flow(ins):
++    m = ins.mnemonic
++    return (m in _INDIRECT_BR or m in _BRANCH_MNEMONICS
++            or m in ("iret", "stop", "stopd", "bisled", "heq", "heqi",
++                     "hgt", "hgti", "hlgt", "hlgti"))
++
++
++def collect_link_offset_targets(insns, window=6, stats=None):
++    """Targets computed from a link register that holds "the next instruction":
++
++        40f4:  brsl $r2, 0x40F8     <- not a call: link = 0x40F8, falls through
++        40f8:  ai   $r2, $r2, 8     <- $r2 = 0x4100
++        40fc:  bihz $r8, $r2        <- (with the interrupt-enable bit) -> 0x4100
++        4100:  ...
++
++    `brsl rT, .+4` is the only position-independent way to read the PC on the
++    SPU; adding an immediate gives a code address no branch ever names, so the
++    branch-target scan misses it and the `bi*` lands in spu_indirect_branch with
++    no registered function (the runtime then interprets from there). Here the
++    pattern enables interrupts atomically with a jump to the instruction right
++    after the `bi*`; 87 such sites were hand-seeded in one title's job modules
++    before this scan existed.
++
++    Rule (local and deterministic): a `brsl`/`brasl` whose target is its own
++    pc + 4 sets val[rT] = pc + 4. The next `window` instructions are scanned in
++    straight-line order; `ai rX, rY, imm` with val[rY] known yields the
++    candidate val[rY] + imm (and val[rX] for chains). The scan stops at any
++    control-flow instruction (after noting a `bi*` that consumes a computed
++    register) and forgets any register some other instruction overwrites.
++    The caller filters candidates to in-range, 4-aligned, decodable addresses.
++    Disable with SPU_SEED_LINK_OFFSET=0.
++
++    `stats`, if a dict, receives {"with_bi": set, "ai_only": set}: candidates
++    whose register reached a `bi*` within the window vs. ones that did not."""
++    targets = set()
++    with_bi = set()
++    for idx, ins in enumerate(insns):
++        if ins.mnemonic not in ("brsl", "brasl"):
++            continue
++        ops = [t.strip() for t in ins.operands.split(",") if t.strip()]
++        if len(ops) != 2 or not ops[1].lower().startswith("0x"):
++            continue
++        try:
++            tgt = int(ops[1], 16)
++        except ValueError:
++            continue
++        if tgt != ins.addr + 4:
++            continue
++        val = {ins.raw & 0x7F: ins.addr + 4}      # reg -> known LS address
++        cand = {}                                  # reg -> candidate it holds
++        expect = ins.addr + 4
++        for j in range(idx + 1, min(len(insns), idx + 1 + window)):
++            w = insns[j]
++            if w.addr != expect:                   # gap in the listing: stop
++                break
++            expect += 4
++            if w.mnemonic in _INDIRECT_BR:
++                wops = [t.strip() for t in w.operands.split(",") if t.strip()]
++                if wops and wops[-1].startswith("$r"):
++                    try:
++                        r = int(wops[-1][2:])
++                    except ValueError:
++                        r = None
++                    if r in cand:
++                        with_bi.add(cand[r])
++                break
++            if _is_control_flow(w):
++                break
++            if w.mnemonic == "ai":
++                rt, ra = w.raw & 0x7F, (w.raw >> 7) & 0x7F
++                i10 = (w.raw >> 14) & 0x3FF
++                if i10 & 0x200:
++                    i10 -= 0x400
++                if ra in val:
++                    t = (val[ra] + i10) & 0x3FFFF
++                    targets.add(t)
++                    val[rt] = t
++                    cand[rt] = t
++                    continue
++            wr = _written_reg(w)
++            if wr is not None:
++                val.pop(wr, None)
++                cand.pop(wr, None)
++            if not val:
++                break
++    if stats is not None:
++        stats["with_bi"] = with_bi
++        stats["ai_only"] = targets - with_bi
++    return targets
++
++
+ def collect_jump_table_targets(insns, code, code_start, code_end,
+                                window=48, max_entries=32):
+     """Targets reached through an in-code JUMP TABLE:
+@@ -605,7 +729,8 @@ def find_end(start, insns_by_addr, sorted_starts, code_end):
+     return min(next_start, code_end)
+ 
+ 
+-def detect_functions(buf, base_override=None, verbose=True, raw=False):
++def detect_functions(buf, base_override=None, verbose=True, raw=False,
++                     info=None):
+     if raw:
+         # A raw local-store image: a SPURS job binary, which the title loads
+         # from its own data files as a flat code+data blob rather than as an
+@@ -661,6 +786,24 @@ def detect_functions(buf, base_override=None, verbose=True, raw=False):
+               | fptr_targets):
+         if code_start <= t < code_end and (t & 3) == 0 and t in insns_by_addr:
+             seed_starts.add(t)
++    # `brsl rT, .+4 ; ai rT, rT, imm ; bi* rT` -- PC-relative targets built from
++    # the link register (see collect_link_offset_targets). On by default;
++    # SPU_SEED_LINK_OFFSET=0 restores the previous seed set exactly.
++    link_off_new = set()
++    if os.environ.get("SPU_SEED_LINK_OFFSET", "1") != "0":
++        link_off = {t for t in collect_link_offset_targets(insns)
++                    if code_start <= t < code_end and (t & 3) == 0
++                    and t in insns_by_addr}
++        link_off_new = link_off - seed_starts
++        seed_starts |= link_off
++        if link_off_new and verbose:
++            print(f"  {len(link_off_new)} new link-offset (brsl .+4 / ai) entry(ies) "
++                  f"({len(link_off)} such targets in all): "
++                  f"{', '.join(f'0x{a:X}' for a in sorted(link_off_new))}")
++    if info is not None:
++        # Entries ONLY this scan found: spu_lifter --merge-chunks makes them
++        # merged-group starts, as it does for --extra-funcs entries.
++        info["link_offset_entries"] = link_off_new
+     if fptr_targets and verbose:
+         print(f"  {len(fptr_targets)} data function-pointer-table target(s): "
+               f"{', '.join(f'0x{a:X}' for a in sorted(fptr_targets))}")
 diff --git a/tools/ftrace_report.py b/tools/ftrace_report.py
 index d324e9ba..c3d2ab70 100644
 --- a/tools/ftrace_report.py
@@ -28085,7 +28284,7 @@ index 9d9df717..e65de298 100644
          for _i, _l in enumerate(func.body_lines):
              for _dm in _CS_ANY_DEF_RE.finditer(_l):
 diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
-index ec62f269..33420359 100644
+index ec62f269..85bf81d1 100644
 --- a/tools/spu_lifter.py
 +++ b/tools/spu_lifter.py
 @@ -520,6 +520,12 @@ class SPULifter:
@@ -28251,7 +28450,23 @@ index ec62f269..33420359 100644
      p.add_argument("--max-group-insns", type=int, default=4000,
                     help="Cap on instructions per merged group (keeps clang fast).")
      p.add_argument("--force-indirect", default="",
-@@ -1299,6 +1326,7 @@ def main() -> None:
+@@ -1187,11 +1214,14 @@ def main() -> None:
+                         "silently skipped every job-command handler).")
+     args = p.parse_args()
+ 
++    link_offset_entries = set()
+     if args.auto_functions:
+         from find_spu_functions import detect_functions, parse_elf, pick_text, text_image
+         with open(args.auto_functions, "rb") as f:
+             elf_buf = f.read()
+-        funcs, (text_off, base, size) = detect_functions(elf_buf)
++        detect_info = {}
++        funcs, (text_off, base, size) = detect_functions(elf_buf, info=detect_info)
++        link_offset_entries = detect_info.get("link_offset_entries", set())
+         data, _ = text_image(elf_buf, parse_elf(elf_buf)["phs"])
+         if args.base != 0:
+             base = args.base  # caller override
+@@ -1299,6 +1329,7 @@ def main() -> None:
      insns = disassemble_spu(data, base)
  
      lifter = SPULifter(trace=args.trace, prefix=args.symbol_prefix)
@@ -28259,6 +28474,18 @@ index ec62f269..33420359 100644
      lifter.bi_r0_jump = compute_bi_r0_jumps(insns, bounds)
      if lifter.bi_r0_jump:
          print(f"  {len(lifter.bi_r0_jump)} `bi $r0` computed-jump site(s) "
+@@ -1325,6 +1356,11 @@ def main() -> None:
+         seeds = {base}
+         if args.extra_funcs:
+             seeds |= {int(x, 0) for x in args.extra_funcs.split(",") if x.strip()}
++        # PC-relative `brsl rT,.+4 ; ai rT,rT,imm ; bi* rT` entries that only
++        # find_spu_functions' link-offset scan found are reached by an indirect
++        # branch, so -- like an --extra-funcs entry -- each starts a merged group
++        # (the code after it runs as one function, not chunk-by-chunk).
++        seeds |= link_offset_entries
+         groups = merge_chunk_groups(insns, bounds, args.max_group_insns,
+                                     entry_points=seeds)
+         print(f"  {len(groups)} merged function group(s) "
 diff --git a/tools/test_gcm_ea2io_range.py b/tools/test_gcm_ea2io_range.py
 new file mode 100644
 index 00000000..acfe0ea0

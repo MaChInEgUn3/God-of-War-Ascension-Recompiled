@@ -1052,6 +1052,21 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       `spu_coh_forget_range` and the unstriped ack branch still take every stripe. They were under 1% of the
       acquisitions, so this removes points where every lock user queued behind one site rather than adding speed.
       Tail test under `burn.py 5` (x363, two runs): waits over 5 ms 3 / 1, longest 8.2 ms, as with the first stripes.
+    - The SPU lifter now seeds the `brsl rT,.+4 ; ai rX,rT,imm ; bi* rX` targets itself (2026-11-06, toolkit
+      `find_spu_functions.py`, on by default, `SPU_SEED_LINK_OFFSET=0` turns it off). On the 33 job modules it finds
+      all 87 hand-seeded entries; with them removed from `spu/jobmod_extra.json` the lifted output is byte-identical,
+      so the JSON entries are now redundant (kept). The EDGE fragment, SPU image and BatchJobList lifts will gain
+      entries on their next re-lift (untested; the 13 `gowtask0` targets among them).
+    - Profile of production runY1 (x364, still scene 300 s, host sampler on the SPU kernel threads): native EDGE
+      code ~30% of samples (`g73_loop1` 12.4%), indirect-branch dispatch ~22% (`spu_indirect_branch_slow` 6.7%, the
+      fast path 5.8%, `spu_drain_call` 4.8%, lookups 3.1%), channels/MFC ~17%, coherency ~5%, overlay ~4%.
+      `[smc-stats]`: ~200k microstepper calls/s, all at the WWS stub 0x3FEC0, ~4200 cycles each.
+      The dispatch cache (`SPU_IBC_COUNT=1`, x365): 91.4% hits, 7.5% misses, 23M of the 40M misses filled again
+      later. Ruled out as the cause: table conflicts (a two-way table, x366, changed no count). It is capacity:
+      `PS3_SPU_IBC_SIZE=4096` (x367) cut fills 23.6M -> 4.5M and misses to 4.1%, but the sampler share of
+      dispatch stayed 22.2% (x368: lookups 3.2 -> 1.9%, slow path 7.0 -> 6.5%, fast path 5.7 -> 7.6% as the
+      64 KB table leaves L1). Default stays 512, one way. The remaining misses are paths the cache never takes
+      (the 0x3FEC0 stub, 0x9C0/0x9D0); the cost is the number of dispatches (~3.6M/s), not the hit rate.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the

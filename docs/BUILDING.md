@@ -28,7 +28,8 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `JOBMOD_EXTRA_FUNCS_JSON=spu/jobmod_extra.json python <ps3recomp>/tools/lift_jobmods.py --jobmods local/spu/jobmods
    --out port/spu --register port/spu/jobmods_register.c --symbol-prefix gow --merge-chunks` (image ids 200-232, matched at run
    time by the 16-byte module header). `spu/jobmod_extra.json` lists entries reached only indirectly; refresh it
-   with `SPU_INTERP_MISS=1` runs and `analysis/interp_miss_to_extra.py` (see DEBUGGING.md).
+   with `SPU_INTERP_MISS=1` runs and `analysis/interp_miss_to_extra.py` (see DEBUGGING.md). The lifter seeds
+   `brsl rT,.+4 ; ai rX,rT,imm ; bi* rX` targets on its own (`SPU_SEED_LINK_OFFSET=0` disables), so those need no entry.
    EDGE code fragments (EBOOT blobs the EDGE jobs stage at LS `0x11090+`, one lift per placement): run with
    `SPU_LSA_GETLOG=10000-3E000 SPU_LSA_GETLOG_EA=10000-820000 SPU_INTERP_MISS=1`, then
    `python analysis/lift_edge_frags.py --merge-chunks <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
