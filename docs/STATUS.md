@@ -1047,6 +1047,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       169k/s, only the WWS stub at 0x3FEC0 left in `[smc-stats]`. Corridor (x362, 480 s): no assert/branch-to-0/
       drain-mismatch/pm-hang lines, 14.6-15.5 game frames/s in the last three minutes. Not seeded: 13 such targets
       in `gowtask0` (not hot). A lasting fix would have `lift_jobmods.py` seed the pattern itself.
+    - The remaining all-stripes lock sites converted (2026-11-06): the taskset exit/signalled updates, the event-flag
+      sites and `cellSpursAddWorkload` now lock only what they write; only `spu_coh_unregister`,
+      `spu_coh_forget_range` and the unstriped ack branch still take every stripe. They were under 1% of the
+      acquisitions, so this removes points where every lock user queued behind one site rather than adding speed.
+      Tail test under `burn.py 5` (x363, two runs): waits over 5 ms 3 / 1, longest 8.2 ms, as with the first stripes.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
