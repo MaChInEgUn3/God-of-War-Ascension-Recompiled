@@ -1157,3 +1157,9 @@ Status: design, started 2026-10-24. Progress log at the end.
   29.05 -> 27.34 ms together (-5.9%, median of 3 pairs). In game, check mode in the corridor (x356, 480 s):
   1,626,114 / 696,321 calls, 0 differ, 10.6 / 10.8 vs 70.7 / 70.1 tsc per iteration. With this every overlay
   blob the x324 profile ranks above 1% runs native by default.
+- 2026-11-05 evening: O71C310 packed v3 (the default `=1` now runs it, v1 as fallback). At entry it rebuilds the
+  fixed-point extraction from the live descriptor registers (window bytes, bit offset, mask, bias and shifts per
+  output word), so every descriptor value is handled exactly; a per-thread shape cache (the descriptor changes
+  on most calls). cap_4 (lab exe runLabD1): 400/400 in every mode, 75 calls checked, 0 differ, all 75 taken by v3;
+  a packed-record fault caught; 198.7 vs 399.9 tsc per iteration; job time inside the noise (cap_4 holds 75 such
+  calls). In game, check mode in the corridor (x359, 480 s): 839,682 calls, 0 differ, 219.8 vs 557.2 tsc.

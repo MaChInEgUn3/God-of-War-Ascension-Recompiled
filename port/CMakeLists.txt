@@ -323,9 +323,10 @@ if(PORT_ENABLE_SPU)
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o71fa90.c" "${EDGE_BODYO3}" "${EDGE_CONSTSO3}")
         endif()
         # Overlay blob 71c310 (input decode: fixed point and packed unit vectors): its loop at blob+0x4A0
-        # (placement 11db0: loc_12250; gow_edge_native_o71c310.c, v1 only, switch GOW_EDGE_O71C310, default
-        # lifted), in every placement lift of the blob, the same way as 71fa90 above (loop macros from the 11db0
-        # lift). Game code: written into the build tree only.
+        # (placement 11db0: loc_12250; gow_edge_native_o71c310.c, switch GOW_EDGE_O71C310, default lifted), in
+        # every placement lift of the blob, the same way as 71fa90 above (loop macros from the 11db0 lift, the
+        # controls, fma operands and the prologue's table from its prologue and the EBOOT). Game code and data:
+        # written into the build tree only.
         set(EDGEFRAG_O4_LIFT "${SPU_DIR}/edgefrag_71c310_11db0/spu_recomp.c")
         if(EXISTS "${EDGEFRAG_O4_LIFT}")
             find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -346,7 +347,14 @@ if(PORT_ENABLE_SPU)
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --body "${EDGEFRAG_O4_LIFT}" "${EDGE_BODYO4}"
                 DEPENDS "${EDGEFRAG_O4_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
                 COMMENT "Generating the 71c310 loop from the edgefrag_71c310_11db0 lift")
-            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o71c310.c" "${EDGE_BODYO4}")
+            set(GOW_EBOOT_ELF "${CMAKE_CURRENT_SOURCE_DIR}/../../vfs/PS3_GAME/USRDIR/EBOOT.elf" CACHE FILEPATH
+                "The game's decrypted EBOOT.elf (blob bytes for the generated EDGE headers)")
+            set(EDGE_CONSTSO4 "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_o71c310_consts.h")
+            add_custom_command(OUTPUT "${EDGE_CONSTSO4}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py" --consts "${EDGEFRAG_O4_LIFT}" "${GOW_EBOOT_ELF}" "${EDGE_CONSTSO4}"
+                DEPENDS "${EDGEFRAG_O4_LIFT}" "${GOW_EBOOT_ELF}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_frag_lift.py"
+                COMMENT "Generating the 71c310 loop's controls from the edgefrag_71c310_11db0 prologue")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_o71c310.c" "${EDGE_BODYO4}" "${EDGE_CONSTSO4}")
         endif()
         # Overlay blob 723300 (output packing with an 11/11/10 field): its loop at blob+0x2B8 (placement 11340:
         # function 115F8 and the one it chains to; gow_edge_native_o723300.c, switch GOW_EDGE_O723300, default

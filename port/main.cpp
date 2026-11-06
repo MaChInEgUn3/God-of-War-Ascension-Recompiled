@@ -873,7 +873,8 @@ int main(int argc, char** argv)
      * iteration. 0 runs the lift. */
     if (!getenv("GOW_EDGE_O719900")) _putenv_s("GOW_EDGE_O719900", "1");
     /* GOW_EDGE_O71FA90=1 / GOW_EDGE_O71C310=1 (2026-11-05): native input decode of EDGE blobs 71fa90
-     * (packed v3: float3 copy plus two 24-bit unit vectors, z rebuilt with frsqest/fi) and 71c310 (v1),
+     * (packed v3: float3 copy plus two 24-bit unit vectors, z rebuilt with frsqest/fi) and 71c310 (packed
+     * v3 since 11-05 evening, descriptor rebuilt from live registers; x359: 840k calls, 0 differ),
      * all 46 placements each. cap_4 400/400 off/on/check, -3.0% / -1.6% job time; in game, check mode in
      * the corridor (x352): 1.12M / 0.68M calls, 0 differ. 0 runs the lift. */
     if (!getenv("GOW_EDGE_O71FA90")) _putenv_s("GOW_EDGE_O71FA90", "1");
