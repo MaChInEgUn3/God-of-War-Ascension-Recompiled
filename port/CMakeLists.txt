@@ -221,6 +221,13 @@ if(PORT_ENABLE_SPU)
                 DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_6ac8_body.py"
                 COMMENT "Generating the 6AC8 loop nest from the d935 lift")
             list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_6ac8.c" "${EDGE_BODY6A}")
+            # DCC0's region from loc_E210 through loop E3C4 (gow_edge_native_dcc0.c, switch GOW_EDGE_DCC0, default lifted)
+            set(EDGE_BODYDC "${CMAKE_CURRENT_BINARY_DIR}/gow_edge_dcc0_body.h")
+            add_custom_command(OUTPUT "${EDGE_BODYDC}"
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_dcc0_body.py" "${EDGE_LIFT}" "${EDGE_BODYDC}"
+                DEPENDS "${EDGE_LIFT}" "${CMAKE_CURRENT_SOURCE_DIR}/gen_edge_dcc0_body.py"
+                COMMENT "Generating the DCC0 region from the d935 lift")
+            list(APPEND SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gow_edge_native_dcc0.c" "${EDGE_BODYDC}")
         endif()
         # Overlay blob 7228c0: its loop at blob+0x310 (in placement 11150: function 11430's loop at loc_11460;
         # gow_edge_native_o11430.c, switch GOW_EDGE_O11430, default lifted), in every placement lift of the

@@ -1,6 +1,7 @@
 """gen_edge_native_lift.py <spu_recomp.c> <out.c>: the EDGE job module (d935) lift with its native-switchable
 regions (port gow_edge_native.c, gow_edge_native_73e0.c, gow_edge_native_d640.c, gow_edge_native_a880.c,
-gow_edge_native_f538.c, gow_edge_native_6ac8.c), each picked at run time by an env variable.
+gow_edge_native_f538.c, gow_edge_native_6ac8.c, gow_edge_native_dcc0.c), each picked at run time by an env
+variable.
 
 1. E550's loop at loc_0000EC08, by GOW_EDGE_NATIVE. In jobmod_d93503647dd8_e6d98_spu_func_0000E550 (or its
    _impl, so it composes with spu_fnprobe_lift.py in either order):
@@ -61,6 +62,16 @@ gow_edge_native_f538.c, gow_edge_native_6ac8.c), each picked at run time by an e
    check_end ignores those). Only function 6AC8: the alternate-entry functions 6BE0, 6DE0, 6F40 and 6F98
    keep their lifted copies. g_edge_6ac8: 0 the lifted loop nest, unset/1 native
    (packed), 2 native v1, 3/4 check.
+7. DCC0's region from loc_0000E210 (loop E210, then loop E30C, then loop E3C4, with the blocks between them)
+   to the fall-through after E3C4's back edge, by GOW_EDGE_DCC0 (g_edge_dcc0, read once by
+   gow_edge_dcc0_mode). Loop E210 is entered only by falling through from the E194 block; each back edge
+   jumps to its label. In DCC0 (or its _impl):
+         if (g_edge_dcc0) { if (g_edge_dcc0 <= 2) { gow_edge_dcc0_e210(ctx); goto gow_e3c4_exit; }
+                            gow_edge_dcc0_check_begin(ctx); }
+   before `loc_0000E210:` and, after the back edge `if (ctx->gpr[21]._u32[0] != 0) goto loc_0000E3C4;`, the
+   label `gow_e3c4_exit: if (g_edge_dcc0 > 2) gow_edge_dcc0_check_end(ctx);` (the three statements after it
+   and the tail call to B600 stay lifted). Only function DCC0: the alternate-entry functions E210, E30C and
+   E3C4 keep their lifted copies. g_edge_dcc0: unset/0 the lifted region, 1 native, 2 native v1, 3/4 check.
 
 The port's CMakeLists.txt builds the d935 lift through this (output spu_recomp_edge.c beside the lift,
 untracked: it is the lift). Each switch is added only if the lift does not have it yet, so a lab lift made
@@ -80,15 +91,18 @@ want_d640 = "gow_edge_d640_d92c(" not in text
 want_a880 = "gow_edge_a880_a950(" not in text
 want_f538 = "gow_edge_f538_f620(" not in text
 want_6ac8 = "gow_edge_6ac8_6be0(" not in text
-if not want_e550 and not want_73e0 and not want_d640 and not want_a880 and not want_f538 and not want_6ac8:
+want_dcc0 = "gow_edge_dcc0_e210(" not in text
+if not want_e550 and not want_73e0 and not want_d640 and not want_a880 and not want_f538 and not want_6ac8 \
+        and not want_dcc0:
     open(dst, "w", newline="").write(text)
     sys.exit(print(f"{dst}: all switches are already there; copied"))
 hdr = re.compile(r"^void \w+_spu_func_([0-9A-F]{8})(_impl)?\(spu_context\* ctx\) \{\s*$")
 D4DC_BACK = "if (ctx->gpr[3]._u32[0] != 0) goto loc_0000D4DC;"
 F620_BACK = "if (ctx->gpr[37]._u32[0] != 0) goto loc_0000F620;"
+E3C4_BACK = "if (ctx->gpr[21]._u32[0] != 0) goto loc_0000E3C4;"
 out, cur = [], None
 n = {"EC08": 0, "EDE8": 0, "79B0": 0, "81C0": 0, "D92C": 0, "DB70": 0, "D4DC": 0, "D4DC_back": 0,
-     "A950": 0, "AD48": 0, "F620": 0, "F620_back": 0, "6BE0": 0, "6F98": 0}
+     "A950": 0, "AD48": 0, "F620": 0, "F620_back": 0, "6BE0": 0, "6F98": 0, "E210": 0, "E3C4_back": 0}
 for l in lines:
     m = hdr.match(l)
     if m:
@@ -128,7 +142,16 @@ for l in lines:
                 "        if (g_edge_6ac8) { if (g_edge_6ac8 <= 2) { gow_edge_6ac8_6be0(ctx); goto loc_00006F98; }"
                 " gow_edge_6ac8_check_begin(ctx); }"]
         n["6BE0"] += 1
+    if want_dcc0 and cur == "0000DCC0" and re.match(r"^\s*loc_0000E210:", l):
+        out += ["        if (__builtin_expect(g_edge_dcc0 < 0, 0)) g_edge_dcc0 = gow_edge_dcc0_mode();",
+                "        if (g_edge_dcc0) { if (g_edge_dcc0 <= 2) { gow_edge_dcc0_e210(ctx); goto gow_e3c4_exit; }"
+                " gow_edge_dcc0_check_begin(ctx); }"]
+        n["E210"] += 1
     out.append(l)
+    if want_dcc0 and cur == "0000DCC0" and l.strip() == E3C4_BACK:
+        out.append("gow_e3c4_exit:")
+        out.append("        if (g_edge_dcc0 > 2) gow_edge_dcc0_check_end(ctx);")
+        n["E3C4_back"] += 1
     if want_6ac8 and cur == "00006AC8" and re.match(r"^\s*loc_00006F98:", l):
         out.append("        if (g_edge_6ac8 > 2) gow_edge_6ac8_check_end(ctx);")
         n["6F98"] += 1
@@ -165,6 +188,8 @@ if want_f538 and (n["F620"] != 1 or n["F620_back"] != 1):
     sys.exit(f"F538 sites: F620 x{n['F620']}, back edge x{n['F620_back']} (want 1 each)")
 if want_6ac8 and (n["6BE0"] != 1 or n["6F98"] != 1):
     sys.exit(f"6AC8 labels: 6BE0 x{n['6BE0']}, 6F98 x{n['6F98']} (want 1 each)")
+if want_dcc0 and (n["E210"] != 1 or n["E3C4_back"] != 1):
+    sys.exit(f"DCC0 sites: E210 x{n['E210']}, E3C4 back edge x{n['E3C4_back']} (want 1 each)")
 decl = []
 if want_e550:
     decl += ["int gow_edge_native_mode(void);",
@@ -205,6 +230,12 @@ if want_6ac8:
              "void gow_edge_6ac8_check_begin(spu_context* ctx);",
              "void gow_edge_6ac8_check_end(spu_context* ctx);",
              "static int g_edge_6ac8 = -1;"]
+if want_dcc0:
+    decl += ["int gow_edge_dcc0_mode(void);",
+             "void gow_edge_dcc0_e210(spu_context* ctx);",
+             "void gow_edge_dcc0_check_begin(spu_context* ctx);",
+             "void gow_edge_dcc0_check_end(spu_context* ctx);",
+             "static int g_edge_dcc0 = -1;"]
 last_inc = max(i for i, l in enumerate(out[:200]) if l.startswith("#include"))
 out[last_inc + 1:last_inc + 1] = decl
 open(dst, "w", newline="").write(nl.join(out))
@@ -214,5 +245,6 @@ print(f"{dst}: " + ", ".join(s for s, w in (("E550 loop at EC08 switchable by GO
                                            want_d640),
                                           ("A880 loop at A950 switchable by GOW_EDGE_A880", want_a880),
                                           ("F538 loop at F620 switchable by GOW_EDGE_F538", want_f538),
-                                          ("6AC8 loop nest at 6BE0 switchable by GOW_EDGE_6AC8", want_6ac8))
+                                          ("6AC8 loop nest at 6BE0 switchable by GOW_EDGE_6AC8", want_6ac8),
+                                          ("DCC0 region at E210..E3C4 switchable by GOW_EDGE_DCC0", want_dcc0))
                                  if w))

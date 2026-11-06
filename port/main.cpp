@@ -890,6 +890,11 @@ int main(int argc, char** argv)
      * corridor (x356): 1.63M / 0.70M calls, 0 differ, ~10.7 vs ~70 tsc per iteration. 0 runs the lift. */
     if (!getenv("GOW_EDGE_O7298F0")) _putenv_s("GOW_EDGE_O7298F0", "1");
     if (!getenv("GOW_EDGE_O728A90")) _putenv_s("GOW_EDGE_O728A90", "1");
+    /* GOW_EDGE_DCC0=1 (2026-11-06): the d935 function DCC0's hot region (three serial loops from
+     * loc_E210 to E3C4's back edge) in C locals with leaner shufb/fsmb (self-tested at start-up).
+     * cap_4 400/400 off/on/check, 399 calls; in game, check mode in the corridor (x360): 2.81M calls,
+     * 0 differ, 12.6k vs 16.2k tsc per call. 0 runs the lift. */
+    if (!getenv("GOW_EDGE_DCC0")) _putenv_s("GOW_EDGE_DCC0", "1");
     if (!getenv("PS3_VM_WRITE_WATCH")) _putenv_s("PS3_VM_WRITE_WATCH", "1");
     if (!getenv("RSX_TEX_WRITEWATCH")) _putenv_s("RSX_TEX_WRITEWATCH", "1");
     /* SPU_RELOC_OFF=1: BatchJobList's position-independent code blobs (spu/relocblob_*,
