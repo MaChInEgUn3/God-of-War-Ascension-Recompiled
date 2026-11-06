@@ -1039,6 +1039,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       (x361): old 50.0% empty takes (24.7M), new 0; microstepper calls 330-433k/s -> 205-247k/s and the stub at
       `0x3FEC0` gone from the top entries; 14.48 / 15.35 game frames/s (one run each, no claim). The busiest
       interpreted entry left is `0x11E64`.
+    - 87 missing job-module entries seeded (2026-11-06, `spu/jobmod_extra.json`, 22 modules re-lifted). The SPU
+      "enable interrupts" sequence `brsl $2,.+4; ai $2,$2,8; bihz/bihnz $rX,$2` branches to the link + 8, which
+      the lifter never made an entry, so every taken branch fell into the microstepper: 0x11E64 (RenderJobs,
+      image 221), 0x06774 (EDGE module), 0x086A4 (image 212), 0x0474C. Found by scanning every lift (they never
+      reached `SPU_INTERP_MISS`, the microstepper handled them). Still scene 300 s: microstepper calls 202k ->
+      169k/s, only the WWS stub at 0x3FEC0 left in `[smc-stats]`. Corridor (x362, 480 s): no assert/branch-to-0/
+      drain-mismatch/pm-hang lines, 14.6-15.5 game frames/s in the last three minutes. Not seeded: 13 such targets
+      in `gowtask0` (not hot). A lasting fix would have `lift_jobmods.py` seed the pattern itself.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
