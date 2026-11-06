@@ -13212,7 +13212,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..29cdfb29 100644
+index 59f5e4b8..0e41f301 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13408,7 +13408,7 @@ index 59f5e4b8..29cdfb29 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4315 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4408 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -14361,6 +14361,7 @@ index 59f5e4b8..29cdfb29 100644
 +    st->resv_ea = ctx->resv_ea; st->resv_valid = (uint32_t)ctx->resv_valid;
 +    st->atomic_stat = ctx->atomic_stat;
 +    st->list_stall_mask = ctx->list_stall_mask; st->list_stall_stat = ctx->list_stall_stat;
++    st->sn_since_evread = ctx->sn_since_evread;
 +    st->irq_saved = (uint32_t)ctx->irq_saved; st->irq_resume_pc = ctx->irq_resume_pc;
 +    st->module_img_a00 = ctx->module_img_a00; st->steps = ctx->steps;
 +    for (unsigned t = 0; t < 32; ++t) {
@@ -16702,6 +16703,73 @@ index 59f5e4b8..29cdfb29 100644
 +    if (s_spu_chprof < 0) s_spu_chprof = getenv("SPURS_PM_PROF") ? 1 : 0;
 +    return s_spu_chprof;
 +}
++
++/* Stall-and-notify re-raise at SPU_WrEventAck. By default an ack of Sn
++ * re-raises it only for a stall that arrived after the last rdch
++ * SPU_RdEventStat (ctx->sn_since_evread non-zero). GoW's WWS handler (gowpm0
++ * 0x2390) reads the event status, acks it, and only then reads
++ * MFC_RdListStallStat; re-raising whenever list_stall_stat was still unread
++ * made every real interrupt be followed by an empty one. SPU_SN_REARM_OLD=1
++ * restores that rule (re-raise whenever list_stall_stat != 0) for A/B runs. */
++static int s_sn_old = -1;
++static inline int spu_sn_rearm_old(void) {
++    if (__builtin_expect(s_sn_old < 0, 0)) {
++        const char* e = getenv("SPU_SN_REARM_OLD");
++        s_sn_old = (e && e[0] == '1') ? 1 : 0;
++    }
++    return s_sn_old;
++}
++/* SPU_SN_CHECK=1: classify the Sn handler's interrupts. An rdch
++ * SPU_RdEventStat while the interrupt registers are saved (irq_saved) opens a
++ * take; the same context's next rchcnt MFC_RdListStallStat closes it as real
++ * (a stall pending) or empty (none). raises totals mfc_run_list's Sn raises
++ * (as each event read consumes ctx->sn_since_evread), rearms the acks that
++ * re-raised Sn. Every 10 s: the window's counts and the run's totals. */
++static int s_sn_chk = -1;
++static unsigned long long s_snc_real, s_snc_empty, s_snc_raise, s_snc_rearm;
++static unsigned long long s_snc_tot_real, s_snc_tot_empty;
++static SPU_THREAD_LOCAL const spu_context* t_snc_open;
++static int spu_sn_check_init(void) {
++    const char* e = getenv("SPU_SN_CHECK");
++    s_sn_chk = (e && e[0] == '1') ? 1 : 0;
++    if (s_sn_chk) fprintf(stderr, "[spu-sn] check on, ack re-raise rule: %s\n",
++                          spu_sn_rearm_old() ? "OLD (any unread stall)" : "stall since last event read");
++    return s_sn_chk;
++}
++#define SPU_SN_CHECK_ON() (__builtin_expect(s_sn_chk != 0, 0) && (s_sn_chk > 0 || spu_sn_check_init()))
++static void spu_sn_check_take(const spu_context* ctx)
++{
++    t_snc_open = NULL;
++    if (ctx->list_stall_stat) {
++        __atomic_fetch_add(&s_snc_real, 1, __ATOMIC_RELAXED);
++        __atomic_fetch_add(&s_snc_tot_real, 1, __ATOMIC_RELAXED);
++    } else {
++        __atomic_fetch_add(&s_snc_empty, 1, __ATOMIC_RELAXED);
++        __atomic_fetch_add(&s_snc_tot_empty, 1, __ATOMIC_RELAXED);
++    }
++    static uint64_t s_last;
++    const uint64_t now = spu_host_ns();
++    uint64_t last = __atomic_load_n(&s_last, __ATOMIC_RELAXED);
++    if (!last) {
++        __atomic_compare_exchange_n(&s_last, &last, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
++        return;
++    }
++    if (now - last < 10000000000ull ||
++        !__atomic_compare_exchange_n(&s_last, &last, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
++        return;
++    const unsigned long long real = __atomic_exchange_n(&s_snc_real, 0, __ATOMIC_RELAXED);
++    const unsigned long long empty = __atomic_exchange_n(&s_snc_empty, 0, __ATOMIC_RELAXED);
++    const unsigned long long raise = __atomic_exchange_n(&s_snc_raise, 0, __ATOMIC_RELAXED);
++    const unsigned long long rearm = __atomic_exchange_n(&s_snc_rearm, 0, __ATOMIC_RELAXED);
++    const double secs = (double)(now - last) / 1e9;
++    fprintf(stderr, "[spu-sn] %.1fs: takes=%llu real=%llu empty=%llu (%.1f%%) raises=%llu "
++            "ack-rearms=%llu (%.0f takes/s) | run real=%llu empty=%llu\n",
++            secs, real + empty, real, empty,
++            real + empty ? 100.0 * (double)empty / (double)(real + empty) : 0.0,
++            raise, rearm, (double)(real + empty) / secs,
++            __atomic_load_n(&s_snc_tot_real, __ATOMIC_RELAXED),
++            __atomic_load_n(&s_snc_tot_empty, __ATOMIC_RELAXED));
++}
 +static void spu_wrch_impl(spu_context* ctx, uint32_t channel, u128 value);
 +static u128 spu_rdch_impl(spu_context* ctx, uint32_t channel);
 +void spu_wrch(spu_context* ctx, uint32_t channel, u128 value)
@@ -16861,20 +16929,33 @@ index 59f5e4b8..29cdfb29 100644
 +              const uint32_t lea = (uint32_t)ctx->resv_ea;
 +              if (st) spu_lockline_lock_ea(lea); else spu_lockline_lock();
 +              SPU_EVENT_CLEAR(ctx, v);
-+              if ((v & 0x2u) && ctx->list_stall_stat)
++              if ((v & 0x2u) && ctx->list_stall_stat &&
++                  (ctx->sn_since_evread || spu_sn_rearm_old())) {
 +                  SPU_EVENT_SET(ctx, 0x2u);
++                  if (SPU_SN_CHECK_ON()) __atomic_fetch_add(&s_snc_rearm, 1, __ATOMIC_RELAXED);
++              }
 +              if (st) spu_lockline_unlock_ea(lea); else spu_lockline_unlock();
 +              break;
 +          } }
 +        SPU_EVENT_CLEAR(ctx, v);
-+        /* A stall-and-notify nobody has read yet stays pending. We run a
++        /* A stall-and-notify nobody has seen yet stays pending. We run a
 +         * resumed list inline, inside the MFC_WrListStallAck that resumes it,
 +         * so its next stall can land BEFORE the handler acknowledges the event
 +         * it was taken for; on hardware the MFC gets there later, after the
 +         * ack. Acking then cleared that new edge while the list stayed parked
-+         * (list_stall_stat set, Sn clear). */
-+        if ((v & 0x2u) && ctx->list_stall_stat)
++         * (list_stall_stat set, Sn clear).
++         *
++         * "Not seen" means raised after the last rdch SPU_RdEventStat
++         * (sn_since_evread), not merely "list_stall_stat unread": a handler
++         * that reads the event status, acks, and then reads
++         * MFC_RdListStallStat (GoW's WWS module) had Sn re-raised for the very
++         * stall it was about to read, and took a second, empty interrupt after
++         * every real one. SPU_SN_REARM_OLD=1 restores the unread-stall rule. */
++        if ((v & 0x2u) && ctx->list_stall_stat &&
++            (ctx->sn_since_evread || spu_sn_rearm_old())) {
 +            SPU_EVENT_SET(ctx, 0x2u);
++            if (SPU_SN_CHECK_ON()) __atomic_fetch_add(&s_snc_rearm, 1, __ATOMIC_RELAXED);
++        }
 +        break;
 +    case SPU_WrSRR0:         ctx->srr0 = v;                                 break;
 +    default:
@@ -17133,7 +17214,17 @@ index 59f5e4b8..29cdfb29 100644
 +        break;
 +    }
 +    case SPU_RdEventMask:   v = ctx->event_mask;                        break;
-+    case SPU_RdEventStat:   spu_resv_lost_poll(ctx); v = ctx->event_status; break;
++    case SPU_RdEventStat:
++        spu_resv_lost_poll(ctx); v = ctx->event_status;
++        /* This read shows every Sn raised so far: an ack after it re-raises
++         * only for a stall that lands later (SPU_WrEventAck). */
++        if (SPU_SN_CHECK_ON()) {
++            if (ctx->sn_since_evread)
++                __atomic_fetch_add(&s_snc_raise, ctx->sn_since_evread, __ATOMIC_RELAXED);
++            t_snc_open = ctx->irq_saved ? ctx : NULL;
++        }
++        ctx->sn_since_evread = 0;
++        break;
 +    /* CBEA 9.8: numeric bit 0 is interrupt-enable, independent of run status.
 +     * This runtime models nonisolated SPUs, so the isolation bit stays clear. */
 +    case SPU_RdMachStat:    v = ctx->int_enable & 1u; break;
@@ -17349,7 +17440,9 @@ index 59f5e4b8..29cdfb29 100644
 +     * handler gates on this (rchcnt $ch25; brz IhcExit) -- returning the old
 +     * default of 1 made it enter on spurious interrupts with an empty stat,
 +     * running IhcLoop on a zero mask (clz(0) -> bogus tagId/ack). */
-+    case MFC_RdListStallStat: return ctx->list_stall_stat ? 1 : 0;
++    case MFC_RdListStallStat:
++        if (SPU_SN_CHECK_ON() && t_snc_open == ctx) spu_sn_check_take(ctx);
++        return ctx->list_stall_stat ? 1 : 0;
 +    default:                 return 1;  /* default: channel ready */
 +    }
 +}
@@ -21183,7 +21276,7 @@ index ca76ccd1..fb21e27b 100644
   * write does not cost it its reservation on hardware. */
  void spu_coh_notify_write_except(uint32_t ea, const void* self);
 diff --git a/runtime/spu/spu_context.h b/runtime/spu/spu_context.h
-index f46d415f..e77633f5 100644
+index f46d415f..aefc62c5 100644
 --- a/runtime/spu/spu_context.h
 +++ b/runtime/spu/spu_context.h
 @@ -39,17 +39,17 @@ extern "C" {
@@ -21243,7 +21336,19 @@ index f46d415f..e77633f5 100644
  
      /* Resident SPURS-taskset TASK image id (0 = none) retires the id-0 wildcard
       * for co-resident tasks. A taskset may hold several tasks that all lift at the
-@@ -376,24 +392,47 @@ typedef struct spu_context {
+@@ -370,30 +386,59 @@ typedef struct spu_context {
+      * cleared per-tag by WrListStallAck. Modelled here as per-tag arrays. */
+     uint32_t list_stall_mask;             /* bit t set = tag t has a parked list */
+     uint32_t list_stall_stat;             /* readable notify mask (rdch clears) */
++    /* Sn raises by list stalls since the last rdch SPU_RdEventStat (counted in
++     * mfc_run_list, zeroed by that read). SPU_WrEventAck re-raises Sn only when
++     * it is non-zero: a stall the handler cannot have seen yet. A count, not a
++     * flag, so SPU_SN_CHECK can total the raises without a symbol of its own
++     * in spu_dma.h (tests link that header without spu_channels.c). */
++    uint32_t sn_since_evread;
+     uint32_t list_stall_elem_lsa[32];     /* LS addr of NEXT element, per tag */
+     uint32_t list_stall_remaining[32];    /* elements left after stall, per tag */
+     uint32_t list_stall_dest_lsa[32];     /* accumulated destination LSA, per tag */
      uint64_t list_stall_ea_base[32];      /* ea base (hi32 carries), per tag */
      uint32_t list_stall_cmd[32];          /* base (non-list) MFC command, per tag */
  
@@ -21307,7 +21412,7 @@ index f46d415f..e77633f5 100644
  /* Reserved LS addresses (inside the kernel area, below the 0xA00 policy-module
   * base) that the HLE kernel plants as exitToKernelAddr / selectWorkloadAddr in
   * the SpursKernelContext. A policy module branching to them is performing a
-@@ -470,9 +509,9 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
+@@ -470,9 +515,9 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
   * helpers in `spu_helpers.h` were written against. */
  /* The 128-bit LS accessors are THE hot primitive of lifted SPU execution
   * (every load/store in a Bink movie frame's ~millions of lifted instructions
@@ -21320,7 +21425,7 @@ index f46d415f..e77633f5 100644
  #if defined(_MSC_VER)
  #include <stdlib.h>
  #define SPU_BSWAP32(x) _byteswap_ulong(x)
-@@ -481,27 +520,50 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
+@@ -481,27 +526,50 @@ static inline void spu_ls_write32(spu_context* ctx, uint32_t lsa, uint32_t val)
  #define SPU_BSWAP32(x) __builtin_bswap32(x)
  #define SPU_LS_FAST 1
  #endif
@@ -21390,7 +21495,7 @@ index f46d415f..e77633f5 100644
      /* SPU_LS_LOWREAD=1: a job that reads its OWN first bytes as data is
       * dereferencing a null base -- the job binary loads at LS 0, so [NULL+off]
       * returns its own instruction words. Report each distinct low address once,
-@@ -535,18 +597,25 @@ static __attribute__((noinline, cold)) void spu_ls_read_probe(const spu_context*
+@@ -535,18 +603,25 @@ static __attribute__((noinline, cold)) void spu_ls_read_probe(const spu_context*
                      off >> 6, (off >> 2) & 0xF, off);
          }
      }
@@ -21424,7 +21529,7 @@ index f46d415f..e77633f5 100644
      uint32_t w0, w1, w2, w3;
      memcpy(&w0, p,      4); memcpy(&w1, p + 4,  4);
      memcpy(&w2, p + 8,  4); memcpy(&w3, p + 12, 4);
-@@ -563,7 +632,8 @@ static inline u128 spu_ls_read128(const spu_context* ctx, uint32_t lsa)
+@@ -563,7 +638,8 @@ static inline u128 spu_ls_read128(const spu_context* ctx, uint32_t lsa)
      return v;
  }
  
@@ -21434,7 +21539,7 @@ index f46d415f..e77633f5 100644
  {
      if (lsa == 0x1320 && ctx->image_id == 2 && ctx->policy_mode) {
          extern int g_wws_code_probe;   /* defined in spu_channels.c, capped */
-@@ -591,12 +661,12 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_pre(spu_context*
+@@ -591,12 +667,12 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_pre(spu_context*
              #undef _RD32
          }
      }
@@ -21453,7 +21558,7 @@ index f46d415f..e77633f5 100644
      /* SPU_SMC_WATCH=<img>: self-modification detector. Log any store whose
       * target LS line falls inside that image's CODE segment (the segment
       * bounds come from SPU_SMC_LO/HI, default the pm_wwsjob range 0xA00..
-@@ -615,39 +685,46 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_smc(spu_context*
+@@ -615,39 +691,46 @@ static __attribute__((noinline, cold)) void spu_ls_write_probe_smc(spu_context*
                        p[0], p[1], p[2], p[3]);
        } }
  }
@@ -21532,7 +21637,7 @@ index f46d415f..e77633f5 100644
  /* ---------------------------------------------------------------------------
   * Preferred slot extraction
   *
-@@ -783,6 +860,8 @@ extern SPU_THREAD_LOCAL unsigned g_spu_pch_n;
+@@ -783,6 +866,8 @@ extern SPU_THREAD_LOCAL unsigned g_spu_pch_n;
  /* Central per-transfer hooks (stubbed in spu_drain.c until their milestones). */
  void yz_lockstep_tick(spu_context* ctx);             /* round-robin token gate */
  void spu_task_launch_check(spu_context* ctx, void* fn); /* SPURS task-launch    */
@@ -21541,7 +21646,7 @@ index f46d415f..e77633f5 100644
  /* Restore image_id after a call-bracket (adopt-on-serve); re-applies the
   * persistent LS-0xA00 workload module if one is set. */
  void spu_img_restore(spu_context* ctx, int32_t saved_img);
-@@ -802,6 +881,13 @@ int  spu_tailret_enabled(void);
+@@ -802,6 +887,13 @@ int  spu_tailret_enabled(void);
   * unchanged (interrupt not taken) if LS 0 holds no branch instruction. */
  void (*spu_take_interrupt(spu_context* ctx,
                            void (*tf)(spu_context*)))(spu_context*);
@@ -21555,7 +21660,7 @@ index f46d415f..e77633f5 100644
  
  /* Drain a translated call up to its explicit architectural return PC. */
  void spu_drain_call(spu_context* ctx, uint32_t return_pc);
-@@ -872,11 +958,13 @@ static inline void spu_pchist_tick(const spu_context* ctx)
+@@ -872,11 +964,13 @@ static inline void spu_pchist_tick(const spu_context* ctx)
              }                                                              \
              void (*_tf)(spu_context*) = g_spu_trampoline_fn;    \
              g_spu_trampoline_fn = 0;                            \
@@ -21571,7 +21676,7 @@ index f46d415f..e77633f5 100644
              spu_pchist_tick(ctx);                              \
              g_spu_pch[g_spu_pch_n++ & 7u] =                    \
                  (uint32_t)((ctx)->pc & SPU_LS_MASK);           \
-@@ -884,6 +972,46 @@ static inline void spu_pchist_tick(const spu_context* ctx)
+@@ -884,6 +978,46 @@ static inline void spu_pchist_tick(const spu_context* ctx)
          }                                                      \
      } while (0)
  
@@ -21619,7 +21724,7 @@ index f46d415f..e77633f5 100644
   * brsl/bisl frame is live (host_depth>0); at 0 the frame was destroyed (task
   * resume / restack unwind) so dispatch to the link register instead -- faithful
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 7b0debec..ce3884ea 100644
+index 7b0debec..a0ff897f 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -24,6 +24,7 @@
@@ -21814,16 +21919,17 @@ index 7b0debec..ce3884ea 100644
          if (xfer_size) {
              /* Each list element occupies whole LS quadwords, even for
               * 1/2/4/8-byte transfers. The EA supplies its byte offset within
-@@ -795,7 +871,7 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+@@ -795,7 +871,8 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
              spu->list_stall_cmd[t]       = base_cmd;
              spu->list_stall_mask |= (1u << t);  /* this tag now has a parked list */
              spu->list_stall_stat |= (1u << t);  /* accumulate into the notify mask */
 -            spu->event_status    |= 0x2u;       /* SPU_EVENT_SN stall-and-notify */
 +            SPU_EVENT_SET(spu, 0x2u);           /* SPU_EVENT_SN stall-and-notify */
++            spu->sn_since_evread++;             /* not yet seen by an event read */
              /* Real MFC runs a queued list asynchronously, so the notify lands
               * AFTER the arming code finishes. We run it inline here, so hold the
               * resulting interrupt off for a few drain ticks -- otherwise the WWS
-@@ -846,6 +922,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -846,6 +923,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
       * about to land. If the handler was supposed to fill in the claimed job's
       * EA and did not, the elements read back empty and the transfer is a no-op
       * -- which looks identical to "the pipeline never ran" from the PPU side. */
@@ -21832,7 +21938,7 @@ index 7b0debec..ce3884ea 100644
      { /* First 16 dumps per header call site, shared safely by its workers.
         * Saturate instead of wrapping the counter back into logging. */
        static volatile LONG _n = 0;
-@@ -866,11 +944,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -866,11 +945,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
          fprintf(stderr, "\n");
        }
      }
@@ -21851,7 +21957,7 @@ index 7b0debec..ce3884ea 100644
      return rc;
  }
  
-@@ -1250,7 +1335,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1250,7 +1336,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                        (uint32_t)ea);
                fflush(stderr);
                spu_halt(spu);
@@ -21868,7 +21974,7 @@ index 7b0debec..ce3884ea 100644
        } else { s_last_ea = (uint32_t)ea; s_last_lsa = lsa; s_rep = 0; s_since = 0; } }
  
      /* Mark tag as in-progress */
-@@ -1419,7 +1512,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1419,7 +1513,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -21973,7 +22079,7 @@ index 7b0debec..ce3884ea 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1441,6 +1631,21 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1441,6 +1632,21 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * carried in MFC_EAL (the PM writes EAL=list, LSA=dest) and each element
       * supplies the low-32 EA; only EAH carries through. Passing `lsa` as the
       * list address read list elements from the transfer DESTINATION. */
@@ -21995,7 +22101,7 @@ index 7b0debec..ce3884ea 100644
      if (mfc_is_list(cmd)) {
          /* List DMAs are rare, and they skip the per-element trace above, so
           * they are easy to miss entirely while diagnosing a pipeline that
-@@ -1451,11 +1656,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1451,11 +1657,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -22037,7 +22143,7 @@ index 7b0debec..ce3884ea 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1607,6 +1842,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1607,6 +1843,13 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
                        spu->image_id, value, spu->mfc_tag_mask, mfc->tag_completed,
                        spu->mfc_tag_status,
                        (spu->mfc_tag_status == spu->mfc_tag_mask) ? "  (== mask: PROMOTE)" : "  (!= mask: idle)"); } }
@@ -24505,10 +24611,10 @@ index 90a2f775..99154c21 100644
 +}
 diff --git a/runtime/spu/spu_job_replay.c b/runtime/spu/spu_job_replay.c
 new file mode 100644
-index 00000000..925c88d5
+index 00000000..230ac188
 --- /dev/null
 +++ b/runtime/spu/spu_job_replay.c
-@@ -0,0 +1,688 @@
+@@ -0,0 +1,695 @@
 +/*
 + * SPU job replay: SPU_JOB_REPLAY=<dir> (docs/EDGE_NATIVE.md, "Replay").
 + *
@@ -24545,6 +24651,7 @@ index 00000000..925c88d5
 +#include "spu_jobcap.h"
 +#include "spu_coherency.h"
 +#include <stdarg.h>
++#include <stddef.h>
 +#include <stdint.h>
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -24782,7 +24889,7 @@ index 00000000..925c88d5
 +     * the recorded value IS the context's event status at that read (bits a
 +     * peer raised included). */
 +    if (channel == MFC_RdListStallStat) ctx->list_stall_stat = 0;   /* clear on read */
-+    if (channel == SPU_RdEventStat) ctx->event_status = rec;
++    if (channel == SPU_RdEventStat) { ctx->event_status = rec; ctx->sn_since_evread = 0; }
 +    jr_consume(s);
 +    return 1;
 +}
@@ -24871,7 +24978,10 @@ index 00000000..925c88d5
 +     * raise the event bits it saw (an Lr from a peer arrives at an arbitrary
 +     * moment; bits the job raised itself are already set). */
 +    const spu_jobcap_event* e = s->nx;
-+    if (e && e->type == JC_IRQ && s->hops == e->d) SPU_EVENT_SET(ctx, e->b);
++    if (e && e->type == JC_IRQ && s->hops == e->d) {
++        SPU_EVENT_SET(ctx, e->b);
++        if (e->b & 0x2u) ctx->sn_since_evread++;   /* an Sn the handler has not read */
++    }
 +    if ((++s->hop_total & 0xFFFFu) == 0) {
 +        LARGE_INTEGER q; QueryPerformanceCounter(&q);
 +        if (q.QuadPart > s->deadline) {
@@ -24947,6 +25057,9 @@ index 00000000..925c88d5
 +    ctx->mfc_tag_mask = st->mfc_tag_mask; ctx->mfc_tag_status = st->mfc_tag_status;
 +    ctx->resv_ea = st->resv_ea; ctx->resv_valid = (int)st->resv_valid; ctx->atomic_stat = st->atomic_stat;
 +    ctx->list_stall_mask = st->list_stall_mask; ctx->list_stall_stat = st->list_stall_stat;
++    /* A capture from before the field ends its header just short of it. */
++    ctx->sn_since_evread = h->header_size >= offsetof(spu_jobcap_header, st.sn_since_evread) + 4u
++                         ? st->sn_since_evread : 0;
 +    ctx->irq_resume_pc = st->irq_resume_pc;   /* irq_saved: spu_run_with_halt forgets it anyway */
 +    ctx->module_img_a00 = st->module_img_a00;
 +    for (unsigned t = 0; t < 32; ++t) {
@@ -25105,7 +25218,7 @@ index 00000000..925c88d5
 +        else if (memcmp(h->magic, "SPUJCAP", 8)) bad = "not a job capture";
 +        else if (h->version != SPU_JOBCAP_VERSION)
 +            bad = "capture version 1 has no context state block (re-capture with this build)";
-+        else if (h->header_size < sizeof *h || h->ls_size != SPU_LS_SIZE || h->gpr_count != 128 ||
++        else if (h->header_size < offsetof(spu_jobcap_header, st.sn_since_evread) || h->ls_size != SPU_LS_SIZE || h->gpr_count != 128 ||
 +                 (size_t)len < (size_t)h->header_size + h->ls_size + 16u * h->gpr_count)
 +            bad = "header does not match this build";
 +        if (bad) {
@@ -25199,10 +25312,10 @@ index 00000000..925c88d5
 +#endif
 diff --git a/runtime/spu/spu_jobcap.h b/runtime/spu/spu_jobcap.h
 new file mode 100644
-index 00000000..c2b032e6
+index 00000000..3a884ba7
 --- /dev/null
 +++ b/runtime/spu/spu_jobcap.h
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,134 @@
 +/*
 + * SPU job capture (SPU_JOB_CAPTURE, spu_channels.c) and replay
 + * (SPU_JOB_REPLAY, spu_job_replay.c): the file layout both sides share and the
@@ -25247,6 +25360,9 @@ index 00000000..c2b032e6
 +    uint32_t list_stall_ea_base[32][2];            /* {lo, hi} */
 +    uint8_t  resv_line[128];
 +    uint32_t irq_gpr[128][4];                      /* as ctx->irq_gpr stores them */
++    /* Appended last, so a capture from before it still loads: the replay
++     * accepts a header that ends before this field and starts it at 0. */
++    uint32_t sn_since_evread;
 +} spu_jobcap_state;
 +
 +typedef struct {
@@ -26416,15 +26532,18 @@ index 00000000..d4998c5f
 +uint32_t g_spu_image_src_ea, g_spu_image_ls_start, g_spu_image_span;
 diff --git a/runtime/spu/tests/test_spu_event_ack_sn.c b/runtime/spu/tests/test_spu_event_ack_sn.c
 new file mode 100644
-index 00000000..0fb8f0a1
+index 00000000..d3a2b53f
 --- /dev/null
 +++ b/runtime/spu/tests/test_spu_event_ack_sn.c
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,92 @@
 +/* SPU_WrEventAck through the real spu_channels.c: acknowledging Sn (0x2) while
 + * a DMA list is still parked on a stall-and-notify (list_stall_stat non-zero)
 + * leaves Sn pending. A resumed list runs inline, inside the MFC_WrListStallAck
 + * that resumes it, so its next stall can land before the handler acknowledges
 + * the event it was taken for; on hardware the MFC gets there after the ack.
++ * Only a stall raised after the last rdch SPU_RdEventStat counts: a handler
++ * that reads the event status, acks, and then reads MFC_RdListStallStat (GoW's
++ * WWS module) must not get Sn back for the stall it is about to read.
 + * Other bits, and Sn with no list parked, are acknowledged as before. */
 +#include "../spu_helpers.h"
 +#include "../spu_interp.h"
@@ -26434,10 +26553,12 @@ index 00000000..0fb8f0a1
 +uint8_t* vm_base;
 +uint32_t ppu_vm_size;
 +extern void spu_wrch(spu_context*, uint32_t, u128);
++extern u128 spu_rdch(spu_context*, uint32_t);
 +
 +static spu_context ctx;
 +static int fails;
 +static void ack(uint32_t bits) { spu_wrch(&ctx, SPU_WrEventAck, spu_splat_u32(bits)); }
++static uint32_t read_events(void) { return spu_rdch(&ctx, SPU_RdEventStat)._u32[0]; }
 +#define CHECK(c) do { if (!(c)) { fails++; fprintf(stderr, "FAIL line %d: %s (status 0x%X)\n", \
 +                                                     __LINE__, #c, ctx.event_status); } } while (0)
 +
@@ -26447,8 +26568,10 @@ index 00000000..0fb8f0a1
 +    spu_context_init(&ctx, 0);
 +    ctx.ls = ls;
 +
-+    /* A list parked on tag 4: Sn stays pending through its ack, Lr is acked. */
++    /* A list parked on tag 4 by a stall no event read has seen yet (as
++     * mfc_run_list leaves it): Sn stays pending through its ack, Lr is acked. */
 +    ctx.list_stall_mask = ctx.list_stall_stat = 1u << 4;
++    ctx.sn_since_evread = 1;
 +    ctx.event_status = 0x2u | 0x400u;
 +    ack(0x2u | 0x400u);
 +    CHECK(ctx.event_status == 0x2u);
@@ -26464,7 +26587,32 @@ index 00000000..0fb8f0a1
 +    ack(0x1u);
 +    CHECK(ctx.event_status == 0);
 +
-+    printf("%s: WrEventAck keeps Sn pending while a list is parked\n", fails ? "FAIL" : "PASS");
++    /* GoW's order: stall -> rdch RdEventStat -> ack -> read ch25. The read saw
++     * the stall, so the ack clears Sn although ch25 is still unread: no second,
++     * empty interrupt. */
++    ctx.list_stall_mask = ctx.list_stall_stat = 1u << 4;
++    ctx.sn_since_evread = 1;
++    ctx.event_status = 0x2u;
++    CHECK(read_events() == 0x2u);
++    CHECK(ctx.sn_since_evread == 0);
++    ack(0x2u);
++    CHECK(ctx.event_status == 0);
++
++    /* The upstream order: rdch RdEventStat -> read ch25 -> WrListStallAck, whose
++     * inline resume parks the list again and raises Sn -> ack. That stall came
++     * after the read, so Sn stays pending. */
++    ctx.list_stall_mask = ctx.list_stall_stat = 1u << 4;
++    ctx.sn_since_evread = 1;
++    ctx.event_status = 0x2u;
++    CHECK(read_events() == 0x2u);
++    ctx.list_stall_stat = 1u << 5;            /* the re-park, as mfc_run_list does it */
++    ctx.sn_since_evread++;
++    ctx.event_status |= 0x2u;
++    ack(0x2u);
++    CHECK(ctx.event_status == 0x2u);
++
++    printf("%s: WrEventAck keeps Sn pending only for a stall no event read has seen\n",
++           fails ? "FAIL" : "PASS");
 +    return fails ? 1 : 0;
 +}
 +void ppu_resv_break_store(uint64_t ea){(void)ea;abort();}

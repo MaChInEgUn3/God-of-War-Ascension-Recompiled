@@ -1031,6 +1031,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       11% / 11% against 2.8% / 12.6% of the trace windows. B leads in both pairs again, but the host was not quiet:
       another Claude session drew 0.8-1.3 cores through every arm. The EDGE natives' own share (cap_4: about -25%
       of EDGE job time across the seven blobs) is not separable from x351 at this recipe's noise.
+    - Double stall-notify interrupt fixed (2026-11-06, toolkit commit after c340bb19's line; scope in
+      `work/wws_irq_scope.md`): `SPU_WrEventAck` re-raised the stall event whenever ch25 still held an unread bit,
+      and the WWS handler acks before reading ch25, so every real interrupt was followed by an empty one that ran
+      both generated stubs. The event is now re-raised only for a stall that arrived after the last event-status
+      read (`SPU_SN_REARM_OLD=1` restores the old rule, `SPU_SN_CHECK=1` counts). Corridor, one exe, 480 s each
+      (x361): old 50.0% empty takes (24.7M), new 0; microstepper calls 330-433k/s -> 205-247k/s and the stub at
+      `0x3FEC0` gone from the top entries; 14.48 / 15.35 game frames/s (one run each, no claim). The busiest
+      interpreted entry left is `0x11E64`.
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
     warm-up then old new new old, 480 s each) gave 11.59 / 11.79 / 7.42 / 9.15 game frames/s over 360-480 s
     (warm-up, new exe: 13.58). Other programs averaged 1.4 / 1.0 / 1.8 / 2.1 cores (explorer ~0.6-0.8, the
