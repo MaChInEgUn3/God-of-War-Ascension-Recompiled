@@ -1128,6 +1128,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       thread wall time; x377 has the EDGE chain ~0.75 binding, so a native job loop has a ceiling near +10% and
       realistically +5-8% (inferred). General6 (wid 3) is 97% job proper at 1 ms a job, so that loop does nothing for it.
       Next: a native job loop inside the kernel threads, one EDGE workload first, gated, and compared inside one run.
+    - Native job driver, first slice (toolkit `spurs_wws_native.c`, `SPURS_WWS_NATIVE=<wid>,...`, default off). C now drives
+      the claim and the interrupt windows, one job a run; stage, load commands, the job, the store and the exit stay
+      lifted, so every PPU-visible store but the claim's row is still the lift's. Anything it cannot prove returns to
+      the lifted module, before or after the claim. x382 (wid 15, runZ3, 480 s): 95% of runs native, the rest list ends,
+      nops and blocks, one lifted fallback class only; per job claim 1.0, stage 0.9, load 10.8, tail 6.0 us; w15 busy
+      67-68% against 71% for w16 and w17 at equal job counts, ~4-5% less SPU time. x383 (all three lists): `SPURS_WWS_CHECK=1`
+      420 s and six runs in all with 0 `CHECK FAILED`, no hang. In-run A/B at 3.3-5 cores of other load: `none` +1.0, `wws`
+      +1.4 / +1.2 ms a frame, all inside the noise, and with the wrapper only ~4% down (worth at most ~2% of frame rate,
+      inferred) no A/B here could see it. So no frame-rate claim: the driver stays off by default. x382 and x383 ran
+      non-lab, so `[pm-jobt]` and the wid 16-17 coverage counters are still owed, on a quiet host.
+    - What that slice showed: the claim and the interrupts were the cheap ~4 us of the wrapper. The ~17 us left is the lifted
+      load commands (11 us) and store and tail (6 us). Next: native load commands, judged by phase us and per-list busy,
+      not by frame rate. Under ~8 us of wrapper the native loop is on track; if the load's buffer rules cannot be made
+      native without guessing, this path stops near here and the remaining lever is the job itself.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

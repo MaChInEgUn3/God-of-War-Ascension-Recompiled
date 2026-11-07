@@ -318,7 +318,7 @@ Lessons that cost days; keep them.
 
 **In-run A/B** (`GOW_AB=<lever>,<window s>,<start s>`, port `main.cpp`): from `<start s>` the lever goes on, off, off, on, on,
 off... and each window prints `[ab] lever= w= on= frames= secs=`. Levers: `icall` (`g_ppu_icall_fast`), `dma`
-(`g_spu_dma_diag`), `none` (the noise floor). `scripts/abreport.py <log>` gives the on-off difference per on,off,off,on block, in
+(`g_spu_dma_diag`), `wws` (`g_spurs_wws_native`), `none` (the noise floor). `scripts/abreport.py <log>` gives the on-off difference per on,off,off,on block, in
 ms per game frame, with quartiles. Only for a switch that can change while the game runs; run `none` first.
   SPU dispatch (2026-11-04): `SPU_IBC_COUNT=1` (`SPU_IBC_COUNT_WIDS=<w>,...` to filter) prints `[ibc-count]` and
   `[ibc-miss]` (the most-missed pc/image/overlay targets with misses and cache fills; it forces the slow path, so
@@ -665,6 +665,8 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   sorted (hash, offset) pairs at the end of each `.dcb`.
 * **Oracle**: RPCS3 boots the game and is good for behavioural comparison. It uses LLE for most firmware libraries,
   so it does not trace HLE calls.
+
+**Native job driver** (`spurs_wws_native.c`, default off): `SPURS_WWS_NATIVE=<wid>[,<wid>]` picks the workloads; `g_spurs_wws_native` is read at each run, so `GOW_AB=wws,...` flips it inside a run. With `SPURS_PM_PROF` it prints `[wws-native] w<wid>: runs= native= (<share>)`, the fallback reasons, and us per job for claim, stage, load, job and tail. `SPURS_WWS_CHECK=1`: every other run the lifted code makes the claim and it is compared with the C prediction, each run compares the staged record, and the end of a run checks the ledger; a mismatch prints `CHECK FAILED` and turns the path off, so native coverage reads lower in that mode. `[pm-jobt]` needs a lab build.
 
 ## RAG index (local, optional)
 

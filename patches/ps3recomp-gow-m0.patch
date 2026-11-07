@@ -26462,19 +26462,20 @@ index 20089610..36e97069 100644
      CloseHandle(th);   /* detached */
  #else
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 905b3517..bfbd0a2d 100644
+index 905b3517..b6fc707f 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
-@@ -26,6 +26,8 @@
+@@ -26,6 +26,9 @@
  #include "spu_coherency.h"
  #include "../platform/win32_compat.h"
  #include "spu_workload.h"
 +#include "spu_jobcap.h"     /* SPURS_PM_PROF job timer */
++#include "spurs_wws_native.h"
 +#include "ps3emu/ps3_ftrace.h"
  #include "spu_coherency.h"
  #include <stdio.h>
  #include <stdlib.h>
-@@ -34,24 +36,155 @@
+@@ -34,24 +37,155 @@
  
  extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
  
@@ -26632,7 +26633,7 @@ index 905b3517..bfbd0a2d 100644
  } s_pm_instances[SPURS_PM_INSTANCES];
  static SRWLOCK s_pm_directory_lock = SRWLOCK_INIT;
  static CONDITION_VARIABLE s_pm_directory_wake;
-@@ -98,7 +231,7 @@ static void policy_slot_release(struct PmSlot* slot)
+@@ -98,7 +232,7 @@ static void policy_slot_release(struct PmSlot* slot)
   * a direct caller that still owns a reference makes removal BUSY instead. */
  int spurs_policy_release_workload(uint32_t ea, uint32_t wid)
  {
@@ -26641,7 +26642,7 @@ index 905b3517..bfbd0a2d 100644
      AcquireSRWLockExclusive(&s_pm_directory_lock);
      for (unsigned i = 0; i < SPURS_PM_INSTANCES; i++) {
          struct PmInstance* pi = &s_pm_instances[i];
-@@ -134,7 +267,7 @@ void spurs_policy_release_instance(uint32_t ea)
+@@ -134,7 +268,7 @@ void spurs_policy_release_instance(uint32_t ea)
          pi->retiring = 1;
          while (pi->users)
              SleepConditionVariableSRW(&s_pm_directory_wake, &s_pm_directory_lock, INFINITE, 0);
@@ -26650,7 +26651,7 @@ index 905b3517..bfbd0a2d 100644
              struct PmSlot* slot = &pi->slots[w][n];
              AcquireSRWLockExclusive(&slot->lock);
              if (slot->ctx) {
-@@ -152,6 +285,19 @@ void spurs_policy_release_instance(uint32_t ea)
+@@ -152,6 +286,19 @@ void spurs_policy_release_instance(uint32_t ea)
      ReleaseSRWLockExclusive(&s_pm_directory_lock);
  }
  
@@ -26670,7 +26671,7 @@ index 905b3517..bfbd0a2d 100644
  int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                            const uint8_t* pm_host, uint32_t pm_size,
                            uint64_t wkl_data, uint32_t wid, uint32_t spurs_ea,
-@@ -172,10 +318,15 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -172,10 +319,15 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * never progress its claim/stage pipeline). Image + context init happen
       * once; re-entries keep LS and only refresh the entry registers and the
       * (possibly game-updated) kernel-context fields. */
@@ -26687,7 +26688,7 @@ index 905b3517..bfbd0a2d 100644
      spu_context* ctx = resident->ctx;
      int first = 0;
      /* SPURS_PM_FRESH=1: treat EVERY dispatch as first contact (zeroed LS, image
-@@ -225,6 +376,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -225,6 +377,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                          (unsigned long long)wkl_data);
          }
          first = 1;
@@ -26696,7 +26697,7 @@ index 905b3517..bfbd0a2d 100644
          spu_coh_unregister(ctx);
          spu_mfc_release(ctx);
          memset(ctx, 0, sizeof(*ctx));
-@@ -255,6 +408,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -255,6 +409,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * selectWorkload -- so it called our exit intercept for every poll and
       * branched to 0 for every select. It also tests wklCurrentId (0x1DC) against
       * 1, which only reads sensibly at the correct offset. */
@@ -26709,7 +26710,7 @@ index 905b3517..bfbd0a2d 100644
      KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
      KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
      KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
-@@ -281,15 +440,43 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -281,15 +441,43 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * treated the list header as an audit header and wrote FFFF over the
       * list's per-SPU cursor rows (SPU 0-3) and first job slots (SPU 4): the
       * "ticket values exploding" with extra SPUs. Titles pass a 32-bit list
@@ -26754,7 +26755,7 @@ index 905b3517..bfbd0a2d 100644
  
      /* RUN/END tracing: thousands of policy dispatches per second made these
       * unconditional fprintf+fflush pairs a real fraction of movie playback.
-@@ -300,6 +487,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -300,6 +488,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static SPU_THREAD_LOCAL unsigned long s_runs = 0;
      unsigned long runno = ++s_runs;
      int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
@@ -26769,10 +26770,11 @@ index 905b3517..bfbd0a2d 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -391,7 +586,176 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -391,7 +587,186 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
+-    const int pm_halted = spu_run_with_halt(entry, ctx);
 +    spurs_pm_hang_begin(ctx, wid, spu_num);
 +#ifdef _WIN32
 +    extern SPU_THREAD_LOCAL long long g_spu_interp_ticks;
@@ -26798,7 +26800,16 @@ index 905b3517..bfbd0a2d 100644
 +#endif
 +        g_spurs_kt_wid[kt] = (long)wid;
 +    }
-     const int pm_halted = spu_run_with_halt(entry, ctx);
++    /* SPURS_WWS_NATIVE: the job taken by the native driver (spurs_wws_native.c), or this
++     * entry again when the run is not one it can take. */
++    spu_lifted_entry_fn run_entry = entry;
++    { int wn = g_spurs_wws_native;
++      if (__builtin_expect(wn < 0, 0)) wn = spurs_wws_native_init();
++      if (wn && wid < 31 && (wn >> wid & 1))
++          run_entry = spurs_wws_run_begin(ctx, entry, image_id, pm_host, pm_size, wkl_data,
++                                          wid, spurs_ea, spu_num, first); }
++    const int pm_halted = spu_run_with_halt(run_entry, ctx);
++    if (run_entry != entry) spurs_wws_run_end(ctx);
 +#ifdef _WIN32
 +    /* SPU_SLOW_PCT=<n> (diagnostic, default 0): after each module run, busy-wait
 +     * n% of the time the run took, on the same kernel thread. The SPU side of
@@ -26924,6 +26935,7 @@ index 905b3517..bfbd0a2d 100644
 +                  }
 +                  for (int ch = 0; ch < 32; ch++) s_rcc[w][ch] = 0;
 +              }
++              spurs_wws_native_report();
 +              s_w0 = t1;
 +          }
 +          ReleaseSRWLockExclusive(&s_pl);
@@ -26946,7 +26958,7 @@ index 905b3517..bfbd0a2d 100644
      /* A lane's run should only end through exitToKernel. Anything else strands
       * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
      if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-@@ -429,12 +793,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -429,12 +804,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */
@@ -26972,6 +26984,665 @@ index 905b3517..bfbd0a2d 100644
              fprintf(stderr, "[pm-pipe] wid=%u run#%lu first=%d halt_pc=0x%05X "
                      "loadState=%u->%u nextLoad=0x%X loadJob=0x%X runJob=0x%X storeJob=0x%X "
                      "lastStore=0x%X\n",
+diff --git a/runtime/spu/spurs_wws_native.c b/runtime/spu/spurs_wws_native.c
+new file mode 100644
+index 00000000..5f960c6e
+--- /dev/null
++++ b/runtime/spu/spurs_wws_native.c
+@@ -0,0 +1,616 @@
++/* spurs_wws_native.c -- the WWS job manager's control flow in C, for chosen workloads.
++ *
++ * What a lifted run of the job manager policy module spends around a job is mostly
++ * control: its state machine (LS 0x2CD0) waits in interrupt windows for the
++ * stall-and-notify sentinels it queued (0x2904), so each stage step costs an interrupt,
++ * a full register save and the guest's 0x3FEC0 stub. MFC transfers here complete inside
++ * the command write, so nothing is ever waited for. This driver takes one job through
++ * the same steps with interrupts off:
++ *
++ *   entry    C: the LS writes of 0xA00 and 0x2C30 (module_init)
++ *   claim    C: GETLLAR, gate on the entry, PUTLLC, through the channels the lifted
++ *               0x2460 uses (same LSA 0x80, same lock-line path)
++ *   stage    lifted 0x3158 (records, command GET, sentinel)
++ *   stalls   C: what the handler 0x2390 does, called between steps (service_stalls)
++ *   load     lifted 0x2E60 (the load commands; their cache rules stay the module's)
++ *   job      lifted 0x32A0, the same bracket as today, JobApi included
++ *   store    C: 0x33C0's slot change (copied from the lift), then lifted 0x3478 and
++ *               0x3554 (lane word, counters, readyCount) and 0x2B60 (buffers)
++ *   exit     lifted 0x2DB0
++ *
++ * Every store the PPU or another SPU can see comes from the lift, except the claim.
++ * The claim is one PUTLLC of one row, the store the lifted claim makes.
++ *
++ * The module's state lives in LS, so the lifted machine can take over between any two
++ * steps: before the claim commits, by entering 0xA00 as usual; after it, by branching
++ * to 0x2CD0's loop with the claim recorded where 0x30E0 would have left it. Either way
++ * the run ends the way a lifted run ends. spu_run_policy_module sees no difference.
++ *
++ * One job per run, as lifted: SPURS_PM_RERUN_US is what repeats it, so the kernel's
++ * idle cadence, rerun window, CURCONT and claim on the workload are unchanged.
++ * SPU LS addresses below are the module's (BCUS98232, fingerprint WWS_PM_FP).
++ *
++ * SPURS_WWS_CHECK=1: every other run the claim is made by the lifted code and compared
++ * with what the C claim computed from the same line; every run the staged record and
++ * command block are compared with the guest, and the end of the run with the ledger
++ * rules (lane released, pipeline idle). A mismatch prints a line and turns the path off.
++ */
++#include "spu_context.h"
++#include "spu_helpers.h"
++#include "spu_jobcap.h"
++#include "spurs_wws_native.h"
++#include "../platform/win32_compat.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#ifdef _WIN32
++#include <windows.h>
++#endif
++
++extern uint8_t* vm_base;
++extern uint32_t ppu_vm_size;
++extern uint64_t spu_workload_fingerprint(const void* data, size_t n);
++u128 spu_rdch(spu_context* ctx, uint32_t channel);
++uint32_t spu_rchcnt(spu_context* ctx, uint32_t channel);
++void spu_wrch(spu_context* ctx, uint32_t channel, u128 value);
++
++#define WWS_PM_FP 0xC8D774963A96DCF2ULL     /* spu_workload_fingerprint of the module */
++
++int g_spurs_wws_native = -1;
++static volatile int s_disabled;             /* a failed check: stays off whatever the mask says */
++static int s_check = -1, s_prof = -1;
++
++enum {
++    /* Before the claim: the run goes to the lifted entry, nothing changed. */
++    WWS_FB_FIRST, WWS_FB_MODULE, WWS_FB_LAB, WWS_FB_SHAPE, WWS_FB_BUSY, WWS_FB_TRACE,
++    WWS_FB_END, WWS_FB_NOP, WWS_FB_JUMP, WWS_FB_BLOCK, WWS_FB_TYPE, WWS_FB_CAS,
++    /* After it: the lifted state machine takes over mid-run. */
++    WWS_HO_RACED, WWS_HO_STALL, WWS_HO_SFLAG,
++    WWS_WHY
++};
++static const char* const k_why[WWS_WHY] = {
++    "first", "module", "lab", "shape", "busy", "trace",
++    "end", "nop", "jump", "block", "type", "cas",
++    "to-lifted:raced", "to-lifted:stall", "to-lifted:sflag"
++};
++#define WWS_PHASES 5
++static const char* const k_phase[WWS_PHASES] = { "claim", "stage", "load", "job", "tail" };
++static struct {
++    volatile long long runs, jobs, halted, checked, raced, why[WWS_WHY], ticks[WWS_PHASES], timed;
++} s_st[32];
++#define WWS_ADD(x, n) __atomic_add_fetch(&(x), (n), __ATOMIC_RELAXED)
++
++/* One run on this thread. */
++static SPU_THREAD_LOCAL struct {
++    spurs_wws_entry_fn entry;
++    uint32_t wid, spu, hdr;
++    int claimed, dry;
++    uint32_t n, idx, arg, cmd_size;           /* the claim */
++    uint16_t pred_hw, pred_next, pred_lane;
++    uint8_t entry8[8];
++    long long t[WWS_PHASES + 1];
++    unsigned long seq;
++} t_w;
++
++static inline uint32_t be16(const uint8_t* p) { return (uint32_t)p[0] << 8 | p[1]; }
++static inline uint32_t be32(const uint8_t* p)
++{ return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
++static inline void put16(uint8_t* p, uint32_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
++
++static inline uint32_t ls_state(const spu_context* ctx) { return be16(ctx->ls + 0x12A2); }   /* loadJobState */
++static inline int32_t ls_s32(const spu_context* ctx, uint32_t a) { return (int32_t)be32(ctx->ls + a); }
++
++static inline void wr(spu_context* ctx, uint32_t ch, uint32_t v) { spu_wrch(ctx, ch, spu_make_preferred_u32(v)); }
++static inline uint32_t rd(spu_context* ctx, uint32_t ch) { return spu_rdch(ctx, ch)._u32[0]; }
++
++/* ppu_vm_size is 0 when the whole 4 GB space is the guest's, as in the game. */
++static inline int wws_ea_ok(uint32_t ea, uint32_t n)
++{ return (uint64_t)ea + n <= (ppu_vm_size ? (uint64_t)ppu_vm_size : 0x100000000ull); }
++
++static inline void wws_mark(int phase)
++{
++#ifdef _WIN32
++    if (s_prof > 0) { LARGE_INTEGER q; QueryPerformanceCounter(&q); t_w.t[phase] = q.QuadPart; }
++#else
++    (void)phase;
++#endif
++}
++
++/* ---- the list ---------------------------------------------------------- */
++
++typedef struct {
++    uint32_t n, list, ea, hw, next, lane, type;
++    uint8_t q[16];     /* the entry at byte 0, what 0x2500 leaves in r3 */
++} wws_entry_view;
++
++/* Line layout per LIFT 0x2460-0x2540: +8 current list n, +0x30+4n list EA, +0x40+16n
++ * row {u16 high-water, u16 next, u16 per spuNum}; entries {u16 cmd, u16 type, u32 arg}. */
++static int wws_read_entry(const uint8_t* line, uint32_t spu, wws_entry_view* v)
++{
++    v->n = be32(line + 8);
++    if (v->n > 3) return WWS_FB_SHAPE;
++    const uint8_t* row = line + 0x40 + 16 * v->n;
++    v->hw = be16(row); v->next = be16(row + 2); v->lane = be16(row + 4 + 2 * spu);
++    v->list = be32(line + 0x30 + 4 * v->n);
++    v->ea = v->list + 8 * v->next;
++    if (!v->list || (v->ea & 7) || !wws_ea_ok(v->ea & ~15u, 16)) return WWS_FB_SHAPE;
++    const uint8_t* e = vm_base + (v->ea & ~15u);
++    const unsigned off = v->ea & 15u;
++    uint8_t raw[16];
++    memcpy(raw, e, 16);
++    for (unsigned i = 0; i < 16; i++) v->q[i] = raw[(i + off) & 15u];
++    v->type = be16(v->q + 2);
++    switch (v->type) {
++    case 1:  return -1;
++    case 0:  return WWS_FB_END;
++    case 3:  return WWS_FB_NOP;
++    case 4:  return WWS_FB_JUMP;
++    case 2: case 5: return WWS_FB_BLOCK;
++    default: return WWS_FB_TYPE;
++    }
++}
++
++/* The run's claim. Returns -1 with the row committed (or, dry, only computed), or a
++ * fallback reason with nothing written. The reservation of a refused line stays, as
++ * 0x25BC leaves it; the lifted entry's first GETLLAR replaces it. */
++static int wws_claim(spu_context* ctx, uint8_t* out_r3, uint8_t* out_r4, uint8_t* out_r5)
++{
++    const uint32_t spu = t_w.spu, hdr = t_w.hdr;
++    uint8_t* line = ctx->ls + 0x80;
++    for (int tries = 0; tries < 8; tries++) {
++        wr(ctx, MFC_LSA, 0x80);
++        wr(ctx, MFC_EAL, hdr);
++        wr(ctx, MFC_Cmd, MFC_GETLLAR_CMD);
++        (void)rd(ctx, MFC_RdAtomicStat);
++        wws_entry_view v;
++        const int r = wws_read_entry(line, spu, &v);
++        if (r >= 0) return r;
++        /* r56, r72 of 0x2500/0x2540: high-water = max(hw, next + 1), lane = min(lane, next),
++         * next + [0x13E0] (1: the header EA's low bit was refused in run_begin). */
++        const uint32_t adv = (v.next + 1) & 0xFFFFu;
++        t_w.pred_hw = (uint16_t)(v.hw > adv ? v.hw : adv);
++        t_w.pred_lane = (uint16_t)(v.lane > v.next ? v.next : v.lane);
++        t_w.pred_next = (uint16_t)adv;
++        t_w.n = v.n; t_w.idx = v.next;
++        t_w.arg = be32(v.q + 4); t_w.cmd_size = be16(v.q) & 511u;
++        memcpy(t_w.entry8, v.q, 8);
++        memcpy(out_r3, v.q, 16);
++        memset(out_r4, 0, 16); put16(out_r4 + 2, v.next);
++        memcpy(out_r5, line + 8, 8); memcpy(out_r5 + 8, line, 8);
++        if (t_w.dry) return -1;
++        uint8_t* row = line + 0x40 + 16 * v.n;
++        put16(row, t_w.pred_hw);
++        put16(row + 2, t_w.pred_next);
++        put16(row + 4 + 2 * spu, t_w.pred_lane);
++        wr(ctx, MFC_LSA, 0x80);
++        wr(ctx, MFC_EAL, hdr);
++        wr(ctx, MFC_Cmd, MFC_PUTLLC_CMD);
++        if (!(rd(ctx, MFC_RdAtomicStat) & 1u)) return -1;
++    }
++    return WWS_FB_CAS;
++}
++
++/* ---- the module around the job ----------------------------------------- */
++
++/* A lifted call, the bracket every lifted bisl uses. `link` is the address the lifted
++ * caller would have linked, so if the host frames are ever cut the guest flow is still
++ * right. */
++static void wws_call(spu_context* ctx, uint32_t pc, unsigned link_reg, uint32_t link)
++{
++    const int32_t si = (int32_t)ctx->image_id;
++    ctx->gpr[link_reg] = spu_link(link);
++    ctx->pc = pc;
++    ctx->host_depth++;
++    spu_indirect_branch(ctx);
++    spu_drain_call(ctx, link);
++    ctx->host_depth--;
++    spu_img_restore(ctx, si);
++}
++
++/* Branch at depth 0 from here on the lifted code finishes the run. */
++static void wws_to_lifted(spu_context* ctx, uint32_t pc)
++{
++    ctx->pc = pc;
++    spu_indirect_branch(ctx);
++}
++
++/* 0x2360: is every tag of `mask` complete? */
++static int wws_tags_done(spu_context* ctx, uint32_t mask)
++{
++    ctx->gpr[3] = spu_il((int)mask);
++    wws_call(ctx, 0x2360, 4, 0x2D10);
++    return ctx->gpr[3]._u32[0] != 0;
++}
++
++/* The LS writes of 0xA00 and 0x2C30 up to the state loop, in order, audit off (the
++ * workload's high word was refused otherwise), the trace buffer off (LS 0x175, refused
++ * in run_begin): 0x2760, 0x26A8/0x26D8 and 0x37B8 then store nothing of their own. */
++static void wws_module_init(spu_context* ctx)
++{
++    /* 0xA00 */
++    ctx->gpr[1] = spu_ls_read128(ctx, 0x15C0);
++    ctx->gpr[2] = spu_ai(ctx->gpr[1], 32);
++    ctx->gpr[6] = spu_il(0);
++    spu_ls_write128(ctx, ctx->gpr[1]._u32[0] + 0x0, ctx->gpr[2]);
++    spu_ls_write128(ctx, ctx->gpr[1]._u32[0] + 0x10, ctx->gpr[6]);
++    spu_ls_write128(ctx, ctx->gpr[1]._u32[0] + 0x20, ctx->gpr[6]);
++    /* 0x2C30 */
++    ctx->gpr[0] = spu_ilhu(0x180);
++    ctx->gpr[6] = spu_shlqbyi(ctx->gpr[4], 4);
++    ctx->gpr[2] = spu_il(0);
++    spu_ls_write128(ctx, 0x1540, ctx->gpr[4]);
++    ctx->gpr[7] = spu_andi(ctx->gpr[6], 1);
++    ctx->gpr[8] = spu_andi(ctx->gpr[6], -16);
++    ctx->gpr[7] = spu_sfi(ctx->gpr[7], 1);
++    spu_ls_write128(ctx, 0x1450, ctx->gpr[8]);
++    ctx->gpr[0] = spu_iohl(ctx->gpr[0], 0xA2C);
++    spu_ls_write128(ctx, 0x13E0, ctx->gpr[7]);
++    ctx->gpr[7] = spu_il(2);
++    spu_ls_write128(ctx, 0x1500, ctx->gpr[2]);
++    ctx->gpr[0] = spu_shli(ctx->gpr[0], 5);
++    spu_ls_write128(ctx, 0x12C0, ctx->gpr[2]);
++    ctx->gpr[2] = spu_ilhu(0x7107);
++    spu_ls_write128(ctx, 0x1300, ctx->gpr[7]);
++    ctx->gpr[2] = spu_iohl(ctx->gpr[2], 0x7345);
++    spu_ls_write128(ctx, 0x0, ctx->gpr[0]);
++    ctx->gpr[0] = spu_andi(ctx->gpr[5], 6);
++    spu_wrch(ctx, SPU_WrEventMask, ctx->gpr[7]);
++    spu_ls_write128(ctx, 0x3E000, ctx->gpr[2]);
++    spu_ls_write128(ctx, 0x1550, ctx->gpr[0]);
++    /* 0x3718 */
++    ctx->gpr[3] = spu_rotqbyi(spu_ls_read128(ctx, 0x1C0), 8);
++    spu_ls_write128(ctx, 0x1340, ctx->gpr[3]);
++    /* 0x2760, no audit buffer */
++    ctx->gpr[2] = spu_il(0);
++    ctx->gpr[5] = spu_ila(0xB00);
++    spu_ls_write128(ctx, 0xD80, ctx->gpr[5]);
++    spu_ls_write128(ctx, 0xDD0, ctx->gpr[2]);
++    spu_ls_write128(ctx, 0xDC0, ctx->gpr[2]);
++    spu_ls_write128(ctx, 0xD90, ctx->gpr[2]);
++    spu_ls_write128(ctx, 0xDB0, ctx->gpr[2]);
++    /* 0x3728 */
++    ctx->gpr[3] = spu_rotqbyi(spu_ls_read128(ctx, 0x1D0), 12);
++    spu_ls_write128(ctx, 0x1460, ctx->gpr[3]);
++    /* 0x37B8's first line, reached through 0x3698 */
++    wr(ctx, MFC_TagID, 7);
++}
++
++/* The handler 0x2390 between steps instead of behind an interrupt. Returns 1 when a
++ * tag other than the module's own stalled: a list the driver does not know. */
++static int wws_service_stalls(spu_context* ctx)
++{
++    if (!(ctx->event_status & ctx->event_mask)) return 0;
++    const u128 ev = spu_rdch(ctx, SPU_RdEventStat);
++    spu_wrch(ctx, SPU_WrEventAck, ev);
++    if (!spu_rchcnt(ctx, MFC_RdListStallStat)) return 0;
++    const uint32_t stalled = rd(ctx, MFC_RdListStallStat);
++    const uint32_t st = ls_state(ctx);
++    for (uint32_t m = stalled; m; ) {
++        const uint32_t tag = 31u - (uint32_t)__builtin_clz(m);
++        m ^= 1u << tag;
++        wr(ctx, MFC_WrListStallAck, tag);
++    }
++    if ((stalled & 1u) && st == 1) spu_ls_write128(ctx, 0x12A0, spu_il(2));
++    /* The handler spins on these two; here a tag that does not complete goes back to
++     * the module's loop, with the handler's work done so far. */
++    if (stalled & 8u)
++        for (int spin = 0; !wws_tags_done(ctx, 8); spin++)
++            if (spin > 4096) return 1;
++    if (stalled & 32u) {
++        for (int spin = 0; !wws_tags_done(ctx, 32); spin++)
++            if (spin > 4096) return 1;
++        wws_call(ctx, 0x2B60, 4, 0x2410);
++    }
++    if ((stalled & 64u) && ls_s32(ctx, 0x12F0) > -1)
++        do wws_call(ctx, 0x3478, 0, 0x242C); while (!ctx->gpr[3]._u32[0]);
++    return (stalled & ~(1u | 8u | 32u | 64u)) != 0;
++}
++
++/* 0x33C0 up to its call of 0x3478: the job leaves the run slot for the store slot and
++ * its buffer sets stop reserving pages. Copied from the lift, the mask from lifted 0x2970. */
++static void wws_store_start(spu_context* ctx)
++{
++    ctx->gpr[0] = spu_il(-1);
++    ctx->gpr[2] = spu_ls_read128(ctx, 0x12E0);
++    ctx->gpr[4] = spu_il(0);
++    spu_ls_write128(ctx, 0x12E0, ctx->gpr[0]);
++    ctx->gpr[0] = spu_il(16);
++    spu_ls_write128(ctx, 0x1300, ctx->gpr[2]);
++    ctx->gpr[6] = spu_shli(ctx->gpr[2], 6);
++    spu_ls_write128(ctx, 0x12B0, ctx->gpr[4]);
++    spu_ls_write128(ctx, 0x12F0, ctx->gpr[2]);
++    for (;;) {
++        /* 0x33F8 */
++        ctx->gpr[2] = spu_ila(0x8000);
++        ctx->gpr[7] = spu_ls_read128(ctx, ctx->gpr[6]._u32[0] + 0xDF0);
++        ctx->gpr[0] = spu_ai(ctx->gpr[0], -1);
++        ctx->gpr[4] = spu_rotqby(ctx->gpr[7], ctx->gpr[6]);
++        ctx->gpr[8] = spu_and(ctx->gpr[4], ctx->gpr[2]);
++        ctx->gpr[9] = spu_cwd(ctx->gpr[6], 0);
++        ctx->gpr[2] = spu_andc(ctx->gpr[4], ctx->gpr[2]);
++        ctx->gpr[5] = spu_rotqmbyi(ctx->gpr[2], -1);
++        ctx->gpr[4] = spu_rotmi(ctx->gpr[2], -16);
++        if (ctx->gpr[8]._u16[0] != 0) {
++            ctx->gpr[5] = spu_andi(ctx->gpr[5], 127);
++            ctx->gpr[4] = spu_andi(ctx->gpr[4], 255);
++            ctx->gpr[3] = spu_rotmi(ctx->gpr[2], -24);
++            ctx->gpr[4] = spu_mpy(ctx->gpr[4], ctx->gpr[5]);
++            ctx->gpr[2] = spu_shufb(ctx->gpr[2], ctx->gpr[7], ctx->gpr[9]);
++            spu_ls_write128(ctx, ctx->gpr[6]._u32[0] + 0xDF0, ctx->gpr[2]);
++            ctx->gpr[2] = spu_ls_read128(ctx, 0x1270);
++            ctx->gpr[7] = spu_ls_read128(ctx, 0x1280);
++            wws_call(ctx, 0x2970, 5, 0x3448);
++            ctx->gpr[2] = spu_andc(ctx->gpr[2], ctx->gpr[3]);
++            ctx->gpr[7] = spu_andc(ctx->gpr[7], ctx->gpr[4]);
++            spu_ls_write128(ctx, 0x1270, ctx->gpr[2]);
++            spu_ls_write128(ctx, 0x1280, ctx->gpr[7]);
++        }
++        /* 0x33E8 */
++        ctx->gpr[6] = spu_ai(ctx->gpr[6], 4);
++        if (ctx->gpr[0]._u32[0] == 0) break;
++    }
++}
++
++/* From the job's return to the exit: 0x2D18, 0x33C0, 0x345C, the idle path of the state
++ * loop and 0x2D90, without its interrupt windows. The buffers' store (0x2B60) queues its
++ * sentinel here, so that is where the lifted run takes its last interrupts. Anything but
++ * the plain case is the state loop's: a store still waiting, a job loaded ahead, a job
++ * that did not stop the claims (it polled "continue", or not at all). */
++static void wws_tail(spu_context* ctx)
++{
++    if (ls_s32(ctx, 0x12F0) > -1 || !wws_tags_done(ctx, 32)) { wws_to_lifted(ctx, 0x2D18); return; }
++    wws_store_start(ctx);
++    wws_call(ctx, 0x3478, 0, 0x3460);
++    if (!ctx->gpr[3]._u32[0] || ls_state(ctx) != 0 || ls_s32(ctx, 0x12C0) > -1 || ls_s32(ctx, 0x12F0) > -1) {
++        wws_to_lifted(ctx, 0x2CD0);
++        return;
++    }
++    wws_call(ctx, 0x2B60, 4, 0x2D90);
++    for (int pass = 0;; pass++) {
++        (void)wws_service_stalls(ctx);
++        if (wws_tags_done(ctx, 32)) break;
++        if (pass >= 8) { wws_to_lifted(ctx, 0x2D90); return; }
++    }
++    wws_to_lifted(ctx, 0x2DB0);
++}
++
++static void wws_note(int why) { WWS_ADD(s_st[t_w.wid].why[why], 1); }
++
++static void wws_check_fail(spu_context* ctx, const char* what, uint32_t a, uint32_t b)
++{
++    (void)ctx;
++    s_disabled = 1;
++    g_spurs_wws_native = 0;
++    fprintf(stderr, "[wws-native] CHECK FAILED wid=%u lane=%u hdr=0x%08X list=%u idx=%u: %s (%08X, expected %08X); path off\n",
++            t_w.wid, t_w.spu, t_w.hdr, t_w.n, t_w.idx, what, a, b);
++    fflush(stderr);
++}
++
++/* The lifted claim ran on the line the C claim read: same index, same result. A
++ * different index is another lane getting there first, not a mismatch. */
++static void wws_check_claim(spu_context* ctx, const uint8_t* pr3, const uint8_t* pr5)
++{
++    const uint32_t idx = be16(ctx->ls + 0x1472);
++    WWS_ADD(s_st[t_w.wid].checked, 1);
++    if (idx != t_w.idx || be32(ctx->ls + 0x1490) != be32(pr5)) { WWS_ADD(s_st[t_w.wid].raced, 1); return; }
++    if (memcmp(ctx->ls + 0x1480, pr3, 8)) wws_check_fail(ctx, "entry", be32(ctx->ls + 0x1480), be32(pr3));
++    const uint8_t* row = ctx->ls + 0x80 + 0x40 + 16 * t_w.n;
++    if (be16(row + 2) != t_w.pred_next) wws_check_fail(ctx, "next", be16(row + 2), t_w.pred_next);
++    /* Only below the prediction is wrong: the PPU may raise it between the two reads. */
++    if (be16(row) < t_w.pred_hw) wws_check_fail(ctx, "high-water", be16(row), t_w.pred_hw);
++    if (be16(row + 4 + 2 * t_w.spu) != t_w.pred_lane)
++        wws_check_fail(ctx, "lane", be16(row + 4 + 2 * t_w.spu), t_w.pred_lane);
++}
++
++/* What 0x3158 staged, against the claim: its record and the command block. */
++static void wws_check_stage(spu_context* ctx)
++{
++    const uint8_t* rec = ctx->ls + 0x14A0;
++    if (be32(ctx->ls + 0x12D0) != 0) wws_check_fail(ctx, "slot", be32(ctx->ls + 0x12D0), 0);
++    if (be32(rec) != (t_w.hdr | t_w.n)) wws_check_fail(ctx, "record header", be32(rec), t_w.hdr | t_w.n);
++    if (be32(rec + 8) != t_w.idx) wws_check_fail(ctx, "record index", be32(rec + 8), t_w.idx);
++    if (rec[6] != 1) wws_check_fail(ctx, "record step", rec[6], 1);
++    if (memcmp(ctx->ls + 0xC00, vm_base + t_w.arg, t_w.cmd_size))
++        wws_check_fail(ctx, "command block", be32(ctx->ls + 0xC00), be32(vm_base + t_w.arg));
++}
++
++static void wws_entry(spu_context* ctx)
++{
++    uint8_t r3[16], r4[16], r5[16];
++    t_w.claimed = 0;
++    t_w.dry = s_check > 0 && (++t_w.seq & 1u);
++    wws_mark(0);
++    const int why = wws_claim(ctx, r3, r4, r5);
++    if (why >= 0) {
++        wws_note(why);
++        t_w.entry(ctx);
++        return;
++    }
++    ctx->int_enable = 0;
++    wws_module_init(ctx);
++    if (t_w.dry) {
++        wws_call(ctx, 0x30E0, 0, 0x2D60);
++        wws_check_claim(ctx, r3, r5);
++    } else {
++        /* The end of 0x2540, then 0x30E0's stores. */
++        spu_ls_write128(ctx, 0x1530, spu_il(0));
++        memcpy(ctx->ls + 0x1480, r3, 16); memcpy(ctx->ls + 0x1400, r3, 16);
++        memcpy(ctx->ls + 0x1470, r4, 16); memcpy(ctx->ls + 0x13C0, r4, 16);
++        memcpy(ctx->ls + 0x1490, r5, 16); memcpy(ctx->ls + 0x13D0, r5, 16);
++    }
++    wws_mark(1);
++    if (!t_w.dry) {
++        spu_ls_write128(ctx, 0x15F0, spu_link(0x2D60));
++        wws_call(ctx, 0x3158, 0, 0x2D60);
++    }
++    wws_mark(2);
++    if (ls_state(ctx) == 0) {            /* only the lifted claim can get here: raced to a non-job */
++        wws_note(WWS_HO_RACED);
++        wws_to_lifted(ctx, 0x2D60);
++        return;
++    }
++    t_w.claimed = 1;
++    WWS_ADD(s_st[t_w.wid].jobs, 1);
++    if (s_check > 0) {
++        /* Lost the race in a checked claim: the job is another one, its fields the module's. */
++        if (t_w.dry && be16(ctx->ls + 0x1472) != t_w.idx) {
++            t_w.idx = be16(ctx->ls + 0x1472); t_w.n = be32(ctx->ls + 0x1490);
++        } else wws_check_stage(ctx);
++    }
++    /* Up to the run step: 0x2CD8, 0x2CE8 and 0x2CF8 without the interrupt window. Every
++     * tag here completes inside its command, so a pass or two does it; more means the
++     * module is waiting for something, and that is what its own loop is for. */
++    for (int pass = 0;; pass++) {
++        if (wws_service_stalls(ctx)) {
++            wws_note(WWS_HO_SFLAG);
++            wws_to_lifted(ctx, 0x2CD8);
++            return;
++        }
++        uint32_t st = ls_state(ctx);
++        if (st == 2) { wws_call(ctx, 0x2E60, 0, 0x2CF8); st = ls_state(ctx); }
++        if (st == 3 && wws_tags_done(ctx, 2)) break;
++        if (pass >= 8) {
++            wws_note(WWS_HO_STALL);
++            wws_to_lifted(ctx, 0x2CD8);
++            return;
++        }
++    }
++    wws_mark(3);
++    wws_call(ctx, 0x32A0, 0, 0x2D18);
++    /* Back where the lifted caller is. What stalled while the job ran is served here
++     * rather than in the window at 0x2DA0. */
++    ctx->int_enable = 0;
++    for (int pass = 0; pass < 8 && (ctx->event_status & ctx->event_mask); pass++)
++        (void)wws_service_stalls(ctx);
++    wws_mark(4);
++    wws_tail(ctx);
++}
++
++/* ---- entry points ------------------------------------------------------ */
++
++int spurs_wws_native_env_mask(void)
++{
++    int mask = 0;
++    for (const char* e = getenv("SPURS_WWS_NATIVE"); e && *e; ) {
++        char* p; const long w = strtol(e, &p, 10);
++        if (p == e) break;
++        if (w >= 0 && w < 31) mask |= 1 << w;
++        if (*p != ',') break;
++        e = p + 1;
++    }
++    return mask;
++}
++
++int spurs_wws_native_init(void)
++{
++    const int mask = spurs_wws_native_env_mask();
++    int expected = -1;
++    __atomic_compare_exchange_n(&g_spurs_wws_native, &expected, mask, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
++    if (mask) fprintf(stderr, "[wws-native] mask 0x%X%s\n", mask, getenv("SPURS_WWS_CHECK") ? " (checking)" : "");
++    return g_spurs_wws_native;
++}
++
++spurs_wws_entry_fn spurs_wws_run_begin(spu_context* ctx, spurs_wws_entry_fn entry, int image_id,
++                                       const uint8_t* pm_host, uint32_t pm_size, uint64_t wkl_data,
++                                       uint32_t wid, uint32_t spurs_ea, uint32_t spu_num, int first)
++{
++    (void)spurs_ea;
++    if (wid >= 32) return entry;
++    t_w.wid = wid; t_w.spu = spu_num; t_w.claimed = 0; t_w.t[0] = 0;
++    WWS_ADD(s_st[wid].runs, 1);
++    if (__builtin_expect(s_check < 0, 0)) { const char* e = getenv("SPURS_WWS_CHECK"); s_check = e && *e == '1'; }
++    if (__builtin_expect(s_prof < 0, 0)) { const char* e = getenv("SPURS_PM_PROF"); s_prof = e ? atoi(e) : 0; }
++    if (s_disabled) return entry;
++    int why = -1;
++    /* The module's identity, once per image: a workload pointing elsewhere is not this code. */
++    static const uint8_t* volatile s_pm_ok;
++    if (pm_host != s_pm_ok) {
++        if (image_id >= 0 && spu_workload_fingerprint(pm_host, pm_size) == WWS_PM_FP) s_pm_ok = pm_host;
++        else why = WWS_FB_MODULE;
++    }
++    const uint32_t hdr = (uint32_t)wkl_data;
++    /* Bit 0 of the header EA would make 0x13E0 zero (a claim that does not advance). */
++    if (why < 0 && first) why = WWS_FB_FIRST;
++    else if (why < 0 && (g_spu_jobcap_on > 0 || g_spu_jobrep_on > 0)) why = WWS_FB_LAB;
++    else if (why < 0 && ((wkl_data >> 32) || !hdr || (hdr & 127u) || spu_num >= 6 ||
++                         !wws_ea_ok(hdr, 128) ||
++                         ctx->gpr[4]._u32[0] != 0 || ctx->gpr[4]._u32[1] != hdr || ctx->gpr[5]._u32[0] != 0))
++        why = WWS_FB_SHAPE;
++    else if (why < 0 && (ls_state(ctx) != 0 || ls_s32(ctx, 0x12D0) > -1 || ls_s32(ctx, 0x12E0) > -1 ||
++                         ls_s32(ctx, 0x12F0) > -1 || ctx->list_stall_mask || ctx->list_stall_stat ||
++                         (ctx->event_status & 2u)))
++        why = WWS_FB_BUSY;
++    else if (why < 0 && ctx->ls[0x175] == 1) why = WWS_FB_TRACE;
++    if (why < 0) {
++        /* A look without the line lock, so that an empty list costs its idle run nothing. */
++        wws_entry_view v;
++        const int r = wws_read_entry(vm_base + hdr, spu_num, &v);
++        if (r >= 0) why = r;
++    }
++    if (why >= 0) { wws_note(why); return entry; }
++    t_w.entry = entry; t_w.hdr = hdr;
++    return wws_entry;
++}
++
++void spurs_wws_run_end(spu_context* ctx)
++{
++    const uint32_t wid = t_w.wid;
++    const int exited = ((uint32_t)ctx->pc & SPU_LS_MASK) == SPURS_PM_EXIT_TO_KERNEL_LS;
++    if (t_w.claimed && !exited) WWS_ADD(s_st[wid].halted, 1);
++#ifdef _WIN32
++    if (s_prof > 0 && t_w.claimed && t_w.t[4]) {
++        wws_mark(5);
++        for (int k = 0; k < WWS_PHASES; k++) WWS_ADD(s_st[wid].ticks[k], t_w.t[k + 1] - t_w.t[k]);
++        WWS_ADD(s_st[wid].timed, 1);
++        t_w.t[4] = 0;
++    }
++#endif
++    /* The ledger, for the job this run claimed: released from the lane word, and the
++     * pipeline empty (one job per run: a run that claimed more is not at this point). */
++    if (s_check > 0 && t_w.claimed && exited) {
++        const uint8_t* row = vm_base + t_w.hdr + 0x40 + 16 * t_w.n;
++        const uint32_t lane = be16(row + 4 + 2 * t_w.spu);
++        if (lane == t_w.idx) wws_check_fail(ctx, "lane word not released", lane, 0xFFFF);
++        if (ls_state(ctx) != 0) wws_check_fail(ctx, "load state at exit", ls_state(ctx), 0);
++        if (ls_s32(ctx, 0x12E0) > -1) wws_check_fail(ctx, "run slot at exit", be32(ctx->ls + 0x12E0), ~0u);
++        if (ls_s32(ctx, 0x12F0) > -1) wws_check_fail(ctx, "store slot at exit", be32(ctx->ls + 0x12F0), ~0u);
++        if (ctx->list_stall_mask) wws_check_fail(ctx, "parked list at exit", ctx->list_stall_mask, 0);
++    }
++    t_w.claimed = 0;
++}
++
++void spurs_wws_native_report(void)
++{
++#ifdef _WIN32
++    static LARGE_INTEGER s_f;
++    if (!s_f.QuadPart) QueryPerformanceFrequency(&s_f);
++#endif
++    for (unsigned w = 0; w < 32; w++) {
++        const long long runs = __atomic_exchange_n(&s_st[w].runs, 0, __ATOMIC_RELAXED);
++        if (!runs) continue;
++        char b[640];
++        const long long jobs = __atomic_exchange_n(&s_st[w].jobs, 0, __ATOMIC_RELAXED);
++        int p = snprintf(b, sizeof b, "[wws-native] w%u: runs=%lld native=%lld (%.0f%%)", w, runs, jobs,
++                         100.0 * (double)jobs / (double)runs);
++        const long long halted = __atomic_exchange_n(&s_st[w].halted, 0, __ATOMIC_RELAXED);
++        if (halted) p += snprintf(b + p, sizeof b - p, " stopped=%lld", halted);
++        for (int k = 0; k < WWS_WHY; k++) {
++            const long long n = __atomic_exchange_n(&s_st[w].why[k], 0, __ATOMIC_RELAXED);
++            if (n && p < (int)sizeof b - 40) p += snprintf(b + p, sizeof b - p, " %s=%lld", k_why[k], n);
++        }
++        const long long checked = __atomic_exchange_n(&s_st[w].checked, 0, __ATOMIC_RELAXED);
++        const long long raced = __atomic_exchange_n(&s_st[w].raced, 0, __ATOMIC_RELAXED);
++        if (checked) p += snprintf(b + p, sizeof b - p, " checked=%lld raced=%lld", checked, raced);
++#ifdef _WIN32
++        const long long timed = __atomic_exchange_n(&s_st[w].timed, 0, __ATOMIC_RELAXED);
++        if (timed) {
++            p += snprintf(b + p, sizeof b - p, " us/job:");
++            for (int k = 0; k < WWS_PHASES; k++) {
++                const long long t = __atomic_exchange_n(&s_st[w].ticks[k], 0, __ATOMIC_RELAXED);
++                p += snprintf(b + p, sizeof b - p, " %s=%.1f", k_phase[k], 1e6 * (double)t / (double)s_f.QuadPart / (double)timed);
++            }
++        }
++#endif
++        fprintf(stderr, "%s\n", b);
++    }
++}
+diff --git a/runtime/spu/spurs_wws_native.h b/runtime/spu/spurs_wws_native.h
+new file mode 100644
+index 00000000..d4706465
+--- /dev/null
++++ b/runtime/spu/spurs_wws_native.h
+@@ -0,0 +1,31 @@
++/* spurs_wws_native.h -- native control flow for one WWS job per policy module run. */
++#pragma once
++#include "spu_context.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Workloads on the native path, one bit per wid, read at each run so a port can
++ * flip it while the game runs. -1 = not read yet (SPURS_WWS_NATIVE decides). */
++extern int g_spurs_wws_native;
++
++/* SPURS_WWS_NATIVE=<wid>[,<wid>...] as a mask (0 when unset). */
++int spurs_wws_native_env_mask(void);
++/* First-use setup: sets g_spurs_wws_native from the environment, returns it. */
++int spurs_wws_native_init(void);
++
++/* What spu_run_with_halt should enter for this run: the native driver, or `entry`
++ * when the run is not one the driver can take. Reads the list; changes nothing. */
++typedef void (*spurs_wws_entry_fn)(spu_context*);
++spurs_wws_entry_fn spurs_wws_run_begin(spu_context* ctx, spurs_wws_entry_fn entry, int image_id,
++                                       const uint8_t* pm_host, uint32_t pm_size, uint64_t wkl_data,
++                                       uint32_t wid, uint32_t spurs_ea, uint32_t spu_num, int first);
++/* After spu_run_with_halt returned, on the same thread. */
++void spurs_wws_run_end(spu_context* ctx);
++/* One [wws-native] line per workload that ran; resets the counters. */
++void spurs_wws_native_report(void);
++
++#ifdef __cplusplus
++}
++#endif
 diff --git a/runtime/spu/tests/test_spu_direct.c b/runtime/spu/tests/test_spu_direct.c
 new file mode 100644
 index 00000000..d4998c5f
