@@ -1246,9 +1246,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - The walker's idle wait (x399, runZd, in-run lever `idle`): x396's walker gaps are not all small: ~0.7 gaps of about 8 ms a frame, 5.9 ms a frame, clustered at 7-8 ms and
       at 4 ms, one or two of the port loop's `Sleep(4)`. `GOW_IDLE_WAIT=2` (`Sleep(1)`) against 0: 14.42 / 13.79 game frames/s (+4.6%), 3.2 ms a frame less, frames/s up in 7 of 8
       blocks, block median +0.80 (quartiles +0.37 / +1.07; `none` +0.10, -0.18 / +0.40), `us_draw=` -2.6, EDGE module runs up 5.8% a window, at ~4.8 cores of other load.
-      First frame-rate lever since the driver. `GOW_IDLE_WAIT=1` (kick wait): 15.08 / 15.17, flat. A second arm is owed before a default.
+      `GOW_IDLE_WAIT=1` (kick wait): 15.08 / 15.17, flat.
       `SPURS_NAP_READY=60` (x399p): of passes after a pause, wid 8 is ready and not running in 15-19%, wid 3 in 10-11%, wid 10 in 7%, EDGE lists under 3%. Wid 31 reads 100%, an
       out-of-range slot of the counter, ignore it. Wid 8 runs on SPU 2 only.
+    - x399's gain did not repeat. Five more arms of `GOW_IDLE_WAIT=2` against 0 on runZd (x400, 1.5-2.3 cores of other load; x401, the same plus `burn.py 3` for the arm):
+      totals on / off 14.23 / 14.35, 14.23 / 14.45, 17.49 / 17.25, 14.39 / 14.11, 13.31 / 13.41 game frames/s; block medians -0.10, -0.60, +0.30, 0.00, -0.19 (`none` +0.10).
+      So x399i2 was the tail of the spread and the default stays `Sleep(4)`. The walker's 8 ms gaps are then not the sleep's length but no commands yet, as the
+      gap after the flip suggested. Three extra burning cores cost little here: x401's arms average 14.25 / 13.36 against 14.3 for x400a/b, so the loaded
+      column now holds within the run-to-run spread.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
