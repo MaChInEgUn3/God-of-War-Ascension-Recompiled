@@ -1175,6 +1175,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       frames/s from 300 s and 10.9 in the last window. Dark frames end at the load screen (last at frame 10800; the
       baseline's last is 13500), bright frames after that, spot-checked at three points. Check mode was not on in
       this run; its evidence is x385's full 480 s. The driver's default waits on a quiet same-exe pair (x390).
+    - Same-exe pair (x390, runZ6, warm-up then old new new old, 480 s, after three load samples under 1.3 cores; arms still
+      started at 0.9-2.7 cores of other load): 90.5 / 81.1 / 80.1 / 90.9 us a module run (-11%), 96% native / 0%, and 14.07 /
+      14.39 / 15.23 / 13.71 game frames/s from 300 s (the first two logs end at 450 s), old 13.9 against new 14.8, +6.6%. Both
+      pairs point the same way (+2% and +11%), but thirds of one arm range from 12.9 to 15.1, so the size is not pinned. A
+      10% cut with the EDGE chain ~0.75 binding (x377) predicts about 7%. So the driver is now the port's default
+      (`SPURS_WWS_NATIVE=15,16,17`, runZ7; `SPURS_WWS_NATIVE=off` goes back).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

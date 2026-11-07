@@ -805,6 +805,12 @@ int main(int argc, char** argv)
      * dispatch, x131) and ~7.4 with neither; adding 9,10,11,13 to the group was
      * noise (x132). */
     if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3;3,7=3");
+    /* SPURS_WWS_NATIVE=15,16,17 (the default now): the EDGE lists' job manager runs
+     * in C (spurs_wws_native.c), the jobs stay lifted. x388, in-run ABBA: 98.9 -> 89.2
+     * us per module run. x390, same exe, old new new old, 480 s: 90.5 / 81.1 / 80.1 /
+     * 90.9 us and 14.07 / 14.39 / 15.23 / 13.71 game frames/s. x389: 30 minutes, no
+     * stall. SPURS_WWS_NATIVE=off goes back to the lifted module. */
+    if (!getenv("SPURS_WWS_NATIVE")) _putenv_s("SPURS_WWS_NATIVE", "15,16,17");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE
      * lock they skew exactly the runs that measure timing. Set PS3_VERBOSE=1 to
