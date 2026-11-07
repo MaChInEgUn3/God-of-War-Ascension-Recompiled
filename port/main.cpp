@@ -285,6 +285,8 @@ extern "C" int g_spu_dma_diag;
 extern "C" int g_spurs_wws_native;
 extern "C" int g_spurs_wws_load;
 extern "C" int spurs_wws_native_env_mask(void);
+extern "C" int g_spurs_ab_mask;
+extern "C" long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
 static void ab_set(const char* lever, int on)
 {
@@ -307,16 +309,21 @@ static DWORD WINAPI ab_gate(LPVOID arg)
     Sleep(a.start_ms);
     LARGE_INTEGER f, t0, t1;
     QueryPerformanceFrequency(&f);
+    g_spurs_ab_mask = 7 << 15;   /* the EDGE lists */
     for (unsigned w = 0;; w++) {
         const int on = !(((w + 1) >> 1) & 1);
         ab_set(a.lever, on);
         QueryPerformanceCounter(&t0);
         const unsigned f0 = ab_frame();
+        const long long tk0 = g_spurs_ab_ticks, rn0 = g_spurs_ab_runs, nt0 = g_spurs_ab_native;
         Sleep(a.window_ms);
         const unsigned f1 = ab_frame();
         QueryPerformanceCounter(&t1);
-        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f\n", a.lever, w, on, f1 - f0,
-                (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart);
+        const long long runs = g_spurs_ab_runs - rn0;
+        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f\n",
+                a.lever, w, on, f1 - f0, (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart, runs,
+                g_spurs_ab_native - nt0,
+                runs ? 1e6 * (double)(g_spurs_ab_ticks - tk0) / (double)f.QuadPart / (double)runs : 0.0);
         fflush(stderr);
     }
     return 0;

@@ -10,7 +10,8 @@ import re
 import statistics
 import sys
 
-PAT = re.compile(r'\[ab\] lever=(\S+) w=(\d+) on=(\d) frames=(\d+) secs=([\d.]+)')
+PAT = re.compile(r'\[ab\] lever=(\S+) w=(\d+) on=(\d) frames=(\d+) secs=([\d.]+)'
+                 r'(?: runs=(\d+) native=(\d+) us_run=([\d.]+))?')
 
 
 def windows(path):
@@ -19,7 +20,8 @@ def windows(path):
         for line in f:
             m = PAT.search(line)
             if m:
-                rows[int(m.group(2))] = (m.group(1), int(m.group(3)), int(m.group(4)), float(m.group(5)))
+                rows[int(m.group(2))] = (m.group(1), int(m.group(3)), int(m.group(4)), float(m.group(5)),
+                                        int(m.group(6) or 0), int(m.group(7) or 0), float(m.group(8) or 0))
     return rows
 
 
@@ -36,7 +38,7 @@ def report(path):
         if not all(block) or any(b[2] == 0 for b in block):
             continue
         ms = {0: [], 1: []}
-        for _, on, frames, secs in block:
+        for _, on, frames, secs, *_ in block:
             ms[on].append(1000.0 * secs / frames)
             tot[on][0] += frames
             tot[on][1] += secs
@@ -53,6 +55,17 @@ def report(path):
         f, s = tot[on]
         if f:
             print(f'  on={on}: {f} frames in {s:.0f} s = {f / s:.2f} fps, {1000 * s / f:.2f} ms/frame')
+    us = {0: [], 1: []}
+    runs = {0: 0, 1: 0}
+    nat = {0: 0, 1: 0}
+    for r in rows.values():
+        if r[4]:
+            us[r[1]].append(r[6])
+            runs[r[1]] += r[4]
+            nat[r[1]] += r[5]
+    if us[0] and us[1]:
+        print(f'  EDGE module run: on {statistics.median(us[1]):.2f} us, off {statistics.median(us[0]):.2f} us (window medians);'
+              f' native share on {100 * nat[1] / max(1, runs[1]):.0f}%, off {100 * nat[0] / max(1, runs[0]):.0f}%')
 
 
 for p in sys.argv[1:]:

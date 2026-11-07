@@ -26464,7 +26464,7 @@ index 20089610..36e97069 100644
      CloseHandle(th);   /* detached */
  #else
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 905b3517..b6fc707f 100644
+index 905b3517..66d83a58 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -26,6 +26,9 @@
@@ -26772,7 +26772,7 @@ index 905b3517..b6fc707f 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -391,7 +587,186 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -391,7 +587,203 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -26810,8 +26810,25 @@ index 905b3517..b6fc707f 100644
 +      if (wn && wid < 31 && (wn >> wid & 1))
 +          run_entry = spurs_wws_run_begin(ctx, entry, image_id, pm_host, pm_size, wkl_data,
 +                                          wid, spurs_ea, spu_num, first); }
++#ifdef _WIN32
++    /* g_spurs_ab_mask: a port's in-run A/B times these workloads' runs, so a lever
++     * shows up in time per run, which other programs on the host disturb far less
++     * than frame time does. */
++    const int ab_timed = wid < 31 && (g_spurs_ab_mask >> wid & 1);
++    LARGE_INTEGER ab_t0 = {0};
++    if (__builtin_expect(ab_timed, 0)) QueryPerformanceCounter(&ab_t0);
++#endif
 +    const int pm_halted = spu_run_with_halt(run_entry, ctx);
 +    if (run_entry != entry) spurs_wws_run_end(ctx);
++#ifdef _WIN32
++    if (__builtin_expect(ab_timed, 0)) {
++        LARGE_INTEGER ab_t1;
++        QueryPerformanceCounter(&ab_t1);
++        __atomic_add_fetch(&g_spurs_ab_ticks, ab_t1.QuadPart - ab_t0.QuadPart, __ATOMIC_RELAXED);
++        __atomic_add_fetch(&g_spurs_ab_runs, 1, __ATOMIC_RELAXED);
++        if (run_entry != entry) __atomic_add_fetch(&g_spurs_ab_native, 1, __ATOMIC_RELAXED);
++    }
++#endif
 +#ifdef _WIN32
 +    /* SPU_SLOW_PCT=<n> (diagnostic, default 0): after each module run, busy-wait
 +     * n% of the time the run took, on the same kernel thread. The SPU side of
@@ -26960,7 +26977,7 @@ index 905b3517..b6fc707f 100644
      /* A lane's run should only end through exitToKernel. Anything else strands
       * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
      if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-@@ -429,12 +804,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -429,12 +821,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */
@@ -26988,10 +27005,10 @@ index 905b3517..b6fc707f 100644
                      "lastStore=0x%X\n",
 diff --git a/runtime/spu/spurs_wws_native.c b/runtime/spu/spurs_wws_native.c
 new file mode 100644
-index 00000000..5d1ffd18
+index 00000000..de157644
 --- /dev/null
 +++ b/runtime/spu/spurs_wws_native.c
-@@ -0,0 +1,970 @@
+@@ -0,0 +1,972 @@
 +/* spurs_wws_native.c -- the WWS job manager's control flow in C, for chosen workloads.
 + *
 + * What a lifted run of the job manager policy module spends around a job is mostly
@@ -27057,6 +27074,8 @@ index 00000000..5d1ffd18
 +#define WWS_PM_FP 0xC8D774963A96DCF2ULL     /* spu_workload_fingerprint of the module */
 +
 +int g_spurs_wws_native = -1;
++int g_spurs_ab_mask;
++long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 +static volatile int s_disabled;             /* a failed check: stays off whatever the mask says */
 +static int s_check = -1, s_prof = -1;
 +
@@ -27964,10 +27983,10 @@ index 00000000..5d1ffd18
 +}
 diff --git a/runtime/spu/spurs_wws_native.h b/runtime/spu/spurs_wws_native.h
 new file mode 100644
-index 00000000..1ac20a64
+index 00000000..677401d7
 --- /dev/null
 +++ b/runtime/spu/spurs_wws_native.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,38 @@
 +/* spurs_wws_native.h -- native control flow for one WWS job per policy module run. */
 +#pragma once
 +#include "spu_context.h"
@@ -27982,6 +28001,10 @@ index 00000000..1ac20a64
 +/* 0 lifted load, 1 C load, 2 C load and code buffer reuse; -1 = read SPURS_WWS_LOAD
 + * (default 2). Read at each load, so a port can flip it too. */
 +extern int g_spurs_wws_load;
++/* Workloads whose module runs are timed for an in-run A/B (one bit per wid, 0 = off):
++ * host ticks, runs, and runs the native driver took. */
++extern int g_spurs_ab_mask;
++extern long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 +
 +/* SPURS_WWS_NATIVE=<wid>[,<wid>...] as a mask (0 when unset). */
 +int spurs_wws_native_env_mask(void);

@@ -1154,6 +1154,23 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       three lists 59-60% busy at ~370k jobs a minute, ~97 us a job, against ~71% at ~400k (~106 us): about 8-9% less SPU time
       per job, inferred across runs at different load. The bound on what a job writes is measured, not proved; the
       check watches it. Frame rate not comparable, 4.8 cores of other load. Still off by default.
+    - x386 (runZ5, all three lists, in-run A/B at 2-5 cores of other load): `none` totals -0.3% in frame time, `wws` totals
+      1.4% and 2.1% faster, but block medians +1.7, +2.2, +1.5 ms a frame the other way. Heavy-tailed load noise, no
+      frame-rate claim. `[pm-jobt]` no longer owed for the job itself: 102 us a job was 78 proper + 24 wrapper (x381),
+      ~97 is ~83 + 14 (x385), where the driver's job phase also holds the call bracket, and the total fell by the wrapper's
+      drop. Stays off by default until a quiet paired A/B (three load samples under 1.3 cores, warm-up then old new
+      new old, 480 s) and one soak of 25-30 minutes, then a port default like `SPURS_LANES`.
+    - Sampler on the driver (x387, runZ5, 420 s, 4000 buckets, ~66% of non-wait samples covered): EDGE threads lifted 38%,
+      native 26%, other 10%, dispatch 9%, channels/MFC 8%, SPU other 5%, coherency 2%, overlay 1%, against dispatch 15%
+      and channels/MFC 11% in x379. `spu_indirect_branch_slow` fell from 3.7% to 1.2%. The module's lifted code is 2.7% of
+      an EDGE thread, so a native tail buys little. Lifted job code left is flat: d935 11.3%, 1bdd 6.1%, baef 5.5%, no
+      single function over 1.7%. The run was at 10.6 game frames/s under heavy other load, so the wait shares are
+      not comparable with x379.
+    - A metric the host cannot blur: `GOW_AB` now times the EDGE module runs per window (`g_spurs_ab_*`, `us_run=`, and how many
+      were native, which also proves the lever toggled). x388 (runZ6, 5 s windows, 300-680 s, ~3.4 cores of other
+      load): `none` 89.2 / 88.9 us a run, block difference +0.6 (quartiles -1.5 / +1.0). `wws` 89.2 us on against 98.9 off, native
+      share 94% / 0%, block difference -8.6 us (quartiles -10.8 / -7.2), 19 of 19 blocks. So the driver takes 9.8% off an
+      EDGE module run, measured inside one run. Frame time in the same run stays unreadable (quartiles -15 / +14 ms).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
