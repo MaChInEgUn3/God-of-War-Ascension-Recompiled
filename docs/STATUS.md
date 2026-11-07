@@ -1096,6 +1096,25 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       stage slowed 50% gives -33%; E also spins ~1.1 cores more than G. The EDGE chain paces the frame most;
       General6 less and noisily. The E2 and O2 arms were not run (the series was stopped for low host memory,
       another session active), so E stands on one arm. Next: the EDGE fragment queue (`work/edgefrag_scope.md`).
+    - In-run A/B (new, `GOW_AB=<lever>,<window s>,<start s>`, `scripts/abreport.py`): a lever that can change while the
+      game runs goes on, off, off, on... in fixed windows, so drift and host load fall on both sides. x378 (runZ1, 5 s
+      windows, 300-680 s, 19 blocks a run): a null lever gives -0.3 ms a frame on a quiet host (16.7 fps) and -0.8 ms
+      in a second run (14.7 fps). Under ~2.5 cores of other load (12.4 fps) window noise puts the resolution at about
+      +-1.8 ms, which is coarse but costs one run, and that run says nothing about other runs' levels.
+    - v0.19.0 picks, no rebase: upstream's per-thread caches for indirect-call targets, profiler breadcrumbs and HLE
+      NID lookups, and `ppu_gcm_pump` looking before it locks. Our own: a fast path for the plain indirect call
+      (`g_ppu_icall_fast`, about twenty switch tests skipped, `PPU_ICALL_FAST=0` for the old path), and one gate word over
+      the MFC path's thirty diagnostic blocks (`g_spu_dma_diag`, `SPU_DMA_LEAN=0`). x378: icall +0.6 ms a frame, dma
+      -0.2 ms, both inside the noise, no hang in four 690 s runs. Kept because they remove work and change nothing
+      else; neither is a frame-rate claim. Not picked: upstream's `vmx_fmaf` (our PPU code builds for x86-64-v3, `fmaf` is
+      one instruction), the parked-task compare-and-swap (ours has it), the address-only overlay reject (our registry
+      is hashed).
+    - True shares (x379, runZ1, 420 s, `PS3_SAMPLE_RANKS=4000`, buckets cover ~42% of an EDGE thread's non-wait samples
+      and 69% of the main thread's). EDGE threads: lifted 30%, native 26%, dispatch 15%, channels/MFC 11%, other 10%, SPU
+      other 5%, coherency 2%, overlay 1%. x364's 48% of runtime overhead came from the top 400 buckets, which favour the
+      runtime's tight code; the honest figure is about a third. Main thread: 60%+ of its samples are in the SPU wait
+      functions (`416338` 28.8, barrier `466E38` 19.4, `416610` 8.2, `464B0C` 4.0, `416A10` 3.1), `ps3_indirect_call` is
+      0.9%, store coherency 1.3%. So the main thread has slack and a cheaper store path would not move the frame.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

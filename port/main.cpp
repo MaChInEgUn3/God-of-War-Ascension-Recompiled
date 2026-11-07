@@ -272,6 +272,46 @@ static DWORD WINAPI heartbeat(LPVOID arg)
     return 0;
 }
 
+/* GOW_AB=<lever>,<window s>,<start s>: an A/B inside one run, for a switch that can
+ * change while the game runs. From <start s> the lever goes on, off, off, on, on, off...
+ * in windows of <window s>, and each window prints its game frames and seconds, so a
+ * slow drift of the scene cancels out (scripts/abreport.py reads the [ab] lines). Levers:
+ * icall (PPU indirect call fast path), dma (SPU MFC diagnostics gate), none (a null
+ * run, for the noise floor). */
+extern "C" int g_ppu_icall_fast;
+extern "C" int g_spu_dma_diag;
+struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
+static void ab_set(const char* lever, int on)
+{
+    if (!strcmp(lever, "icall")) g_ppu_icall_fast = on;
+    else if (!strcmp(lever, "dma")) g_spu_dma_diag = !on;
+}
+static unsigned ab_frame(void)
+{
+    const uint8_t* p = vm_base ? vm_base + 0x9710C8u : nullptr;
+    return p ? ((unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]) : 0;
+}
+static DWORD WINAPI ab_gate(LPVOID arg)
+{
+    const AbArg a = *(const AbArg*)arg;
+    Sleep(a.start_ms);
+    LARGE_INTEGER f, t0, t1;
+    QueryPerformanceFrequency(&f);
+    for (unsigned w = 0;; w++) {
+        const int on = !(((w + 1) >> 1) & 1);
+        ab_set(a.lever, on);
+        QueryPerformanceCounter(&t0);
+        const unsigned f0 = ab_frame();
+        Sleep(a.window_ms);
+        const unsigned f1 = ab_frame();
+        QueryPerformanceCounter(&t1);
+        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f\n", a.lever, w, on, f1 - f0,
+                (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart);
+        fflush(stderr);
+    }
+    return 0;
+}
+
 /* GOW_MAIN_PROF=<s>: sample the main PPU thread's guest call chain every 2 ms and
  * print, every s seconds, the most frequent chains (innermost caller first) with
  * their share of samples -- where a frame's time goes (waiting on SPU work vs
@@ -329,6 +369,11 @@ static DWORD WINAPI frame_clock(LPVOID)
       if (w && atoi(w) > 0) CreateThread(NULL, 0, clock_watch, (LPVOID)(uintptr_t)(atoi(w) * 1000), 0, NULL); }
     { const char* h = getenv("GOW_HEARTBEAT");
       if (h && atoi(h) > 0) CreateThread(NULL, 0, heartbeat, (LPVOID)(uintptr_t)(atoi(h) * 1000), 0, NULL); }
+    { const char* ab = getenv("GOW_AB");
+      if (ab) { static AbArg a; unsigned w = 10, st = 300; int n = 0;
+                sscanf(ab, "%15[^,],%u,%u%n", a.lever, &w, &st, &n);
+                a.window_ms = w * 1000; a.start_ms = st * 1000;
+                CreateThread(NULL, 0, ab_gate, &a, 0, NULL); } }
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "ps3recomp";
 
