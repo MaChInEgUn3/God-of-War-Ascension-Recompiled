@@ -1112,9 +1112,22 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - True shares (x379, runZ1, 420 s, `PS3_SAMPLE_RANKS=4000`, buckets cover ~42% of an EDGE thread's non-wait samples
       and 69% of the main thread's). EDGE threads: lifted 30%, native 26%, dispatch 15%, channels/MFC 11%, other 10%, SPU
       other 5%, coherency 2%, overlay 1%. x364's 48% of runtime overhead came from the top 400 buckets, which favour the
-      runtime's tight code; the honest figure is about a third. Main thread: 60%+ of its samples are in the SPU wait
+      runtime's tight code. About a third of the covered samples is runtime; the uncovered ones are almost certainly
+      thin lifted code, so its share of all EDGE busy time is lower still, likely 15-20% (inferred, not measured). Main thread: 60%+ of its samples are in the SPU wait
       functions (`416338` 28.8, barrier `466E38` 19.4, `416610` 8.2, `464B0C` 4.0, `416A10` 3.1), `ps3_indirect_call` is
       0.9%, store coherency 1.3%. So the main thread has slack and a cheaper store path would not move the frame.
+    - Four EDGE lanes (x380, runZ1, `SPURS_LANES=15,16,17=4;3,7=3` against the default three, warm-up then A B B A, 420 s,
+      game frames/s 300-390 s): warm-up 17.02, A 14.10 / 16.14, B 12.02 / 15.02. Other programs averaged 0.5-3 cores, so
+      that spread carries no frame-rate number; both pairs favoured three lanes and it is not pursued. x379 has the EDGE
+      threads ~39% in wait, so more lanes finding no gain points at a latency-bound chain, not a throughput-bound one.
+    - The policy module's wrapper around each EDGE job (x381, runZ2 = runZ1 as a lab build, `SPURS_PM_PROF=60`, 480 s,
+      four windows): w15-17 73-78 us job proper of 95-102 us per module run, proper/module 77%, so the wrapper is 23%
+      (22-24 us a job, ~22k jobs a second over the three lists). The run has no interrupt inside a job (they land in the
+      module's own windows), so its stall-and-notify cost sits in that 23%. Channel writes are 17% of the workload's
+      time, reads 2%, tag waits under 1%: the wrapper is work, not waiting. With x379's ~61% busy that is ~14% of EDGE
+      thread wall time; x377 has the EDGE chain ~0.75 binding, so a native job loop has a ceiling near +10% and
+      realistically +5-8% (inferred). General6 (wid 3) is 97% job proper at 1 ms a job, so that loop does nothing for it.
+      Next: a native job loop inside the kernel threads, one EDGE workload first, gated, and compared inside one run.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
