@@ -1278,6 +1278,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       alone on 2 lanes 13.11 / 13.11 game frames/s, on then off. RenJobSet and ModelServer on 2: 13.38 / 13.09, faster in 9 of 9 blocks. ModelServer alone on 2,
       twice: 12.94 / 12.68 (7 of 9) and 13.13 / 13.31 (3 of 9, that arm started at ~6 cores of other load). Two of three arms near +2%, one -1.3%: not a result
       at this resolution and no default. No stall and no wrong frames with either list on two lanes.
+      A lever that shortens the frame's tail would also raise `rsx_busy=` with `us_draw=` flat; x405b read +0.002 and -0.77, x406a flat, so the 9 of 9 was spread.
+    - The start of a frame (x402): in the 5 ms after the guest's flip request 4.9 of 6 SPUs are busy (quartiles 4.7-5.2), on BatchJobList 24%, the EDGE lists 44%,
+      RenderJobs 18%, wid 8 13%. The walker's first drain comes a median 5.9 ms after the request, and that pass ends on an EDGE park in 71% of frames. So the
+      frame opens with the SPU side full and the walker waiting for EDGE output: what sets the pace there is SPU job code, not scheduling or any host wait,
+      which matches every wait-side lever coming out flat (x397-x401, x405-x406).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
