@@ -301,6 +301,10 @@ static void ab_set(const char* lever, int on)
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
     else if (!strcmp(lever, "wwsload")) g_spurs_wws_load = on ? 2 : 0;
+    else if (!strcmp(lever, "wws8")) {   /* the driver on BrBDblBufWrkld only, the EDGE lists as set */
+        const int mask = spurs_wws_native_env_mask() & ~(1 << 8);
+        g_spurs_wws_native = on ? mask | 1 << 8 : mask;
+    }
     else if (!strcmp(lever, "wws")) {
         const int mask = spurs_wws_native_env_mask();
         g_spurs_wws_native = on ? (mask ? mask : 1 << 15) : 0;
@@ -317,7 +321,7 @@ static DWORD WINAPI ab_gate(LPVOID arg)
     Sleep(a.start_ms);
     LARGE_INTEGER f, t0, t1;
     QueryPerformanceFrequency(&f);
-    g_spurs_ab_mask = 7 << 15;   /* the EDGE lists */
+    g_spurs_ab_mask = !strcmp(a.lever, "wws8") ? 1 << 8 : 7 << 15;   /* us_run= of the lever's workloads: BrBDblBufWrkld, or the EDGE lists */
     g_gcm_ab_on = 1;
     for (unsigned w = 0;; w++) {
         const int on = !(((w + 1) >> 1) & 1);

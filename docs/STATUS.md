@@ -1265,6 +1265,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       - So the frame ends on wid 8 -> HighestPrio6 -> main thread -> commands, with wid 8 single-lane (`maxC=1`) and pinned to SPU 5, 77% of that thread
         (~0.65 core). No scheduling change helps a chain like that; its job code does.
       - `SPURS_NAP_READY` with the priority gate: wid 3 9-12%, wid 8 7-8%, wid 10 7%, others under 5%.
+    - Where wid 8 spends its time (x403, runZe, host sampler on threads running wid 8 only, 480 s, 14.8 game frames/s): job code ~60% (jobs `5bc2fd` 25%,
+      `3105a3` 20%, `c5a3be` 12%, `d3eebe` 4%, no function over 4.7%), dispatch ~16% (`spu_indirect_branch` 7.7, its slow path 2.3, `spu_drain_call_loop` 3.1),
+      `VCRUNTIME140` memcpy 8.5%, channels/MFC 5.7%, the lifted policy module 5.6%. A wid 8 module run takes ~189 us (x404l), against ~80 for an EDGE run.
+    - The native driver does not take wid 8 (x404, runZf, port lever `wws8`): check arm `SPURS_WWS_NATIVE=8,15,16,17 SPURS_WWS_CHECK=1`, 300 s: no CHECK FAILED,
+      EDGE lists 95% native, wid 8 0% native, every run declined as `shape`. Its workload data is `0x847D3480009FDF80`; the driver requires the high word 0
+      (the EDGE lists' is), and what the module does with that word is not known yet. The lever arm then toggled nothing: 13.99 / 14.18 game frames/s.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
