@@ -1208,6 +1208,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       Walker samples from 300 s: ntdll 18%; exe 51% (top buckets only): vertex fetch and remap about 19, `gcm_rsx_process_fifo_unlocked`
       with dispatch and the engine's method hook about 15, end of draw 4, textures about 4; the other 31% are drivers or
       buckets outside the top 4000.
+    - x393's unexplained 31% (x394, runZ9, sampler per thread and module, `passes=` and `words=`, 480 s, 13.5 game frames/s): the walker is
+      exe 60%, ntdll 19%, `nvoglv64` 10%, `VCRUNTIME140` (memcpy) 7%, `win32u` 3%. So the driver is about 13%, not the 31%. 34 FIFO words a
+      draw, 83k a frame, 153 passes/s, 215 draws a pass, so no spinning on empty passes. The FIFO block at about 15% of 27 us is ~118 ns a
+      word. No heap per draw (`free(d)` in the draw path is a debug branch) and `getenv` per pass is too rare to show (ucrtbase 0.6%).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

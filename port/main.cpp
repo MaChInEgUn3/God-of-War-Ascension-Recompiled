@@ -288,7 +288,7 @@ extern "C" int spurs_wws_native_env_mask(void);
 extern "C" int g_spurs_ab_mask;
 extern "C" long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 extern "C" int g_gcm_ab_on;
-extern "C" long long g_gcm_ab_ticks, g_gcm_ab_draws;
+extern "C" long long g_gcm_ab_ticks, g_gcm_ab_draws, g_gcm_ab_passes, g_gcm_ab_words;
 struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
 static void ab_set(const char* lever, int on)
 {
@@ -319,18 +319,18 @@ static DWORD WINAPI ab_gate(LPVOID arg)
         QueryPerformanceCounter(&t0);
         const unsigned f0 = ab_frame();
         const long long tk0 = g_spurs_ab_ticks, rn0 = g_spurs_ab_runs, nt0 = g_spurs_ab_native;
-        const long long gt0 = g_gcm_ab_ticks, gd0 = g_gcm_ab_draws;
+        const long long gt0 = g_gcm_ab_ticks, gd0 = g_gcm_ab_draws, gp0 = g_gcm_ab_passes, gw0 = g_gcm_ab_words;
         Sleep(a.window_ms);
         const unsigned f1 = ab_frame();
         const long long gt = g_gcm_ab_ticks - gt0, gd = g_gcm_ab_draws - gd0;
         QueryPerformanceCounter(&t1);
         const long long runs = g_spurs_ab_runs - rn0;
-        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f\n",
+        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f passes=%lld words=%lld\n",
                 a.lever, w, on, f1 - f0, (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart, runs,
                 g_spurs_ab_native - nt0,
                 runs ? 1e6 * (double)(g_spurs_ab_ticks - tk0) / (double)f.QuadPart / (double)runs : 0.0,
                 gd, gd ? 1e6 * (double)gt / (double)f.QuadPart / (double)gd : 0.0,
-                (double)gt / (double)(t1.QuadPart - t0.QuadPart));
+                (double)gt / (double)(t1.QuadPart - t0.QuadPart), g_gcm_ab_passes - gp0, g_gcm_ab_words - gw0);
         fflush(stderr);
     }
     return 0;
