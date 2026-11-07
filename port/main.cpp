@@ -288,7 +288,7 @@ extern "C" int spurs_wws_native_env_mask(void);
 extern "C" int g_spurs_ab_mask;
 extern "C" long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 extern "C" int g_gcm_ab_on, g_gcm_fast_args;
-extern "C" int ppu_spin_pause, g_spurs_nap_us;
+extern "C" int ppu_spin_pause, g_spurs_nap_us, g_spurs_lane_ovr[32];
 static int s_idle_wait = -1;   /* GOW_IDLE_WAIT */
 extern "C" long long g_gcm_ab_ticks, g_gcm_ab_draws, g_gcm_ab_passes, g_gcm_ab_words;
 struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
@@ -297,6 +297,12 @@ static void ab_set(const char* lever, int on)
     if (!strcmp(lever, "icall")) g_ppu_icall_fast = on;
     else if (!strcmp(lever, "dma")) g_spu_dma_diag = !on;
     else if (!strcmp(lever, "fifo")) g_gcm_fast_args = on;
+    else if (!strcmp(lever, "lanes")) {   /* GOW_AB_LANES="<wid>=<n>[,<wid>=<n>...]", default 11=2 */
+        const char* e = getenv("GOW_AB_LANES"); if (!e) e = "11=2";
+        while (*e) { int w = atoi(e); const char* q = strchr(e, '='); if (!q) break; int n = atoi(q + 1);
+                     if (w >= 0 && w < 32) g_spurs_lane_ovr[w] = on ? n : 0;
+                     e = strchr(q, ','); if (!e) break; e++; }
+    }
     else if (!strcmp(lever, "idle")) { const char* e = getenv("GOW_AB_IDLE"); s_idle_wait = on ? (e ? atoi(e) : 2) : 0; }
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }

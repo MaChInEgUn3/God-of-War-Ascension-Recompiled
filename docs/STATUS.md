@@ -1274,6 +1274,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - The native driver does not take wid 8 (x404, runZf, port lever `wws8`): check arm `SPURS_WWS_NATIVE=8,15,16,17 SPURS_WWS_CHECK=1`, 300 s: no CHECK FAILED,
       EDGE lists 95% native, wid 8 0% native, every run declined as `shape`. Its workload data is `0x847D3480009FDF80`; the driver requires the high word 0
       (the EDGE lists' is), and what the module does with that word is not known yet. The lever arm then toggled nothing: 13.99 / 14.18 game frames/s.
+    - More lanes for the lists before HighestPrio6 (x405, x406, runZg, toolkit `g_spurs_lane_ovr`, in-run lever `lanes`, `GOW_AB_LANES=<wid>=<n>,...`): RenJobSet
+      alone on 2 lanes 13.11 / 13.11 game frames/s, on then off. RenJobSet and ModelServer on 2: 13.38 / 13.09, faster in 9 of 9 blocks. ModelServer alone on 2,
+      twice: 12.94 / 12.68 (7 of 9) and 13.13 / 13.31 (3 of 9, that arm started at ~6 cores of other load). Two of three arms near +2%, one -1.3%: not a result
+      at this resolution and no default. No stall and no wrong frames with either list on two lanes.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

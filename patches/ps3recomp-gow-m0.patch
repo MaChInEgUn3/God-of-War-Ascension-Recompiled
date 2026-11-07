@@ -273,7 +273,7 @@ index 7fa8cab9..252b32bd 100644
                    hs->connected = 1; }
        /* PAD_SWEEP=<seconds per step>: walk the sticks through a fixed set of
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516f..11fa8b81 100644
+index 19a8516f..526744cc 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -13,8 +13,10 @@
@@ -1125,7 +1125,7 @@ index 19a8516f..11fa8b81 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,215 +1962,738 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,215 +1962,742 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1349,6 +1349,9 @@ index 19a8516f..11fa8b81 100644
 + * policy module at once, each as the SPU it plays (spuNum = that SPU), as the real kernel
 + * does for a workload whose maxContention allows it. Beyond the registered contention: a
 + * title that registered max 1 never had two SPUs in the module on hardware. Default off. */
++/* g_spurs_lane_ovr[w] > 0: a port's in-run A/B sets that workload's lanes from here. */
++int g_spurs_lane_ovr[SPURS_MAXW];
++
 +static int spurs_lanes_for(u32 wid)
  {
 -    AcquireSRWLockExclusive(&s_workload_registry_lock);
@@ -1356,6 +1359,7 @@ index 19a8516f..11fa8b81 100644
 -        if (s_workloads[wid].in_use && s_workloads[wid].spurs_ea == ea) {
 -            memset(&s_workloads[wid], 0, sizeof(s_workloads[wid]));
 -            spurs_scheduler_forget(wid);
++    if (wid < SPURS_MAXW && g_spurs_lane_ovr[wid] > 0) return g_spurs_lane_ovr[wid];
 +    static int s_init; static u8 s_n[SPURS_MAXW];
 +    if (!s_init) {
 +        for (const char* e = getenv("SPURS_LANES"); e && *e; ) {
@@ -1371,8 +1375,7 @@ index 19a8516f..11fa8b81 100644
 +            for (int i = 0; i < nw; i++) s_n[ws[i]] = (u8)(n > 0 ? n : 0);
 +            while (*e && *e != ';') e++;
 +            if (*e == ';') e++;
-         }
--    ReleaseSRWLockExclusive(&s_workload_registry_lock);
++        }
 +        s_init = 1;
 +    }
 +    return wid < SPURS_MAXW ? s_n[wid] : 0;
@@ -1922,7 +1925,8 @@ index 19a8516f..11fa8b81 100644
 +            s_hl_ran[wid] = (u8)(rr_found ? 2 : 1);   /* SPURS_WWS_HDR_LOG: 1 ran idle, 2 found work */
 +            InterlockedDecrement(&s_wid_busy[wid]);
 +            }
-+        }
+         }
+-    ReleaseSRWLockExclusive(&s_workload_registry_lock);
 +    }
  }
  
@@ -2033,7 +2037,7 @@ index 19a8516f..11fa8b81 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2701,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2705,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -2094,7 +2098,7 @@ index 19a8516f..11fa8b81 100644
      return CELL_OK;
  }
  
-@@ -2094,9 +2937,9 @@ s32 cellSpursEventFlagWait(CellSpursEventFlag* eventFlag, u16* bits,
+@@ -2094,9 +2941,9 @@ s32 cellSpursEventFlagWait(CellSpursEventFlag* eventFlag, u16* bits,
      if (vm_read8(ea + EF_CLEAR_MODE) == CELL_SPURS_EVENT_FLAG_CLEAR_AUTO) {
          /* Clear from the CURRENT word: bits an SPU set since `current` was
           * read must survive. */
@@ -2106,7 +2110,7 @@ index 19a8516f..11fa8b81 100644
      }
  
      ef_unlock(sync);
-@@ -2138,9 +2981,9 @@ s32 cellSpursEventFlagTryWait(CellSpursEventFlag* eventFlag, u16* bits,
+@@ -2138,9 +2985,9 @@ s32 cellSpursEventFlagTryWait(CellSpursEventFlag* eventFlag, u16* bits,
      u16 received = (mode == CELL_SPURS_EVENT_FLAG_AND) ? pattern
                                                         : (u16)(current & pattern);
      if (vm_read8(ea + EF_CLEAR_MODE) == CELL_SPURS_EVENT_FLAG_CLEAR_AUTO) {
@@ -2118,7 +2122,7 @@ index 19a8516f..11fa8b81 100644
      }
  
      ef_unlock(sync);
-@@ -2158,9 +3001,9 @@ s32 cellSpursEventFlagClear(CellSpursEventFlag* eventFlag, u16 bits)
+@@ -2158,9 +3005,9 @@ s32 cellSpursEventFlagClear(CellSpursEventFlag* eventFlag, u16 bits)
          return CELL_SPURS_TASK_ERROR_STAT;
  
      ef_lock(sync);
@@ -2130,7 +2134,7 @@ index 19a8516f..11fa8b81 100644
      ef_unlock(sync);
  
      return CELL_OK;
-@@ -3095,6 +3938,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3942,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -2173,7 +2177,7 @@ index 19a8516f..11fa8b81 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3981,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3985,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -2182,7 +2186,7 @@ index 19a8516f..11fa8b81 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +4002,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +4006,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -2213,7 +2217,7 @@ index 19a8516f..11fa8b81 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4306,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4310,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  
