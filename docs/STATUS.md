@@ -1238,6 +1238,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       blocks slower. Totals 16.47 / 16.67 and 16.68 / 16.91 game frames/s, on then off. The polls do not cost their siblings anything readable
       and a long pause costs a little, so x318's neutral stands and `PPU_SPIN_PAUSE` stays 0. These arms ran at 0.8-2.8 cores of other load and are
       the best sustained figures so far, 16.5-16.9 game frames/s.
+    - The kernel threads' pause, again (x398, runZc, in-run lever `nap`, toolkit `g_spurs_nap_us`, `GOW_AB_NAP=200` and 50): SPU gaps in x396 have a floor at 1 ms,
+      nothing between 0.2 and 1, because of `Sleep(1)` (~1.5 ms), so a job ready just after an empty pass could wait that long. A high-resolution pause
+      does not help: 15.80 / 16.06 and 15.98 / 15.73 game frames/s, on then off, `us_draw=` +0.9 and +1.4, `us_run=` +4.1 and +3.9 (about 5%). Threads that come
+      back sooner only contend more. So those gaps are mostly waits with no work ready, as x170 found at a lower rate; the default stays `Sleep(1)`.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
