@@ -1248,12 +1248,23 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       blocks, block median +0.80 (quartiles +0.37 / +1.07; `none` +0.10, -0.18 / +0.40), `us_draw=` -2.6, EDGE module runs up 5.8% a window, at ~4.8 cores of other load.
       `GOW_IDLE_WAIT=1` (kick wait): 15.08 / 15.17, flat.
       `SPURS_NAP_READY=60` (x399p): of passes after a pause, wid 8 is ready and not running in 15-19%, wid 3 in 10-11%, wid 10 in 7%, EDGE lists under 3%. Wid 31 reads 100%, an
-      out-of-range slot of the counter, ignore it. Wid 8 runs on SPU 2 only.
+      out-of-range slot of the counter, ignore it. Those shares counted every thread, also those that may never run a workload (wid 8,
+      BrBDblBufWrkld, has priority on SPU 5 only; the ftrace row 2 in x396 is that SPU's kernel thread, not SPU 2), so they overstate; x402 has the gated figures.
     - x399's gain did not repeat. Five more arms of `GOW_IDLE_WAIT=2` against 0 on runZd (x400, 1.5-2.3 cores of other load; x401, the same plus `burn.py 3` for the arm):
       totals on / off 14.23 / 14.35, 14.23 / 14.45, 17.49 / 17.25, 14.39 / 14.11, 13.31 / 13.41 game frames/s; block medians -0.10, -0.60, +0.30, 0.00, -0.19 (`none` +0.10).
       So x399i2 was the tail of the spread and the default stays `Sleep(4)`. The walker's 8 ms gaps are then not the sleep's length but no commands yet, as the
       gap after the flip suggested. Three extra burning cores cost little here: x401's arms average 14.25 / 13.36 against 14.3 for x400a/b, so the loaded
       column now holds within the run-to-run spread.
+    - Who the walker waits for at the end of a frame (x396 and x402, runZe = runZd + a park flag on the trace's DRAIN spans, `[main-prof]` split by the last quarter
+      of a game frame, `SPURS_NAP_READY` gated on each thread's priorities; 420 s, ftrace 20 s from 300 s, 13.8 game frames/s at the time):
+      - The walker's gaps of 3 ms or more (9.3 ms a frame in x402) are a block late in the frame, after it reached the frame's flip; their end time is flat modulo
+        16 ms, so no vblank pacing. 95% of passes end on a self-JUMP park.
+      - In the last quarter of a frame the main thread spends 44% of its samples at `0x467B2C` in `0x3B35B4`, the HighestPrio6 (wid 2) completion wait, and is not
+        blocked. HighestPrio6 runs at 91-94% of the frame, 1.46 ms a cluster, 1.25 clusters a frame, and in 60% of clusters it starts within 0.3 ms of a
+        BrBDblBufWrkld (wid 8) run ending (EDGE lists ~31%, RenJobSet 11 21%). From its end to the next guest flip request is a median 3.3 ms.
+      - So the frame ends on wid 8 -> HighestPrio6 -> main thread -> commands, with wid 8 single-lane (`maxC=1`) and pinned to SPU 5, 77% of that thread
+        (~0.65 core). No scheduling change helps a chain like that; its job code does.
+      - `SPURS_NAP_READY` with the priority gate: wid 3 9-12%, wid 8 7-8%, wid 10 7%, others under 5%.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

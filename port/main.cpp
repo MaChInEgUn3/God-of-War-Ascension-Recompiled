@@ -345,14 +345,19 @@ static DWORD WINAPI ab_gate(LPVOID arg)
 /* GOW_MAIN_PROF=<s>: sample the main PPU thread's guest call chain every 2 ms and
  * print, every s seconds, the most frequent chains (innermost caller first) with
  * their share of samples -- where a frame's time goes (waiting on SPU work vs
- * game code). */
+ * game code). Each chain also counts its samples in the last quarter of a game
+ * frame (by the time since the frame counter last moved, against the previous
+ * frame's length): what the main thread does while the walker waits for the
+ * next frame's commands. */
 extern "C" int ppu_thread_chain(unsigned tid, uint32_t* fn, uint32_t* ra, int max);
 static DWORD WINAPI main_prof(LPVOID arg)
 {
     const ULONGLONG win = (ULONGLONG)(uintptr_t)arg;
     enum { NB = 512, DEPTH = 3 };
-    static uint32_t key[NB][DEPTH]; static unsigned cnt[NB];
-    ULONGLONG w0 = GetTickCount64(); unsigned total = 0, fail = 0;
+    static uint32_t key[NB][DEPTH]; static unsigned cnt[NB], late_cnt[NB];
+    ULONGLONG w0 = GetTickCount64(); unsigned total = 0, fail = 0, late_total = 0;
+    LARGE_INTEGER qf, q; QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&q);
+    unsigned f_last = ab_frame(); LONGLONG f_t = q.QuadPart, f_len = qf.QuadPart / 15;
     for (;;) {
         Sleep(2);
         uint32_t fn[DEPTH] = {0, 0, 0}, ra[DEPTH];
@@ -360,7 +365,11 @@ static DWORD WINAPI main_prof(LPVOID arg)
         ppu_thread_chain(1, &lfn, &lr, -1);   /* live LR: the most recent call */
         const int n = ppu_thread_chain(1, fn, ra, DEPTH);
         if (n > 0) { fn[0] = ra[0]; fn[2] = lr; }  /* key: innermost call site, its fn, live LR */
-        total++;
+        QueryPerformanceCounter(&q);
+        { const unsigned f = ab_frame();
+          if (f != f_last) { if (f == f_last + 1) f_len = q.QuadPart - f_t; f_last = f; f_t = q.QuadPart; } }
+        const int late = (q.QuadPart - f_t) * 4 >= f_len * 3;
+        total++; late_total += late;
         if (n <= 0) fail++;
         else {
             int b = -1;
@@ -368,10 +377,19 @@ static DWORD WINAPI main_prof(LPVOID arg)
                 if (cnt[i] && key[i][0] == fn[0] && key[i][1] == fn[1] && key[i][2] == fn[2]) { b = i; break; }
                 if (!cnt[i] && b < 0) b = i;
             }
-            if (b >= 0) { if (!cnt[b]) memcpy(key[b], fn, sizeof fn); cnt[b]++; }
+            if (b >= 0) { if (!cnt[b]) { memcpy(key[b], fn, sizeof fn); late_cnt[b] = 0; } cnt[b]++; late_cnt[b] += late; }
         }
         if (GetTickCount64() - w0 >= win) {
-            fprintf(stderr, "[main-prof] %u samples (%u%% no chain):\n", total, total ? 100 * fail / total : 0);
+            fprintf(stderr, "[main-prof] %u samples (%u%% no chain), %u%% in the last quarter of a frame:\n", total,
+                    total ? 100 * fail / total : 0, total ? 100 * late_total / total : 0);
+            for (int r = 0; r < 8; r++) {
+                int best = -1;
+                for (int i = 0; i < NB; i++) if (late_cnt[i] && (best < 0 || late_cnt[i] > late_cnt[best])) best = i;
+                if (best < 0) break;
+                fprintf(stderr, "[main-prof] late %5.1f%%  ra %08X in %08X  lr %08X\n", 100.0 * late_cnt[best] / (late_total ? late_total : 1),
+                        key[best][0], key[best][1], key[best][2]);
+                late_cnt[best] = 0;
+            }
             for (int r = 0; r < 10; r++) {
                 int best = -1;
                 for (int i = 0; i < NB; i++) if (cnt[i] && (best < 0 || cnt[i] > cnt[best])) best = i;
@@ -380,7 +398,7 @@ static DWORD WINAPI main_prof(LPVOID arg)
                         key[best][0], key[best][1], key[best][2]);
                 cnt[best] = 0;
             }
-            memset(cnt, 0, sizeof cnt); total = fail = 0; w0 = GetTickCount64();
+            memset(cnt, 0, sizeof cnt); memset(late_cnt, 0, sizeof late_cnt); total = fail = late_total = 0; w0 = GetTickCount64();
             fflush(stderr);
         }
     }
