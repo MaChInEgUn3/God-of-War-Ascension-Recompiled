@@ -1262,10 +1262,13 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       - In the last quarter of a frame the main thread spends 44% of its samples at `0x467B2C` in `0x3B35B4`, the HighestPrio6 (wid 2) completion wait, and is not
         blocked. HighestPrio6 runs at 91-94% of the frame, 1.46 ms a cluster, 1.25 clusters a frame, and in 60% of clusters it starts within 0.3 ms of a
         BrBDblBufWrkld (wid 8) run ending (EDGE lists ~31%, RenJobSet 11 21%). From its end to the next guest flip request is a median 3.3 ms.
-      - So the frame ends on wid 8 -> HighestPrio6 -> main thread -> commands, with wid 8 single-lane (`maxC=1`) and pinned to SPU 5, 77% of that thread
-        (~0.65 core). No scheduling change helps a chain like that; its job code does.
+      - Correction, same day: the 60% is wid 8's base rate, not a link. Against random instants in the same 85-97% phase window, a wid 8 run ends within 0.3 ms
+        of 62% of them (lift 0.96 in x402, 1.04 in x396), and the EDGE lists sit at their base rates too. wid 8 is the audio workload, a continuous consumer.
+        What does stand out: ModelServer (wid 5) ends within 0.3 ms of 21% of HighestPrio6 starts against 4% at random (lift 5.6 and 4.7 in the two traces), and
+        RenJobSet (wid 11) has stopped for the next 1 ms in 93% of them against ~29% at random, so it finishes shortly before. wid 5 is 0.5 ms a frame, wid 11
+        13 ms; both are single-lane (`maxC=1`), on SPUs 0-4 and 0-5. The frame end is RenJobSet / ModelServer -> HighestPrio6 -> main thread -> commands.
       - `SPURS_NAP_READY` with the priority gate: wid 3 9-12%, wid 8 7-8%, wid 10 7%, others under 5%.
-    - Where wid 8 spends its time (x403, runZe, host sampler on threads running wid 8 only, 480 s, 14.8 game frames/s): job code ~60% (jobs `5bc2fd` 25%,
+    - (Measured before the correction above, so wid 8 is not the frame's gate.) Where wid 8 spends its time (x403, runZe, host sampler on threads running wid 8 only, 480 s, 14.8 game frames/s): job code ~60% (jobs `5bc2fd` 25%,
       `3105a3` 20%, `c5a3be` 12%, `d3eebe` 4%, no function over 4.7%), dispatch ~16% (`spu_indirect_branch` 7.7, its slow path 2.3, `spu_drain_call_loop` 3.1),
       `VCRUNTIME140` memcpy 8.5%, channels/MFC 5.7%, the lifted policy module 5.6%. A wid 8 module run takes ~189 us (x404l), against ~80 for an EDGE run.
     - The native driver does not take wid 8 (x404, runZf, port lever `wws8`): check arm `SPURS_WWS_NATIVE=8,15,16,17 SPURS_WWS_CHECK=1`, 300 s: no CHECK FAILED,
