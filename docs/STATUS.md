@@ -1191,6 +1191,23 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       stage (linear ratio) EDGE is about half and General6 small. It stays the largest single binder; x377 had it at
       about three quarters on one arm of the old build, inside this noise, so no claim that the share fell. The O1
       arm is the best figure so far: quiet ~17 game frames/s, loaded ~13.8-15.
+    - The walker binds again (x392, runZ7, `RSX_SLOW_PCT=50`, O R R O, 480 s, game frames/s 360-450 s, no reap): O 15.00 / 14.24, R
+      12.73 / 13.68, -9.7%, adjacent pairs -15% and -4%; O2 ran at 4.3 cores of other load against 2.9 for R2, so the
+      second pair understates. Likely -10 to -15%, about 0.3-0.45 of a binding stage. x376 had a 25% walker probe helping
+      by 8%, so the sign flipped: the SPU side got faster and the two chains are near balance, which fits an 11% EDGE cut buying
+      about 6%. The probe also holds the FIFO lock while it spins. The `us_run=` covariate fails here: the R arms read 74.5 /
+      73.6 against 80.5 / 82.7 with load rising, because a slower walker means fewer concurrent module runs, so the
+      regression's -24% is not a result. It only serves a probe that leaves `us_run=` alone. That also weakens x391's adjusted E
+      figure (E2 76.5 against O2 84.5), so read E as -12% to -18%. Parked walker levers are open again. Next: an in-run walker
+      metric like `us_run=`, since frame time cannot resolve a walker lever.
+    - A walker metric inside a run (x393, runZ8, toolkit `g_gcm_ab_*`, `GOW_AB=none`, 480 s, with the host sampler, ~2.4 cores of other
+      load, 13.7 game frames/s): `[ab]` now prints `draws=`, `us_draw=` (time in FIFO passes per guest draw, lock wait and probe
+      spin left out) and `rsx_busy=`. 27.2 us a draw, quartiles 26.2-28.3, walker busy 0.89 of a core, ~2470 draws a frame, so
+      about 67 of a 73 ms frame. Block difference of `us_draw=` under `none`: 0.6 us of 27 by window medians. Frames/s follows it by
+      5 s window at r -0.97, partly an identity with busy and draws a frame both nearly flat, so it is a readout, not proof.
+      Walker samples from 300 s: ntdll 18%; exe 51% (top buckets only): vertex fetch and remap about 19, `gcm_rsx_process_fifo_unlocked`
+      with dispatch and the engine's method hook about 15, end of draw 4, textures about 4; the other 31% are drivers or
+      buckets outside the top 4000.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

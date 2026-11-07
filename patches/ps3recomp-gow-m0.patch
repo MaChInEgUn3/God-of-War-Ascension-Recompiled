@@ -2511,7 +2511,7 @@ index 734a2b78..d0b99dfe 100644
  s32 cellGameDataCheckCreate(u32 version, const char* dirName, u32 errDialog,
                              void* funcStat, u32 container);
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index efad9b92..a3b2330c 100644
+index efad9b92..4e4d104d 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -22,6 +22,7 @@
@@ -3070,7 +3070,7 @@ index efad9b92..a3b2330c 100644
  static void gcm_fifo_dump_around(u32 getoff)
  {
      /* Only ever called on a recovery (bad branch, stuck get), and capped, so
-@@ -1703,13 +2112,47 @@ void cellGcm_ref_on_poll(void)
+@@ -1703,13 +2112,58 @@ void cellGcm_ref_on_poll(void)
          SetEvent(s_gcm_kick_ev);       /* dry: ask the present thread to walk */
  }
  
@@ -3102,6 +3102,13 @@ index efad9b92..a3b2330c 100644
 + * walker limits frames/s, frames/s falls by about n/(100+n). */
 +static int s_rsx_slow_pct = -1;
 +
++/* g_gcm_ab_on: a port's in-run A/B reads the walker per window: the time in passes,
++ * without the wait for the FIFO lock or the RSX_SLOW_PCT spin, and the guest draws
++ * (counted in rsx_draw_engine.c). Time per draw is a walker lever's figure, where
++ * frame time on a loaded host cannot resolve one. */
++int g_gcm_ab_on;
++long long g_gcm_ab_ticks, g_gcm_ab_draws;
++
  void cellGcm_rsx_process_fifo(void)
  {
      const uint64_t ft_t0 = PS3_FT_ON() ? ps3_ft_now() : 0;
@@ -3109,7 +3116,11 @@ index efad9b92..a3b2330c 100644
 +    LARGE_INTEGER sl0, sl1;
 +    if (s_rsx_slow_pct > 0) QueryPerformanceCounter(&sl0);
      AcquireSRWLockExclusive(&s_gcm_fifo_lock);
++    const int ab_on = g_gcm_ab_on;
++    LARGE_INTEGER ab0, ab1;
++    if (ab_on) QueryPerformanceCounter(&ab0);
      gcm_rsx_process_fifo_unlocked();
++    if (ab_on) { QueryPerformanceCounter(&ab1); g_gcm_ab_ticks += ab1.QuadPart - ab0.QuadPart; }
 +    if (s_rsx_slow_pct > 0) {
 +        QueryPerformanceCounter(&sl1);
 +        const LONGLONG until = sl1.QuadPart + (sl1.QuadPart - sl0.QuadPart) * s_rsx_slow_pct / 100;
@@ -3118,7 +3129,7 @@ index efad9b92..a3b2330c 100644
      ReleaseSRWLockExclusive(&s_gcm_fifo_lock);
      if (ft_t0) {
          const uint64_t t1 = ps3_ft_now();
-@@ -1750,7 +2193,19 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1750,7 +2204,19 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * that does read the context (the ring-recycle heuristic) is separately guarded
       * by s_gcm_ctx_out_ea, which stays 0 on that path. */
      if (!s_gcm_context_ea && !s_gcm_syscall_mode) return;
@@ -3139,7 +3150,7 @@ index efad9b92..a3b2330c 100644
  
      /* Walk the FIFO exactly like the RSX: chase the guest-written `put` (an IO
       * offset in the control register), decoding method headers and following
-@@ -1841,6 +2296,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1841,6 +2307,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
            fflush(stderr);
        } }
  
@@ -3147,7 +3158,7 @@ index efad9b92..a3b2330c 100644
      int budget = 0x100000;                    /* words per tick cap */
      /* GCM_DRAINDBG also reports WHY each pass stopped. A drain that ends far
       * short of `put` every tick is the signature of a FIFO that can never
-@@ -1874,6 +2330,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1874,6 +2341,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
              break;
          }
          u32 w = vm_read32(ea);
@@ -3155,7 +3166,7 @@ index efad9b92..a3b2330c 100644
          /* Only remember offsets BELOW put -- those are positions in the
           * ring the title is writing. A park in another region is where the
           * walker gave up, not how far it got through the ring. */
-@@ -1911,6 +2368,17 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1911,6 +2379,17 @@ static void gcm_rsx_process_fifo_unlocked(void)
                    nop = hdr = jmp = cal = ret = 0; t0 = now;
                } } }
          u32 type = w >> 29;
@@ -3173,7 +3184,7 @@ index efad9b92..a3b2330c 100644
  
          if ((w & 0xFFFF0000u) == 0xFEAD0000u) {
              /* lv1 driver flip: statically-linked libgcm cellGcmSetFlip writes
-@@ -1955,12 +2423,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1955,12 +2434,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
               * "Command Buffer Overflow" forever. Past the threshold keep
               * draining -- the intermediate presents are frames we are too far
               * behind to show anyway. No-op for a title that is keeping up. */
@@ -3197,7 +3208,7 @@ index efad9b92..a3b2330c 100644
                  { why = "flip"; break; }
              continue;
          }
-@@ -1970,7 +2446,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1970,7 +2457,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
                                 s_fifo_getoff, w & 0x1FFFFFFCu, put); }
              { u32 tgt = w & 0x1FFFFFFCu;
@@ -3206,7 +3217,7 @@ index efad9b92..a3b2330c 100644
                /* A JUMP to its own address is the "park the RSX here" idiom:
                 * the title leaves it at the write head so the GPU stops if it
                 * catches up, and overwrites it when the next segment is
-@@ -1979,6 +2455,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1979,6 +2466,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * CPU the guest needs. Stop this pass instead; the next one
                 * re-reads the word, so a patched jump is still followed. */
                if (tgt == s_fifo_getoff) {
@@ -3215,7 +3226,7 @@ index efad9b92..a3b2330c 100644
                    /* Parked. If the title has meanwhile moved `put` somewhere
                     * else, it has switched to its other segment and left this
                     * park standing -- it only patches a park when it reuses that
-@@ -1996,10 +2474,16 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1996,10 +2485,16 @@ static void gcm_rsx_process_fifo_unlocked(void)
                     * patch time to arrive, and resync only for a park that
                     * has stood with the same put for longer than any title
                     * takes between the two stores. */
@@ -3235,7 +3246,7 @@ index efad9b92..a3b2330c 100644
                        const unsigned long long now = ps3_ms_now();
                        if (park_off != s_fifo_getoff || park_put != put) {
                            park_off = s_fifo_getoff; park_put = put; park_since = now;
-@@ -2014,6 +2498,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2014,6 +2509,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
                    break;
                }
                if (tgt < s_fifo_getoff) s_fifo_back_jumps++;
@@ -3244,7 +3255,7 @@ index efad9b92..a3b2330c 100644
                s_fifo_getoff = tgt;
                /* get is the RSX's fetch pointer: a title polling it sees the
                 * GPU leave a segment as soon as the JUMP out of it is taken.
-@@ -2025,7 +2511,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2025,7 +2522,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          }
          if ((w & 3) == 2) {                    /* CALL: offset | 2 */
              { u32 tgt = w & 0x1FFFFFFCu;
@@ -3253,7 +3264,7 @@ index efad9b92..a3b2330c 100644
                s_fifo_calloff = s_fifo_getoff + 4;
                s_fifo_getoff  = tgt; }
              continue;
-@@ -2078,8 +2564,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2078,8 +2575,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      u32 m = (type == 0) ? method + i * 4 : method;
                      u32 v = vm_read32(dea);
                      u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
@@ -3270,7 +3281,7 @@ index efad9b92..a3b2330c 100644
                      /* PS3_FTRACE: an acquire this walker sat on is satisfied now. */
                      if (m == 0x68u && s_ft_sema_t0 && vm_read32(la) == v) {
                          ps3_ft_span(PS3_FT_SEMA, 0, s_sema_offset, v, s_ft_sema_t0, ps3_ft_now());
-@@ -2133,7 +2625,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2133,7 +2636,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
              }
          }
                  }
@@ -3299,7 +3310,7 @@ index efad9b92..a3b2330c 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -2287,31 +2799,86 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2287,31 +2810,86 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  } else if (mfull == 0xE920u || mfull == 0xE924u) {
                      cellGcmSetFlipCommand(vm_read32(dea) & 7u);
                  } else if (subch == 0 || (subch == 1 && !s1_2d)) {
@@ -3392,7 +3403,7 @@ index efad9b92..a3b2330c 100644
                          } else if (idx < CELL_GCM_MAX_REPORT_COUNT) {
                              s_report_data[idx].timestamp = ts;
                              s_report_data[idx].value = val;
-@@ -2392,12 +2959,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2392,12 +2970,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * for good that way in about one New Marais run in five ("stuck-get" at a
       * self-jump with no "jump-park" before it). */
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -3423,7 +3434,7 @@ index efad9b92..a3b2330c 100644
  
      /* Publish progress: get chases put; ref advances at most ONE queued fence
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
-@@ -2794,8 +3378,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2794,8 +3389,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * Rewinding it to `begin` in mid-frame cut the frame short, dropping the
       * fence release in its tail, and the title then waited for it forever. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -3440,7 +3451,7 @@ index efad9b92..a3b2330c 100644
      if (runtime_ring && end - (cur + 4) < GCM_FLIP_WRAP_BYTES && io_begin != 0xFFFFFFFFu &&
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
-@@ -3094,9 +3685,75 @@ static u32 gcm_io_alloc(u32 size)
+@@ -3094,9 +3696,75 @@ static u32 gcm_io_alloc(u32 size)
      return 0xFFFFFFFFu;
  }
  
@@ -3516,7 +3527,7 @@ index efad9b92..a3b2330c 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -3151,6 +3808,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3151,6 +3819,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -3524,7 +3535,7 @@ index efad9b92..a3b2330c 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -3159,6 +3817,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3159,6 +3828,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -3532,7 +3543,7 @@ index efad9b92..a3b2330c 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -3194,7 +3853,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -3194,7 +3864,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -3545,7 +3556,7 @@ index efad9b92..a3b2330c 100644
  s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
  {
      /* RPCS3 cellGcmSys.cpp accepts exactly STRICT_ORDERING (not an arbitrary
-@@ -3202,8 +3865,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
+@@ -3202,8 +3876,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
       * order after its acquire fence; there is no relaxed DMA mapping path to
       * select here. Preserve that path rather than pretending to enable a new
       * ordering mode by storing an unused flag. */
@@ -3558,7 +3569,7 @@ index efad9b92..a3b2330c 100644
      if ((ea | io | size) & 0xFFFFFu || !size)
          return CELL_GCM_ERROR_INVALID_ALIGNMENT;
      const u64 ea_end = (u64)ea + size;
-@@ -3242,8 +3908,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -3242,8 +3919,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -3589,7 +3600,7 @@ index efad9b92..a3b2330c 100644
      IoMapping* mapping = find_mapping_by_io(io);
      if (!mapping)
          return CELL_GCM_ERROR_FAILURE;
-@@ -3688,6 +4376,7 @@ void cellGcmTerminate(void)
+@@ -3688,6 +4387,7 @@ void cellGcmTerminate(void)
      memset(&s_config, 0, sizeof(s_config));
      memset(&s_control, 0, sizeof(s_control));
      memset(s_io_mappings, 0, sizeof(s_io_mappings));
@@ -3783,7 +3794,7 @@ index b58a830b..807bac71 100644
      /* coverage accounting */
      u32 seen[RSX_DSP_NUM_REGS];       /* per-register write count           */
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b3..2b3e0daf 100644
+index f99986b3..f8a3eb73 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -22,6 +22,9 @@
@@ -6312,7 +6323,7 @@ index f99986b3..2b3e0daf 100644
      g.be->bind_textures(g.be->user, textures, samplers, tex_mask);
      g.be->bind_vertex_textures(g.be->user, vtextures, vsamplers, vtex_mask);
      g.be->set_viewport(g.be->user, 0.0f, 0.0f, W, H);
-@@ -2721,9 +4528,126 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2721,13 +4528,130 @@ static void sink_end(void* user, const rsx_dispatch* r)
          g.be->set_depth_bounds(g.be->user, fmin, fmax);
      }
  
@@ -6441,6 +6452,11 @@ index f99986b3..2b3e0daf 100644
      /* Counted only when the draw ran the guest's OWN programs, which is what
       * the test hook means: a draw through the built-in pair is a draw, not
       * evidence that the decompile-translate-compile path worked. */
+-    if (!pipeline_is_fixed) g.guest_draws++;
++    if (!pipeline_is_fixed) { extern long long g_gcm_ab_draws; g.guest_draws++; g_gcm_ab_draws++; }
+ 
+     if (rs.color_mask) eng_surfaces_wrote(targets, n_targets);
+     if (zslot != ENG_INVALID && rs.depth_test && rs.depth_write) {
 @@ -2738,6 +4662,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
  
  static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
