@@ -289,6 +289,7 @@ extern "C" int g_spurs_ab_mask;
 extern "C" long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 extern "C" int g_gcm_ab_on, g_gcm_fast_args;
 extern "C" int ppu_spin_pause, g_spurs_nap_us;
+static int s_idle_wait = -1;   /* GOW_IDLE_WAIT */
 extern "C" long long g_gcm_ab_ticks, g_gcm_ab_draws, g_gcm_ab_passes, g_gcm_ab_words;
 struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
 static void ab_set(const char* lever, int on)
@@ -296,6 +297,7 @@ static void ab_set(const char* lever, int on)
     if (!strcmp(lever, "icall")) g_ppu_icall_fast = on;
     else if (!strcmp(lever, "dma")) g_spu_dma_diag = !on;
     else if (!strcmp(lever, "fifo")) g_gcm_fast_args = on;
+    else if (!strcmp(lever, "idle")) { const char* e = getenv("GOW_AB_IDLE"); s_idle_wait = on ? (e ? atoi(e) : 2) : 0; }
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
     else if (!strcmp(lever, "wwsload")) g_spurs_wws_load = on ? 2 : 0;
@@ -424,11 +426,10 @@ static DWORD WINAPI frame_clock(LPVOID)
            * with put does until the next one. 0 = Sleep(4); 1 = the toolkit's
            * kick wait (4 ms, cut short when a guest fence poll finds the queue
            * dry); 2 = Sleep(1). */
-          static int s_iw = -1;
-          if (s_iw < 0) { const char* e = getenv("GOW_IDLE_WAIT"); s_iw = e ? atoi(e) : 0; }
+          if (s_idle_wait < 0) { const char* e = getenv("GOW_IDLE_WAIT"); s_idle_wait = e ? atoi(e) : 0; }
           if (s_ps <= 0 || cellGcm_park_spin((unsigned)s_ps) < 0) {
-              if (s_iw == 1) cellGcm_fifo_kick_wait(4);
-              else Sleep(s_iw == 2 ? 1 : 4);
+              if (s_idle_wait == 1) cellGcm_fifo_kick_wait(4);
+              else Sleep(s_idle_wait == 2 ? 1 : 4);
           } }
         ULONGLONG now = GetTickCount64();
 

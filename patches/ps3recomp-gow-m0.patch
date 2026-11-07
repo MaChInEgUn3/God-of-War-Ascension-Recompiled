@@ -273,7 +273,7 @@ index 7fa8cab9..252b32bd 100644
                    hs->connected = 1; }
        /* PAD_SWEEP=<seconds per step>: walk the sticks through a fixed set of
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
-index 19a8516f..9ad6da9d 100644
+index 19a8516f..a7c6e0c5 100644
 --- a/libs/spurs/cellSpurs.c
 +++ b/libs/spurs/cellSpurs.c
 @@ -13,8 +13,10 @@
@@ -1125,7 +1125,7 @@ index 19a8516f..9ad6da9d 100644
      r->resolved = r->fn ? 1 : -1;
      if (r->fn)
          printf("[cellSpurs] wid=%u PM resolved (fp=0x%016llX image=%d)\n",
-@@ -1675,215 +1962,715 @@ static WklPm* spurs_resolve_pm(u32 wid)
+@@ -1675,215 +1962,737 @@ static WklPm* spurs_resolve_pm(u32 wid)
      return r->fn ? r : NULL;
  }
  
@@ -1468,6 +1468,28 @@ index 19a8516f..9ad6da9d 100644
 +                    ps3_ft_span(PS3_FT_SPU_WAIT, (uint32_t)spurs_ft_kidx(), 0x51EEu, 0, ft_p0, ft_p1);
 +            }
 +        }
++        /* SPURS_NAP_READY=<s>: of the passes that follow a pause, how many found each
++         * workload with readyCount up and a lane free: whether a thread napped
++         * while there was work it could have taken, or had nothing to do. */
++        { static int s_nr = -1; static volatile LONG s_nr_n, s_nr_w[SPURS_MAXW]; static volatile LONG64 s_nr_t;
++          if (s_nr < 0) { const char* e = getenv("SPURS_NAP_READY"); s_nr = e ? atoi(e) : 0; }
++          if (s_nr > 0 && si->ea && !pass_found_work) {
++              InterlockedIncrement(&s_nr_n);
++              for (u32 w = 0; w < SPURS_MAXW; w++) {
++                  const int ln = spurs_lanes_for(w);
++                  if (*(volatile u8*)(vm_base + si->ea + spurs_off_ready(w)) && s_wid_busy[w] < (ln > 1 ? ln : 1))
++                      InterlockedIncrement(&s_nr_w[w]);
++              }
++              const LONG64 now = (LONG64)GetTickCount64(), t0 = s_nr_t;
++              if (now - t0 >= s_nr * 1000 && InterlockedCompareExchange64(&s_nr_t, now, t0) == t0 && t0) {
++                  char buf[400]; int n = 0; const LONG tot = InterlockedExchange(&s_nr_n, 0);
++                  for (u32 w = 0; w < SPURS_MAXW; w++) {
++                      const LONG c = InterlockedExchange(&s_nr_w[w], 0);
++                      if (c && n < 360) n += snprintf(buf + n, sizeof buf - n, " w%u=%.1f%%", w, 100.0 * c / (tot ? tot : 1));
++                  }
++                  fprintf(stderr, "[nap-ready] passes=%ld%s\n", (long)tot, buf);
++              } else if (!t0) InterlockedCompareExchange64(&s_nr_t, now, 0);
++          } }
 +        pass_found_work = 0;
 +        u32 ea = si->ea;
 +        if (!ea || s_pm_off) continue;
@@ -2010,7 +2032,7 @@ index 19a8516f..9ad6da9d 100644
      return CELL_OK;
  }
  
-@@ -1891,19 +2678,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
+@@ -1891,19 +2700,52 @@ s32 cellSpursReadyCountSwap(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32* old, u32 value)
  { return spurs_ready_exchange(spurs, wid, old, 0, value, 0); }
  
@@ -2071,7 +2093,7 @@ index 19a8516f..9ad6da9d 100644
      return CELL_OK;
  }
  
-@@ -2094,9 +2914,9 @@ s32 cellSpursEventFlagWait(CellSpursEventFlag* eventFlag, u16* bits,
+@@ -2094,9 +2936,9 @@ s32 cellSpursEventFlagWait(CellSpursEventFlag* eventFlag, u16* bits,
      if (vm_read8(ea + EF_CLEAR_MODE) == CELL_SPURS_EVENT_FLAG_CLEAR_AUTO) {
          /* Clear from the CURRENT word: bits an SPU set since `current` was
           * read must survive. */
@@ -2083,7 +2105,7 @@ index 19a8516f..9ad6da9d 100644
      }
  
      ef_unlock(sync);
-@@ -2138,9 +2958,9 @@ s32 cellSpursEventFlagTryWait(CellSpursEventFlag* eventFlag, u16* bits,
+@@ -2138,9 +2980,9 @@ s32 cellSpursEventFlagTryWait(CellSpursEventFlag* eventFlag, u16* bits,
      u16 received = (mode == CELL_SPURS_EVENT_FLAG_AND) ? pattern
                                                         : (u16)(current & pattern);
      if (vm_read8(ea + EF_CLEAR_MODE) == CELL_SPURS_EVENT_FLAG_CLEAR_AUTO) {
@@ -2095,7 +2117,7 @@ index 19a8516f..9ad6da9d 100644
      }
  
      ef_unlock(sync);
-@@ -2158,9 +2978,9 @@ s32 cellSpursEventFlagClear(CellSpursEventFlag* eventFlag, u16 bits)
+@@ -2158,9 +3000,9 @@ s32 cellSpursEventFlagClear(CellSpursEventFlag* eventFlag, u16 bits)
          return CELL_SPURS_TASK_ERROR_STAT;
  
      ef_lock(sync);
@@ -2107,7 +2129,7 @@ index 19a8516f..9ad6da9d 100644
      ef_unlock(sync);
  
      return CELL_OK;
-@@ -3095,6 +3915,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
+@@ -3095,6 +3937,42 @@ s32 cellSpursSetExceptionEventHandler(u64 spurs_ea, u64 handler_ea, u64 arg_ea)
      return CELL_OK;
  }
  
@@ -2150,7 +2172,7 @@ index 19a8516f..9ad6da9d 100644
  s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  {
      static int _n = 0;
-@@ -3102,7 +3958,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3102,7 +3980,7 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
  
      if (!spurs_ea || !info_ea)
          return CELL_SPURS_CORE_ERROR_NULL_POINTER;
@@ -2159,7 +2181,7 @@ index 19a8516f..9ad6da9d 100644
          return CELL_SPURS_CORE_ERROR_INVAL;
  
      /* CellSpursWorkloadInfo is a GUEST out-buffer (cell/spurs/workload_types.h),
-@@ -3123,13 +3979,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
+@@ -3123,13 +4001,25 @@ s32 cellSpursGetWorkloadInfo(u64 spurs_ea, u32 wid, u64 info_ea)
      /* nameClass/nameInstance (0x18/0x1C): not tracked -> left 0 by the zero above. */
  
      u32 se = (u32)spurs_ea;
@@ -2190,7 +2212,7 @@ index 19a8516f..9ad6da9d 100644
      return CELL_OK;
  }
  
-@@ -3415,6 +4283,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
+@@ -3415,6 +4305,163 @@ s32 _cellSpursLFQueueInitialize(u64 owner_ea, u64 queue_ea, u64 buffer_ea,
      return CELL_OK;
  }
  

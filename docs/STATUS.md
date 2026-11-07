@@ -1240,8 +1240,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       the best sustained figures so far, 16.5-16.9 game frames/s.
     - The kernel threads' pause, again (x398, runZc, in-run lever `nap`, toolkit `g_spurs_nap_us`, `GOW_AB_NAP=200` and 50): SPU gaps in x396 have a floor at 1 ms,
       nothing between 0.2 and 1, because of `Sleep(1)` (~1.5 ms), so a job ready just after an empty pass could wait that long. A high-resolution pause
-      does not help: 15.80 / 16.06 and 15.98 / 15.73 game frames/s, on then off, `us_draw=` +0.9 and +1.4, `us_run=` +4.1 and +3.9 (about 5%). Threads that come
-      back sooner only contend more. So those gaps are mostly waits with no work ready, as x170 found at a lower rate; the default stays `Sleep(1)`.
+      does not help: 15.80 / 16.06 and 15.98 / 15.73 game frames/s, on then off, `us_draw=` +0.9 and +1.4, `us_run=` +4.1 and +3.9 (about 5%). EDGE module runs per window also fell 2.5% and 5.9%. So
+      kernel-side wakeup latency is not the lever and the default stays `Sleep(1)`. The test cannot say whether those gaps have work ready: a gain could be hidden by the
+      added contention.
+    - The walker's idle wait (x399, runZd, in-run lever `idle`): x396's walker gaps are not all small: ~0.7 gaps of about 8 ms a frame, 5.9 ms a frame, clustered at 7-8 ms and
+      at 4 ms, one or two of the port loop's `Sleep(4)`. `GOW_IDLE_WAIT=2` (`Sleep(1)`) against 0: 14.42 / 13.79 game frames/s (+4.6%), 3.2 ms a frame less, frames/s up in 7 of 8
+      blocks, block median +0.80 (quartiles +0.37 / +1.07; `none` +0.10, -0.18 / +0.40), `us_draw=` -2.6, EDGE module runs up 5.8% a window, at ~4.8 cores of other load.
+      First frame-rate lever since the driver. `GOW_IDLE_WAIT=1` (kick wait): 15.08 / 15.17, flat. A second arm is owed before a default.
+      `SPURS_NAP_READY=60` (x399p): of passes after a pause, wid 8 is ready and not running in 15-19%, wid 3 in 10-11%, wid 10 in 7%, EDGE lists under 3%. Wid 31 reads 100%, an
+      out-of-range slot of the counter, ignore it. Wid 8 runs on SPU 2 only.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
