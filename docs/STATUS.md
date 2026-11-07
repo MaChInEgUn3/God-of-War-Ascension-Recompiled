@@ -1171,6 +1171,10 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       load): `none` 89.2 / 88.9 us a run, block difference +0.6 (quartiles -1.5 / +1.0). `wws` 89.2 us on against 98.9 off, native
       share 94% / 0%, block difference -8.6 us (quartiles -10.8 / -7.2), 19 of 19 blocks. So the driver takes 9.8% off an
       EDGE module run, measured inside one run. Frame time in the same run stays unreadable (quartiles -15 / +14 ms).
+    - Soak (x389, runZ6, all three lists, 1771 s, ~4 cores of other load): no stall, 94% native throughout, 11.4-11.6 game
+      frames/s from 300 s and 10.9 in the last window. Dark frames end at the load screen (last at frame 10800; the
+      baseline's last is 13500), bright frames after that, spot-checked at three points. Check mode was not on in
+      this run; its evidence is x385's full 480 s. The driver's default waits on a quiet same-exe pair (x390).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
