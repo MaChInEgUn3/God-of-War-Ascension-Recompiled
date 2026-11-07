@@ -1142,6 +1142,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       load commands (11 us) and store and tail (6 us). Next: native load commands, judged by phase us and per-list busy,
       not by frame rate. Under ~8 us of wrapper the native loop is on track; if the load's buffer rules cannot be made
       native without guessing, this path stops near here and the remaining lever is the job itself.
+    - Native load commands (`SPURS_WWS_LOAD`, 2 = C load plus code reuse, the default under `SPURS_WWS_NATIVE`). What the
+      11 us was: a job moves ~65 KB, 81% of it 53 KB of code in 4 transfers that the module's own reuse rule never skips,
+      because with one job a run every job sits in slot 0 and the rule reads the empty previous slot. The C load follows
+      the module's ops on a copy of the records, reuses a code buffer on the same EA, size and overlay when no resident
+      slot lies in the part it does not fetch, and re-fetches the last 4 KB, the only part jobs were seen to write. Any
+      op it does not know goes to the lifted load. x385 (runZ5, all three lists, 480 s): check mode 0 `CHECK FAILED` over about
+      185k compared loads a minute per list (C first, lifted result stands, records, LS 0x4000-0x3DFFF, the resident table
+      and overlay compared), no hang. Timing run: 95% native, reuse 99.4%, 16.4 KB and 14.8 transfers a job, per job claim
+      1.1, stage 0.9, load 6.2 (3.9 of it transfers), tail 5.9 us, so ~14 us of wrapper against the 22-24 of x381. All
+      three lists 59-60% busy at ~370k jobs a minute, ~97 us a job, against ~71% at ~400k (~106 us): about 8-9% less SPU time
+      per job, inferred across runs at different load. The bound on what a job writes is measured, not proved; the
+      check watches it. Frame rate not comparable, 4.8 cores of other load. Still off by default.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

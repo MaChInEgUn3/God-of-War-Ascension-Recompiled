@@ -278,16 +278,19 @@ static DWORD WINAPI heartbeat(LPVOID arg)
  * slow drift of the scene cancels out (scripts/abreport.py reads the [ab] lines). Levers:
  * icall (PPU indirect call fast path), dma (SPU MFC diagnostics gate), wws (native job
  * path for the workloads in SPURS_WWS_NATIVE, default wid 15; a lane changes path only
- * between module runs), none (a null run, for the noise floor). */
+ * between module runs), wwsload (its C load and code buffer reuse, on 2, off 0), none
+ * (a null run, for the noise floor). */
 extern "C" int g_ppu_icall_fast;
 extern "C" int g_spu_dma_diag;
 extern "C" int g_spurs_wws_native;
+extern "C" int g_spurs_wws_load;
 extern "C" int spurs_wws_native_env_mask(void);
 struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
 static void ab_set(const char* lever, int on)
 {
     if (!strcmp(lever, "icall")) g_ppu_icall_fast = on;
     else if (!strcmp(lever, "dma")) g_spu_dma_diag = !on;
+    else if (!strcmp(lever, "wwsload")) g_spurs_wws_load = on ? 2 : 0;
     else if (!strcmp(lever, "wws")) {
         const int mask = spurs_wws_native_env_mask();
         g_spurs_wws_native = on ? (mask ? mask : 1 << 15) : 0;

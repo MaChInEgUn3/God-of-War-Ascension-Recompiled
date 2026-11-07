@@ -13499,7 +13499,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..87d986e6 100644
+index 59f5e4b8..d40dd241 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13695,7 +13695,7 @@ index 59f5e4b8..87d986e6 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4417 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4419 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -18223,6 +18223,8 @@ index 59f5e4b8..87d986e6 100644
 +
 +void spu_overlay_note_get(spu_context* ctx, uint32_t ea, const uint8_t* ls, uint32_t size)
 +{
++    { extern SPU_THREAD_LOCAL unsigned long long g_wws_get_bytes; extern SPU_THREAD_LOCAL unsigned g_wws_get_n;
++      g_wws_get_bytes += size; g_wws_get_n++; }   /* [wws-native]: what a load moves */
 +    uint32_t lsa = (uint32_t)(ls - ctx->ls);
 +    spu_ovl_dump(ctx, ea, lsa, ls, size);
 +    /* SPU_LSA_GETLOG=<lo>-<hi> (hex LS): each distinct (lsa, ea, size) GET landing in
@@ -26986,10 +26988,10 @@ index 905b3517..b6fc707f 100644
                      "lastStore=0x%X\n",
 diff --git a/runtime/spu/spurs_wws_native.c b/runtime/spu/spurs_wws_native.c
 new file mode 100644
-index 00000000..5f960c6e
+index 00000000..5d1ffd18
 --- /dev/null
 +++ b/runtime/spu/spurs_wws_native.c
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,970 @@
 +/* spurs_wws_native.c -- the WWS job manager's control flow in C, for chosen workloads.
 + *
 + * What a lifted run of the job manager policy module spends around a job is mostly
@@ -27004,7 +27006,7 @@ index 00000000..5f960c6e
 + *               0x2460 uses (same LSA 0x80, same lock-line path)
 + *   stage    lifted 0x3158 (records, command GET, sentinel)
 + *   stalls   C: what the handler 0x2390 does, called between steps (service_stalls)
-+ *   load     lifted 0x2E60 (the load commands; their cache rules stay the module's)
++ *   load     C for the shape it can follow (wws_load_native), else lifted 0x2E60
 + *   job      lifted 0x32A0, the same bracket as today, JobApi included
 + *   store    C: 0x33C0's slot change (copied from the lift), then lifted 0x3478 and
 + *               0x3554 (lane word, counters, readyCount) and 0x2B60 (buffers)
@@ -27025,7 +27027,13 @@ index 00000000..5f960c6e
 + * SPURS_WWS_CHECK=1: every other run the claim is made by the lifted code and compared
 + * with what the C claim computed from the same line; every run the staged record and
 + * command block are compared with the guest, and the end of the run with the ledger
-+ * rules (lane released, pipeline idle). A mismatch prints a line and turns the path off.
++ * rules (lane released, pipeline idle). Every other load runs both ways: the C load, its
++ * result kept, the records put back, then lifted 0x2E60, whose result the job uses and
++ * which must equal the kept one. A mismatch prints a line and turns the path off.
++ *
++ * The load's cost is bytes: a job moves about 65 KB, 53 KB of it the job's code, because
++ * the run-per-job regime keeps every job in slot 0 and the module's reuse rule (0x1D30)
++ * looks at the previous slot. g_spurs_wws_load=2 applies that rule across runs.
 + */
 +#include "spu_context.h"
 +#include "spu_helpers.h"
@@ -27058,17 +27066,21 @@ index 00000000..5f960c6e
 +    WWS_FB_END, WWS_FB_NOP, WWS_FB_JUMP, WWS_FB_BLOCK, WWS_FB_TYPE, WWS_FB_CAS,
 +    /* After it: the lifted state machine takes over mid-run. */
 +    WWS_HO_RACED, WWS_HO_STALL, WWS_HO_SFLAG,
++    /* The load went to lifted 0x2E60 for this job. */
++    WWS_LD_SLOT, WWS_LD_OP, WWS_LD_SET, WWS_LD_USE, WWS_LD_PAGES, WWS_LD_TAG,
 +    WWS_WHY
 +};
 +static const char* const k_why[WWS_WHY] = {
 +    "first", "module", "lab", "shape", "busy", "trace",
 +    "end", "nop", "jump", "block", "type", "cas",
-+    "to-lifted:raced", "to-lifted:stall", "to-lifted:sflag"
++    "to-lifted:raced", "to-lifted:stall", "to-lifted:sflag",
++    "load:slot", "load:op", "load:set", "load:use", "load:pages", "load:tag"
 +};
 +#define WWS_PHASES 5
 +static const char* const k_phase[WWS_PHASES] = { "claim", "stage", "load", "job", "tail" };
 +static struct {
 +    volatile long long runs, jobs, halted, checked, raced, why[WWS_WHY], ticks[WWS_PHASES], timed;
++    volatile long long load_native, load_reuse, load_checked, load_bytes, load_xfers, load_copy_ticks, exit_ticks, exit_n;
 +} s_st[32];
 +#define WWS_ADD(x, n) __atomic_add_fetch(&(x), (n), __ATOMIC_RELAXED)
 +
@@ -27081,8 +27093,19 @@ index 00000000..5f960c6e
 +    uint16_t pred_hw, pred_next, pred_lane;
 +    uint8_t entry8[8];
 +    long long t[WWS_PHASES + 1];
-+    unsigned long seq;
++    unsigned long seq, load_seq;
++    long long t_exit;                         /* the tail's last part: 0x2DB0 to the run's end */
++    /* The last job's records as this run found them (read before 0x3158 clears them). */
++    int prev_ok;
++    uint32_t prev_sets[16], prev_eb0[32][2];
++    uint8_t* shadow;                          /* SPURS_WWS_CHECK: LS after the C load */
 +} t_w;
++
++/* Every GET that reaches local store (spu_overlay_note_get), for the load's split. */
++SPU_THREAD_LOCAL unsigned long long g_wws_get_bytes;
++SPU_THREAD_LOCAL unsigned g_wws_get_n;
++/* 0 lifted load, 1 C load, 2 C load and code buffer reuse. SPURS_WWS_LOAD at first use. */
++int g_spurs_wws_load = -1;
 +
 +static inline uint32_t be16(const uint8_t* p) { return (uint32_t)p[0] << 8 | p[1]; }
 +static inline uint32_t be32(const uint8_t* p)
@@ -27363,10 +27386,317 @@ index 00000000..5f960c6e
 +        if (wws_tags_done(ctx, 32)) break;
 +        if (pass >= 8) { wws_to_lifted(ctx, 0x2D90); return; }
 +    }
++    if (s_prof > 0) {
++#ifdef _WIN32
++        LARGE_INTEGER q; QueryPerformanceCounter(&q); t_w.t_exit = q.QuadPart;
++#endif
++    }
 +    wws_to_lifted(ctx, 0x2DB0);
 +}
 +
 +static void wws_note(int why) { WWS_ADD(s_st[t_w.wid].why[why], 1); }
++
++/* ---- the load commands ------------------------------------------------- */
++
++static void wws_check_fail(spu_context* ctx, const char* what, uint32_t a, uint32_t b);
++
++/* What 0x1B80 and its ops read and write in slot 0, as host values. The interpreter
++ * below runs on this copy and queues its transfers, so refusing a command at any point
++ * leaves LS as it was and lifted 0x2E60 does the job. Commit writes the copy back and
++ * issues the transfers in command order, through the channels the lifted ops use.
++ *
++ * Slot 0 with an empty slot 2 is every job of the run-per-job regime (400 of 400 in
++ * jobcap4): the op handlers' previous-slot reads (0x1CC0, 0x1EF8) then see nothing, the
++ * buffer choice at 0x1E08 scores every free buffer the same, and the first free one wins.
++ * That is the only case this follows; the others go to the lift. */
++typedef struct {
++    uint32_t sets[16], eb0[32][2], ctr[4];
++    uint64_t a[4], b[4], c[4];                 /* page masks 0x1230, 0x1250, 0x1270 */
++    uint8_t bind[32];
++    uint32_t first, avail, seq8, rec7, nctr, step;
++    uint32_t run_set_lsa, run_base, run_end, cmd_top, note_ea;
++} wws_load_state;
++typedef struct { uint32_t lsa, ea, size, list_lsa; } wws_xfer;
++enum { WWS_MAX_XFER = 12, WWS_CODE_SIZE = 0xD000, WWS_CODE_TAIL = 0x1000 };
++
++static inline uint64_t be64(const uint8_t* p) { return (uint64_t)be32(p) << 32 | be32(p + 4); }
++static inline void put32(uint8_t* p, uint32_t v) { put16(p, v >> 16); put16(p + 2, v & 0xFFFF); }
++static inline void put64(uint8_t* p, uint64_t v) { put32(p, (uint32_t)(v >> 32)); put32(p + 4, (uint32_t)v); }
++
++/* 0x2970: pages [p, p + n) as bits, page 0 the top bit of the first of four words. */
++static void wws_pages(uint32_t p, uint32_t n, uint64_t m[4])
++{
++    for (unsigned w = 0; w < 4; w++) {
++        const uint32_t lo = w * 64, hi = lo + 64;
++        const uint32_t s = p > lo ? p : lo, e = p + n < hi ? p + n : hi;
++        m[w] = 0;
++        if (s < e) m[w] = (e - s == 64 ? ~0ull : ((1ull << (e - s)) - 1)) << (hi - e);
++    }
++}
++static inline int wws_overlap(const uint64_t x[4], const uint64_t m[4])
++{ return ((x[0] & m[0]) | (x[1] & m[1]) | (x[2] & m[2]) | (x[3] & m[3])) != 0; }
++
++/* The module's reuse rule (0x1D30), across runs: same set, reusable, same EA and size,
++ * the buffer untouched since. The rule reads the previous job's entry, but 0x2B60 empties
++ * its first word at the end of the job, so its size and the fact that the last job loaded
++ * it are kept in LS beside the module, in pages it reserves and leaves zero (0x3A00-0x3FFF
++ * in all of jobcap4), against the module's own job count: a job that went through the
++ * lifted load leaves the note one count behind, and the next one loads in full.
++ * Note: job count, EA, size, resident overlay after that load.
++ * The job writes inside its code buffer, in the last 4 KB (0x10480-0x10C7F in all of
++ * jobcap4), so that part is fetched again and LS ends as a full GET would leave it;
++ * SPURS_WWS_CHECK compares the whole buffer. */
++#define WWS_NOTE_LSA 0x3FF0u
++static int wws_reusable(const spu_context* ctx, uint32_t set, uint32_t word, uint32_t w0, uint32_t w1,
++                        uint32_t lsa, uint32_t ea, uint32_t size)
++{
++    const uint8_t* note = ctx->ls + WWS_NOTE_LSA;
++    if (!t_w.prev_ok || !(w0 & 0x2000u) || ctx->resident_ovl == 0) return 0;
++    if (be32(note) + 1 != be32(ctx->ls + 0x1440) || be32(note + 4) != ea || be32(note + 8) != size) return 0;
++    /* What the skipped GETs would do to resident state (spu_overlay_note_get): the first
++     * one makes the module's overlay resident, so it must still be the one that load left;
++     * each one drops a resident code slot it lands on, so there must be none. Their EAs
++     * start no registered region. */
++    if ((int32_t)be32(note + 12) != (int32_t)ctx->resident_ovl) return 0;
++    for (uint32_t m = ctx->resident_code_mask; m; m &= m - 1) {
++        const unsigned k = (unsigned)__builtin_ctz(m);
++        if (ctx->resident_code[k].lsa < lsa + size - WWS_CODE_TAIL &&
++            ctx->resident_code[k].lsa + ctx->resident_code[k].size > lsa)
++            return 0;
++    }
++    const uint32_t pw = t_w.prev_sets[set];
++    if ((pw & 0xFFFF7F00u) != (word & 0xFFFF7F00u) || ((word >> 8) & 127u) != 1) return 0;
++    if ((t_w.prev_eb0[pw & 31u][1] ^ w1) & ~15u) return 0;
++    return memcmp(ctx->ls + lsa, vm_base + ea, 64) == 0;
++}
++
++/* One pass over the command block on the copy. -1, or the reason it went to the lift. */
++static int wws_load_scan(spu_context* ctx, wws_load_state* st, wws_xfer* x, unsigned* nx, unsigned* reused)
++{
++    const uint8_t* ls = ctx->ls;
++    uint8_t zeroed[64];                        /* ops consumed, by index, zeroed at commit */
++    memset(zeroed, 0, sizeof zeroed);
++    int need_tag5 = 0;
++    *nx = 0; *reused = 0;
++    for (uint32_t p = 0xC00; p < 0xC00 + sizeof zeroed * 8; p += 8) {
++        const uint32_t w0 = be32(ls + p), w1 = be32(ls + p + 4);
++        if (!w0) continue;
++        const uint32_t op = (w0 >> 9) & 7u, s = (w0 >> 5) & 15u, idx = w0 & 31u;
++        const uint32_t word = st->sets[s], start = word >> 24, pages = (word >> 16) & 255u,
++                       num = (word >> 8) & 127u, first = word & 255u;
++        if (op == 1) {                                                  /* 0x1BE8 */
++            const uint32_t st8 = w1 >> 24, pg = (w1 >> 16) & 255u, n = (w1 >> 8) & 255u;
++            if (word || !pg || !n || n > 127 || st->first + n > 32 || st8 + pg * n > 256) return WWS_LD_SET;
++            uint64_t m[4]; wws_pages(st8, pg * n, m);
++            if (wws_overlap(st->c, m)) return WWS_LD_PAGES;
++            for (unsigned k = 0; k < 4; k++) st->c[k] |= m[k];
++            st->sets[s] = ((w1 | 0x8000u) & ~255u) | st->first;
++            for (uint32_t i = 0; i < n; i++) { st->eb0[st->first + i][0] = 0x80000000u; st->eb0[st->first + i][1] = s; }
++            st->first += n; st->avail -= n;
++            zeroed[(p - 0xC00) / 8] = 1;
++        } else if (op == 3) {                                           /* 0x2200 */
++            if (!w1 || (w1 >> 16)) return WWS_LD_OP;
++            for (uint32_t m = w1; m; ) {
++                const uint32_t b = 31u - (uint32_t)__builtin_clz(m);
++                m ^= 1u << b;
++                const uint32_t v = st->sets[b];
++                if (!v) return WWS_LD_SET;
++                uint64_t pm[4]; wws_pages(v >> 24, ((v >> 16) & 255u) * ((v >> 8) & 127u), pm);
++                for (unsigned k = 0; k < 4; k++) st->c[k] &= ~pm[k];
++                st->sets[b] = v & ~0x8000u;
++            }
++            zeroed[(p - 0xC00) / 8] = 1;
++        } else if (op == 2) {                                           /* 0x1CC0, 0x1DEC, 0x1FF4, 0x20E8 */
++            if ((w0 & 0x10000u) || !word || !num || idx >= num || st->bind[first + idx] != 0xFF ||
++                !(st->eb0[first][0] & 0x80000000u) || !pages)
++                return WWS_LD_USE;
++            uint64_t m[4]; wws_pages(start, pages, m);
++            if (wws_overlap(st->a, m) || wws_overlap(st->b, m)) return WWS_LD_PAGES;
++            const uint32_t size = ((w0 >> 18) & 0x3FFFu) * 16, ea = w1 & ~15u, load = w0 & 0x8000u, list = w0 & 0x4000u;
++            if (load) {
++                need_tag5 = 1;
++                if (*nx >= WWS_MAX_XFER - 4) return WWS_LD_USE;
++                const uint32_t lsa = start << 10;
++                if (list) {
++                    x[(*nx)++] = (wws_xfer){ ((start + pages) << 10) - size - ((w1 & 7u) << 4), ea, size, lsa };
++                } else if (size == WWS_CODE_SIZE && g_spurs_wws_load >= 2 && wws_reusable(ctx, s, word, w0, w1, lsa, ea, size)) {
++                    x[(*nx)++] = (wws_xfer){ lsa + size - WWS_CODE_TAIL, ea + size - WWS_CODE_TAIL, WWS_CODE_TAIL, 0 };
++                    (*reused)++;
++                    st->note_ea = ea;
++                } else {
++                    if (size == WWS_CODE_SIZE) st->note_ea = ea;
++                    /* 0x20B8: 16 KB at a time, a last GET of 0 when it ends on a multiple. */
++                    uint32_t left = size, o = 0;
++                    for (;;) {
++                        const int last = 16384u > left;
++                        const uint32_t n = last ? left : 16384u;
++                        if (*nx >= WWS_MAX_XFER) return WWS_LD_USE;
++                        x[(*nx)++] = (wws_xfer){ lsa + o, ea + o, n, 0 };
++                        left -= n; o += n;
++                        if (last) break;
++                    }
++                }
++            }
++            for (unsigned k = 0; k < 4; k++) {
++                st->a[k] |= m[k];
++                st->b[k] = (w0 & 0x3000u) ? (st->b[k] | m[k]) : (st->b[k] & ~m[k]);
++            }
++            if (w0 & 0x3000u) st->rec7 = 0xFF;
++            st->eb0[first][0] = 0x08000000u | ((w0 & 0x3000u) << 17) | ((w0 >> 10) & 0x3FFF00u) | st->seq8;
++            st->eb0[first][1] = ea | s;
++            st->bind[first + idx] = 0;
++            zeroed[(p - 0xC00) / 8] = 1;
++        } else if (op == 4) {                                           /* 0x22A0 */
++            if (st->step) {
++                if (st->nctr >= 4) return WWS_LD_OP;
++                st->ctr[st->nctr++] = w1;
++            }
++            zeroed[(p - 0xC00) / 8] = 1;
++        } else if (op == 5) {                                           /* 0x2300, 0x2310 */
++            if (first + idx >= 32) return WWS_LD_OP;
++            const uint32_t b = st->bind[first + idx];
++            st->run_base = (pages * b + start) << 10;
++            st->run_set_lsa = 0xDF0u + 4 * s;
++            st->run_end = p + 8; st->run_end += st->run_end & 8u;
++            st->cmd_top = be32(ls + 0x1480) >> 28;
++            if (need_tag5 && !wws_tags_done(ctx, 32)) return WWS_LD_TAG;
++            /* All accepted: the ops the lift would have zeroed, zeroed. */
++            for (unsigned k = 0; k < sizeof zeroed; k++)
++                if (zeroed[k]) memset(ctx->ls + 0xC00 + 8 * k, 0, 8);
++            return -1;
++        } else return WWS_LD_OP;
++    }
++    return WWS_LD_OP;
++}
++
++static int wws_load_native(spu_context* ctx)
++{
++    const uint8_t* ls = ctx->ls;
++    /* Slot 0, slot 2 empty, previous record clear (0x1CC0, 0x1EF8). */
++    if (be32(ls + 0x12D0) != 0 || ls[0x14E7] != 0) { wws_note(WWS_LD_SLOT); return 0; }
++    for (unsigned k = 0; k < 16; k++)
++        if (be32(ls + 0xDF0 + 128 + 4 * k)) { wws_note(WWS_LD_SLOT); return 0; }
++    if (!wws_tags_done(ctx, 8)) { wws_note(WWS_LD_TAG); return 0; }  /* 0x2E60 */
++    wws_load_state st;
++    for (unsigned k = 0; k < 16; k++) st.sets[k] = be32(ls + 0xDF0 + 4 * k);
++    for (unsigned k = 0; k < 32; k++) { st.eb0[k][0] = be32(ls + 0xEB0 + 8 * k); st.eb0[k][1] = be32(ls + 0xEB4 + 8 * k); }
++    for (unsigned k = 0; k < 4; k++) {
++        st.a[k] = be64(ls + 0x1230 + 8 * k); st.b[k] = be64(ls + 0x1250 + 8 * k); st.c[k] = be64(ls + 0x1270 + 8 * k);
++        st.ctr[k] = be32(ls + 0x14B0 + 4 * k);
++    }
++    memcpy(st.bind, ls + 0x11B0, 32);
++    st.first = be32(ls + 0x1410); st.avail = be32(ls + 0x1420);
++    st.note_ea = 0;
++    st.seq8 = ls[0x1443]; st.rec7 = ls[0x14A7]; st.nctr = be32(ls + 0x14AC); st.step = ls[0x14A6];
++    if (st.first > 32 || st.nctr > 4) { wws_note(WWS_LD_SLOT); return 0; }
++    wws_xfer x[WWS_MAX_XFER];
++    unsigned nx, reused;
++    const int why = wws_load_scan(ctx, &st, x, &nx, &reused);
++    if (why >= 0) { wws_note(why); return 0; }
++    uint8_t* w = ctx->ls;
++    for (unsigned k = 0; k < 16; k++) put32(w + 0xDF0 + 4 * k, st.sets[k]);
++    for (unsigned k = 0; k < 32; k++) { put32(w + 0xEB0 + 8 * k, st.eb0[k][0]); put32(w + 0xEB4 + 8 * k, st.eb0[k][1]); }
++    for (unsigned k = 0; k < 4; k++) {
++        put64(w + 0x1230 + 8 * k, st.a[k]); put64(w + 0x1250 + 8 * k, st.b[k]); put64(w + 0x1270 + 8 * k, st.c[k]);
++        put32(w + 0x14B0 + 4 * k, st.ctr[k]);
++    }
++    memcpy(w + 0x11B0, st.bind, 32);
++    put32(w + 0x1410, st.first); put32(w + 0x1420, st.avail);
++    w[0x14A7] = (uint8_t)st.rec7; put32(w + 0x14AC, st.nctr);
++    put32(w + 0x1310, st.run_set_lsa);
++    put32(w + 0x1320, st.run_base);
++    for (unsigned k = 0; k < 4; k++) put32(w + 0x1360 + 4 * k, st.run_end);
++    put32(w + 0x1430, st.cmd_top);
++#ifdef _WIN32
++    LARGE_INTEGER q0, q1;
++    if (s_prof > 0) QueryPerformanceCounter(&q0);
++#endif
++    /* Tag 1: r13 + 2 with the load slot as the run slot; the sequence of 0x20B8 and 0x1FF4. */
++    for (unsigned k = 0; k < nx; k++) {
++        wr(ctx, MFC_LSA, x[k].lsa);
++        wr(ctx, MFC_EAL, x[k].ea);
++        wr(ctx, MFC_TagID, 1);
++        wr(ctx, MFC_Size, x[k].size);
++        wr(ctx, MFC_Cmd, 0x40);
++        if (x[k].list_lsa) {
++            wr(ctx, MFC_LSA, x[k].list_lsa);
++            wr(ctx, MFC_EAL, x[k].lsa);
++            wr(ctx, MFC_Cmd, 0x45);
++        }
++    }
++#ifdef _WIN32
++    if (s_prof > 0) { QueryPerformanceCounter(&q1); WWS_ADD(s_st[t_w.wid].load_copy_ticks, q1.QuadPart - q0.QuadPart); }
++#endif
++    if (st.note_ea) {
++        put32(w + WWS_NOTE_LSA, be32(w + 0x1440));
++        put32(w + WWS_NOTE_LSA + 4, st.note_ea);
++        put32(w + WWS_NOTE_LSA + 8, WWS_CODE_SIZE);
++        put32(w + WWS_NOTE_LSA + 12, (uint32_t)ctx->resident_ovl);
++    }
++    spu_ls_write128(ctx, 0x12A0, spu_il(3));
++    WWS_ADD(s_st[t_w.wid].load_native, 1);
++    if (reused) WWS_ADD(s_st[t_w.wid].load_reuse, 1);
++    return 1;
++}
++
++/* The quads the lift writes with other words in the non-preferred slots, of which only
++ * the first is ever read. */
++static const uint16_t k_word0_only[] = { 0x1310, 0x1320, 0x1410, 0x1420, 0x1430 };
++
++/* SPURS_WWS_CHECK: both loads on the same start, resident state included: the slots a
++ * load's GETs leave depend on the slots they find, so the lifted load must find what the
++ * C load found, not what it left. The lifted one stands. Every slot is compared as it
++ * lies, not just the live ones' set: same GETs from the same start give the same table,
++ * and a GET the reuse skipped that would have changed it shows here. */
++static void wws_load_checked(spu_context* ctx)
++{
++    enum { LOW = 0xC00, HIGH = 0x1500, CODE = 0x4000, TOP = 0x3E000 };
++    if (!t_w.shadow) t_w.shadow = (uint8_t*)malloc(SPU_LS_SIZE * 2);
++    uint8_t* after = t_w.shadow; uint8_t* before = t_w.shadow + SPU_LS_SIZE;
++    memcpy(before + LOW, ctx->ls + LOW, HIGH - LOW);
++    uint8_t rc0[sizeof ctx->resident_code], rc1[sizeof ctx->resident_code];
++    const int32_t ovl0 = ctx->resident_ovl;
++    const uint32_t mask0 = ctx->resident_code_mask;
++    memcpy(rc0, ctx->resident_code, sizeof rc0);
++    if (!wws_load_native(ctx)) { wws_call(ctx, 0x2E60, 0, 0x2CF8); return; }
++    memcpy(after, ctx->ls, SPU_LS_SIZE);
++    const int32_t ovl = ctx->resident_ovl;
++    const uint32_t mask = ctx->resident_code_mask;
++    memcpy(rc1, ctx->resident_code, sizeof rc1);
++    memcpy(ctx->ls + LOW, before + LOW, HIGH - LOW);
++    memcpy(ctx->resident_code, rc0, sizeof rc0);
++    ctx->resident_ovl = ovl0;
++    ctx->resident_code_mask = mask0;
++    wws_call(ctx, 0x2E60, 0, 0x2CF8);
++    WWS_ADD(s_st[t_w.wid].load_checked, 1);
++    for (unsigned k = 0; k < sizeof k_word0_only / sizeof *k_word0_only; k++)
++        memcpy(after + k_word0_only[k] + 4, ctx->ls + k_word0_only[k] + 4, 12);
++    if (ctx->resident_ovl != ovl) wws_check_fail(ctx, "load: resident overlay", (uint32_t)ovl, (uint32_t)ctx->resident_ovl);
++    if (ctx->resident_code_mask != mask) wws_check_fail(ctx, "load: resident code mask", mask, ctx->resident_code_mask);
++    if (memcmp(rc1, ctx->resident_code, sizeof rc1))
++        for (unsigned k = 0; k < SPU_RESIDENT_CODE_SLOTS; k++)
++            if (memcmp(rc1 + k * sizeof ctx->resident_code[0], &ctx->resident_code[k], sizeof ctx->resident_code[0])) {
++                uint32_t mine; memcpy(&mine, rc1 + k * sizeof ctx->resident_code[0], 4);
++                wws_check_fail(ctx, "load: resident slot lsa", mine, ctx->resident_code[k].lsa);
++                break;
++            }
++    for (uint32_t a = LOW; a < HIGH; a += 16)
++        if (memcmp(after + a, ctx->ls + a, 16)) { wws_check_fail(ctx, "load: record", a, be32(ctx->ls + a)); break; }
++    if (memcmp(after + CODE, ctx->ls + CODE, TOP - CODE))
++        for (uint32_t a = CODE; a < TOP; a += 16)
++            if (memcmp(after + a, ctx->ls + a, 16)) { wws_check_fail(ctx, "load: buffer", a, be32(ctx->ls + a)); break; }
++}
++
++static void wws_load(spu_context* ctx)
++{
++    if (__builtin_expect(g_spurs_wws_load < 0, 0)) {
++        const char* e = getenv("SPURS_WWS_LOAD");
++        g_spurs_wws_load = e ? atoi(e) : 2;
++    }
++    if (g_spurs_wws_load <= 0) { wws_call(ctx, 0x2E60, 0, 0x2CF8); return; }
++    if (s_check > 0 && (++t_w.load_seq & 1u)) { wws_load_checked(ctx); return; }
++    if (!wws_load_native(ctx)) wws_call(ctx, 0x2E60, 0, 0x2CF8);
++}
 +
 +static void wws_check_fail(spu_context* ctx, const char* what, uint32_t a, uint32_t b)
 +{
@@ -27418,6 +27748,14 @@ index 00000000..5f960c6e
 +        t_w.entry(ctx);
 +        return;
 +    }
++    /* The records of the job before this one, before anything here changes them: usable
++     * for the reuse rule if it ran in slot 0 and no other slot holds a job since. */
++    { const uint8_t* ls = ctx->ls;
++      t_w.prev_ok = be32(ls + 0x1300) == 0;
++      for (unsigned k = 0; k < 32; k++)
++          if (be32(ls + 0xE30 + 4 * k)) t_w.prev_ok = 0;              /* the sets of slots 1, 2 */
++      for (unsigned k = 0; k < 16; k++) t_w.prev_sets[k] = be32(ls + 0xDF0 + 4 * k);
++      for (unsigned k = 0; k < 32; k++) { t_w.prev_eb0[k][0] = be32(ls + 0xEB0 + 8 * k); t_w.prev_eb0[k][1] = be32(ls + 0xEB4 + 8 * k); } }
 +    ctx->int_enable = 0;
 +    wws_module_init(ctx);
 +    if (t_w.dry) {
@@ -27436,6 +27774,7 @@ index 00000000..5f960c6e
 +        wws_call(ctx, 0x3158, 0, 0x2D60);
 +    }
 +    wws_mark(2);
++    const unsigned get_n0 = g_wws_get_n; const unsigned long long get_b0 = g_wws_get_bytes;
 +    if (ls_state(ctx) == 0) {            /* only the lifted claim can get here: raced to a non-job */
 +        wws_note(WWS_HO_RACED);
 +        wws_to_lifted(ctx, 0x2D60);
@@ -27459,7 +27798,7 @@ index 00000000..5f960c6e
 +            return;
 +        }
 +        uint32_t st = ls_state(ctx);
-+        if (st == 2) { wws_call(ctx, 0x2E60, 0, 0x2CF8); st = ls_state(ctx); }
++        if (st == 2) { wws_load(ctx); st = ls_state(ctx); }
 +        if (st == 3 && wws_tags_done(ctx, 2)) break;
 +        if (pass >= 8) {
 +            wws_note(WWS_HO_STALL);
@@ -27468,6 +27807,8 @@ index 00000000..5f960c6e
 +        }
 +    }
 +    wws_mark(3);
++    WWS_ADD(s_st[t_w.wid].load_bytes, (long long)(g_wws_get_bytes - get_b0));
++    WWS_ADD(s_st[t_w.wid].load_xfers, (long long)(g_wws_get_n - get_n0));
 +    wws_call(ctx, 0x32A0, 0, 0x2D18);
 +    /* Back where the lifted caller is. What stalled while the job ran is served here
 +     * rather than in the window at 0x2DA0. */
@@ -27554,6 +27895,7 @@ index 00000000..5f960c6e
 +        wws_mark(5);
 +        for (int k = 0; k < WWS_PHASES; k++) WWS_ADD(s_st[wid].ticks[k], t_w.t[k + 1] - t_w.t[k]);
 +        WWS_ADD(s_st[wid].timed, 1);
++        if (t_w.t_exit) { WWS_ADD(s_st[wid].exit_ticks, t_w.t[5] - t_w.t_exit); WWS_ADD(s_st[wid].exit_n, 1); t_w.t_exit = 0; }
 +        t_w.t[4] = 0;
 +    }
 +#endif
@@ -27580,7 +27922,7 @@ index 00000000..5f960c6e
 +    for (unsigned w = 0; w < 32; w++) {
 +        const long long runs = __atomic_exchange_n(&s_st[w].runs, 0, __ATOMIC_RELAXED);
 +        if (!runs) continue;
-+        char b[640];
++        char b[900];
 +        const long long jobs = __atomic_exchange_n(&s_st[w].jobs, 0, __ATOMIC_RELAXED);
 +        int p = snprintf(b, sizeof b, "[wws-native] w%u: runs=%lld native=%lld (%.0f%%)", w, runs, jobs,
 +                         100.0 * (double)jobs / (double)runs);
@@ -27590,6 +27932,15 @@ index 00000000..5f960c6e
 +            const long long n = __atomic_exchange_n(&s_st[w].why[k], 0, __ATOMIC_RELAXED);
 +            if (n && p < (int)sizeof b - 40) p += snprintf(b + p, sizeof b - p, " %s=%lld", k_why[k], n);
 +        }
++        const long long lnat = __atomic_exchange_n(&s_st[w].load_native, 0, __ATOMIC_RELAXED);
++        const long long lreu = __atomic_exchange_n(&s_st[w].load_reuse, 0, __ATOMIC_RELAXED);
++        const long long lchk = __atomic_exchange_n(&s_st[w].load_checked, 0, __ATOMIC_RELAXED);
++        const long long lbyt = __atomic_exchange_n(&s_st[w].load_bytes, 0, __ATOMIC_RELAXED);
++        const long long lxfr = __atomic_exchange_n(&s_st[w].load_xfers, 0, __ATOMIC_RELAXED);
++        const long long lcop = __atomic_exchange_n(&s_st[w].load_copy_ticks, 0, __ATOMIC_RELAXED);
++        if (jobs) p += snprintf(b + p, sizeof b - p, " load: %.0f B/job %.1f xfers/job native=%lld reuse=%lld",
++                                (double)lbyt / (double)jobs, (double)lxfr / (double)jobs, lnat, lreu);
++        if (lchk) p += snprintf(b + p, sizeof b - p, " loadchecked=%lld", lchk);
 +        const long long checked = __atomic_exchange_n(&s_st[w].checked, 0, __ATOMIC_RELAXED);
 +        const long long raced = __atomic_exchange_n(&s_st[w].raced, 0, __ATOMIC_RELAXED);
 +        if (checked) p += snprintf(b + p, sizeof b - p, " checked=%lld raced=%lld", checked, raced);
@@ -27601,6 +27952,11 @@ index 00000000..5f960c6e
 +                const long long t = __atomic_exchange_n(&s_st[w].ticks[k], 0, __ATOMIC_RELAXED);
 +                p += snprintf(b + p, sizeof b - p, " %s=%.1f", k_phase[k], 1e6 * (double)t / (double)s_f.QuadPart / (double)timed);
 +            }
++            /* The C load's transfers, per C load: the copying and the MFC path under it. */
++            if (lnat) p += snprintf(b + p, sizeof b - p, " loadxfer=%.1f", 1e6 * (double)lcop / (double)s_f.QuadPart / (double)lnat);
++            const long long xt = __atomic_exchange_n(&s_st[w].exit_ticks, 0, __ATOMIC_RELAXED);
++            const long long xn = __atomic_exchange_n(&s_st[w].exit_n, 0, __ATOMIC_RELAXED);
++            if (xn) p += snprintf(b + p, sizeof b - p, " tailexit=%.1f", 1e6 * (double)xt / (double)s_f.QuadPart / (double)xn);
 +        }
 +#endif
 +        fprintf(stderr, "%s\n", b);
@@ -27608,10 +27964,10 @@ index 00000000..5f960c6e
 +}
 diff --git a/runtime/spu/spurs_wws_native.h b/runtime/spu/spurs_wws_native.h
 new file mode 100644
-index 00000000..d4706465
+index 00000000..1ac20a64
 --- /dev/null
 +++ b/runtime/spu/spurs_wws_native.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,34 @@
 +/* spurs_wws_native.h -- native control flow for one WWS job per policy module run. */
 +#pragma once
 +#include "spu_context.h"
@@ -27623,6 +27979,9 @@ index 00000000..d4706465
 +/* Workloads on the native path, one bit per wid, read at each run so a port can
 + * flip it while the game runs. -1 = not read yet (SPURS_WWS_NATIVE decides). */
 +extern int g_spurs_wws_native;
++/* 0 lifted load, 1 C load, 2 C load and code buffer reuse; -1 = read SPURS_WWS_LOAD
++ * (default 2). Read at each load, so a port can flip it too. */
++extern int g_spurs_wws_load;
 +
 +/* SPURS_WWS_NATIVE=<wid>[,<wid>...] as a mask (0 when unset). */
 +int spurs_wws_native_env_mask(void);
