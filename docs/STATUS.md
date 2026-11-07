@@ -1224,6 +1224,15 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       binding now. With busy ~0.81, a 50% probe asks for 1.2 of a core, so frames fall by up to ~18% even if the walker had slack; x376's 25%
       probe landed about at 1.0, which fits no loss there. What x392 measures is a walker with roughly 15-20% headroom, and `fifo` moving
       `us_draw=` with frames flat agrees. The same reasoning limits x391's probes, which need each chain's utilisation to read.
+    - Critical path on the driver (x396, runZa, `PS3_FTRACE` 20 s from 300 s, sampler off, ~1.7 cores of other load): 312 frames, median 61.6 ms.
+      Five SPUs 52.4 ms busy (85%), the sixth 33.2 (54%), walker drain 53.3 (86%), main thread blocked 3.8. x315 on the old build: 67.1 ms, SPUs
+      ~61 (90%), walker 61.6 (92%). Work per frame fell 13-14% on both sides, the frame 8%, so the idle share grew from ~8% to ~14%, which
+      explains x390 and x395. This replaces the inferred headroom above with a direct number. Balanced SPUs would need 49.2 ms and the walker
+      53.3, so neither is a hard ceiling yet (18.8 game frames/s for the walker). The idle is not a common stop: 4 or more SPUs and the walker
+      run together for 49 of 64 ms, and 2 or fewer SPUs with the walker idle is 1.6 ms a frame. Walker gaps total 10.6 ms a frame across 23
+      passes, grouped mid-frame and after the flip, with no fixed quantum (the 4 ms `Sleep` bucket is 1.3 ms a frame). SPUs 0-4 lose ~11 ms each
+      over ~7 waits, around wids 3 and 15-17 (SPU 2 around wid 8). So the two chains take turns waiting on each other, in small pieces.
+      With about 8 busy threads on six physical cores (i7-8700K) and the main thread ~60% in its polls, the next question is contention.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
