@@ -1233,6 +1233,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       passes, grouped mid-frame and after the flip, with no fixed quantum (the 4 ms `Sleep` bucket is 1.3 ms a frame). SPUs 0-4 lose ~11 ms each
       over ~7 waits, around wids 3 and 15-17 (SPU 2 around wid 8). So the two chains take turns waiting on each other, in small pieces.
       With about 8 busy threads on six physical cores (i7-8700K) and the main thread ~60% in its polls, the next question is contention.
+    - Spin hint again, with a metric that resolves it (x397, runZb, in-run lever `pause`, `GOW_AB_PAUSE=16` and 128): block differences 16 pauses, `us_run=`
+      +0.51 (quartiles -1.97 / +1.16), `us_draw=` +0.05 (-1.23 / +1.68); 128 pauses, `us_run=` +0.57 (-0.87 / +2.87), `us_draw=` +0.45 (+0.12 / +1.42), 8 of 9
+      blocks slower. Totals 16.47 / 16.67 and 16.68 / 16.91 game frames/s, on then off. The polls do not cost their siblings anything readable
+      and a long pause costs a little, so x318's neutral stands and `PPU_SPIN_PAUSE` stays 0. These arms ran at 0.8-2.8 cores of other load and are
+      the best sustained figures so far, 16.5-16.9 game frames/s.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
