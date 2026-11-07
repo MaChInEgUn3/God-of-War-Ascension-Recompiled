@@ -1212,6 +1212,18 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       exe 60%, ntdll 19%, `nvoglv64` 10%, `VCRUNTIME140` (memcpy) 7%, `win32u` 3%. So the driver is about 13%, not the 31%. 34 FIFO words a
       draw, 83k a frame, 153 passes/s, 215 draws a pass, so no spinning on empty passes. The FIFO block at about 15% of 27 us is ~118 ns a
       word. No heap per draw (`free(d)` in the draw path is a debug branch) and `getenv` per pass is too rare to show (ucrtbase 0.6%).
+    - FIFO argument fast path (x395, runZa, toolkit `g_gcm_fast_args`, default on, `GCM_FAST_ARGS=0` off, in-run lever `fifo`): a run of plain
+      methods goes straight to the draw engine without the page lookup and debug gates per word; a method with an effect of its own, a run
+      crossing an IO page or any debug gate takes the full loop. `none` arm, sampler off: block difference of `us_draw=` 0.00, quartiles -0.46 /
+      +0.24, `rsx_busy=` +0.006. `fifo`: 19.4 against 20.8 and 23.0 against 23.9 us a draw by window medians (-6.6%, -3.7%), `rsx_busy=` 0.80
+      against 0.84 in both. Frames flat: 16.45 / 16.34 and 14.37 / 14.34 game frames/s, `none` 14.77 / 14.70. Frames after the load
+      screen look like the `none` arm; dumps have the same brightness. By the read rule that is less walker work in a chain not holding
+      the frame at that moment. Kept on: it costs nothing and leaves the walker more headroom for loaded hosts.
+    - Two corrections from that sampler-off arm. The 1 ms sampler inflates the walker: 22.2 us a draw and busy 0.81 without it against 27.2 and
+      0.89 in x393/x394, so "67 of a 73 ms frame" overstates it; without the sampler it is about 54 of 68 ms. And x392 does not show the walker
+      binding now. With busy ~0.81, a 50% probe asks for 1.2 of a core, so frames fall by up to ~18% even if the walker had slack; x376's 25%
+      probe landed about at 1.0, which fits no loss there. What x392 measures is a walker with roughly 15-20% headroom, and `fifo` moving
+      `us_draw=` with frames flat agrees. The same reasoning limits x391's probes, which need each chain's utilisation to read.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
