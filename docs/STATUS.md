@@ -1181,6 +1181,16 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       pairs point the same way (+2% and +11%), but thirds of one arm range from 12.9 to 15.1, so the size is not pinned. A
       10% cut with the EDGE chain ~0.75 binding (x377) predicts about 7%. So the driver is now the port's default
       (`SPURS_WWS_NATIVE=15,16,17`, runZ7; `SPURS_WWS_NATIVE=off` goes back).
+    - Causal probes on the driver (x391, runZ7, 50% probes, O E G G E O, 480 s, game frames/s 360-480 s, 95-96% native in all
+      arms): O 16.79 / 13.77, E (EDGE wids 15-17) 14.05 / 13.02, G (General6) 14.73 / 14.73. O's arms differ by 22%, so the raw
+      figures are loose: E -12% (adjacent pairs -16% / -5%), G -4%. Within every arm frames/s follows `us_run=` by 5 s
+      window (r -0.8 to -0.95, pooled O -0.96), which tracks interference that hits everything, not EDGE's own worth: the slope is
+      an elasticity near -1.6, more than a binding stage can give, so it is a covariate only and predicts no gain. `us_run=`
+      leaves the probe's wait out (E1 72.6, O1 72.7). Compared with O at the same `us_run=`: E -18% / -19%, G -3% / -6%; the E
+      probe spins about a core more, so its `us_run=` may be inflated and -18% understated. Against -33% for a fully binding
+      stage (linear ratio) EDGE is about half and General6 small. It stays the largest single binder; x377 had it at
+      about three quarters on one arm of the old build, inside this noise, so no claim that the share fell. The O1
+      arm is the best figure so far: quiet ~17 game frames/s, loaded ~13.8-15.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
