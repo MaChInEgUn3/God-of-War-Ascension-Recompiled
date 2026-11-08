@@ -1327,6 +1327,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       18.41 and 16.45 game frames/s over 300-450 s. Each arm is steady inside itself (18.63 / 18.00 and 16.40 / 16.40 over 300-360 and 390-450 s),
       so the 11% between them is run to run, not drift. Against the best quiet figures before these defaults (x397, 16.5-16.9) that is level to +9%;
       the last loaded figures with the driver on those lists were 13.5-14.5 (x411, 4.4-5.3 cores of other load).
+      Loaded column for the same build (x416, `burn.py 3` for each arm on top of 1.2-1.7 cores of other load, 01:13 and 01:21): 13.94 and 14.16 game frames/s
+      over 300 s to the end (450 / 480 s), against x401's 13.3-14.4 on runZd (driver on the EDGE lists only) under the same load. Under load the extra lists
+      hold level with that rather than gaining; three burning cores take ~15-25% off the quiet figure.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
