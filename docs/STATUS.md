@@ -1431,6 +1431,21 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         had no new work for 31.5 s.
       - Not reproduced in two more runs of the same arm (x431, with and without `SPU_RELOC_ADOPT`). It is the only frozen run of ~30 today.
       - Left open with these details for when it recurs.
+      - Three later freezes, with the same stack, were the walker probe's own bug: `g_rsx_slow_pct` was read twice per pass, so a pass that began
+        with the lever off took no start time and then spun on garbage while holding the FIFO lock. They were x432a, x433a and x434a, the last
+        with `SPU_RELOC_ADOPT=0`. Fixed in toolkit 8e8f4c05, and x435 ran clean.
+      - The x430b freeze used the SPU probe, whose start time is always taken, so it is still unexplained.
+      - Toolkit 8e8f4c05 also checks a relocatable placement's 16 bytes at the target against its source before running it, and drops the
+        placement if they differ. No drop in 480 s, so stale placements were not the cause; it stays as a guard.
+    - The PPU side (x432b, x435, in-run, 480 s each):
+
+      | Probe | On-off ms/frame, block median (quartiles) | Frame time, on against off | Share of full pacing |
+      |---|---|---|---|
+      | Main thread: the thread that requests the flip busy-waits 3 ms a flip (lever `mslow`, toolkit `g_gcm_main_slow_us`) | +10.33 (-8.24 / +13.93) | 68.76 -> 71.04 ms, +2.3 ms of the 3 | ~75% |
+      | Walker passes +20% (lever `rslow`) | +7.41 (-9.81 / +15.54) | 76.71 -> 80.75 ms, +5.3% | ~30% |
+
+      - So the game's main thread is what paces the frame now. The walker and the EDGE chain (~25%, x430a) follow well behind.
+      - The next lever is main-thread work.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
