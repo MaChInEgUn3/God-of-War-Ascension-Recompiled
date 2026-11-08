@@ -1325,11 +1325,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - Quiet column for the current defaults (x415, runZk, native driver on eleven lists and the FIFO fast path, `GOW_AB=none`, two 480 s arms
       started 2026-11-08 00:51 and 00:59 after three load samples under 1.3 cores, at 0.68 and 0.26 cores of other load; both logs end at 450 s):
       18.41 and 16.45 game frames/s over 300-450 s. Each arm is steady inside itself (18.63 / 18.00 and 16.40 / 16.40 over 300-360 and 390-450 s),
-      so the 11% between them is run to run, not drift. Against the best quiet figures before these defaults (x397, 16.5-16.9) that is level to +9%;
+      so the 11% between them is run to run, not drift. Against the best quiet figures before these defaults (x397, 16.5-16.9) that is level to +9%, but x397 ran at 0.8-2.8 cores of other load against 0.26-0.68 here, so part of it is the quieter host (the lever's own size is x411's in-run A/B);
       the last loaded figures with the driver on those lists were 13.5-14.5 (x411, 4.4-5.3 cores of other load).
       Loaded column for the same build (x416, `burn.py 3` for each arm on top of 1.2-1.7 cores of other load, 01:13 and 01:21): 13.94 and 14.16 game frames/s
       over 300 s to the end (450 / 480 s), against x401's 13.3-14.4 on runZd (driver on the EDGE lists only) under the same load. Under load the extra lists
-      hold level with that rather than gaining; three burning cores take ~15-25% off the quiet figure.
+      hold level with that rather than gaining. The loaded condition as a whole (~4-5 busy cores besides the game) takes ~15-25% off the quiet figure;
+      x401 against x400 showed the burners add little to ordinary 1.5-2.3 cores of other load.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
