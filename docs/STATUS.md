@@ -1322,6 +1322,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       store write may alias the registers as far as the compiler knows. That is where the 74% of SPU time in job code goes, and the generic lever is in the
       lifter's output (registers in locals across a block, no aliasing between local store and the register file), a larger piece of work to plan on the
       job-replay harness rather than in-game A/Bs.
+    - Quiet column for the current defaults (x415, runZk, native driver on eleven lists and the FIFO fast path, `GOW_AB=none`, two 480 s arms
+      started 2026-11-08 00:51 and 00:59 after three load samples under 1.3 cores, at 0.68 and 0.26 cores of other load; both logs end at 450 s):
+      18.41 and 16.45 game frames/s over 300-450 s. Each arm is steady inside itself (18.63 / 18.00 and 16.40 / 16.40 over 300-360 and 390-450 s),
+      so the 11% between them is run to run, not drift. Against the best quiet figures before these defaults (x397, 16.5-16.9) that is level to +9%;
+      the last loaded figures with the driver on those lists were 13.5-14.5 (x411, 4.4-5.3 cores of other load).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
