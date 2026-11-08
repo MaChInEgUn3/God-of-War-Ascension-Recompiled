@@ -171,3 +171,46 @@ The change is generic, so it is an upstream candidate once replay and in-game nu
 
 What it buys is not known until the replay numbers are in. Fewer host instructions per op in job code (~74% of
 SPU time) only becomes frame rate where the SPU side binds, as it does now.
+
+## PPU side: the inline memory guards (static pilot, 2026-11-08, no run)
+
+The x436-x437 map puts the main PPU thread at ~75% of the frame's pacing. This pilot checks whether the PPU lift's
+own codegen leaves a lever there.
+
+**Method.** Three of the main thread's hottest functions (`func_00416338`, `func_00416A10`, `func_00416610`)
+were copied with the lift header into one small TU. It was compiled with the runZr flags (clang-cl `/O2 /Ob2
+-march=x86-64-v3 -fno-strict-aliasing`), plus `/clang:-gdwarf /FA`. `analysis/helper_cost.py` then charged
+each instruction to the helper it came from.
+
+**What the code costs.**
+- `ppu_trace_enter` at every function entry is one load and one predicted branch (`ppu_trace_live`). It is not
+  a call.
+- Guest loads and stores are inline. The out-of-line `vm_read*`/`vm_write*` run only on the slow path.
+- The range guards are the largest helper: `vm_inl_ok` plus `vm_inl_st_ok` are 37-39% of the static
+  instructions.
+  - A load passes through about 15 instructions of checks before its `mov`/`bswap`. They are three global
+    flags or sizes (`vm_inline_ok`, `ppu_vm_size`, `ppu_hle_inject_base`) and five branches.
+  - A store has the same range checks, plus 11 instructions for the SPU reservation-bitmap test.
+- Context traffic (`ctx->gpr`/`cr` loads and stores) is 11-14% of the instructions, so register reloads after
+  aliasing stores are not the main cost.
+
+**Pilot change, in the scratch copy of the header only.**
+- One precomputed span per direction replaced the range checks: `(u64)(u32)(ea - 0x10000) + n <= span`, with
+  `span = min(0xE0000000, vm size) - 0x10000`, or 0 while a diagnostic needs the slow path.
+- It is never looser than the current test. The few accesses that end above 0xE0000000 - n take the slow path,
+  which handles them anyway.
+- A guarded load became 6 instructions instead of ~15, and a store's range check 4 instead of 9.
+
+| Function | Instructions before | After | Change |
+|---|---|---|---|
+| `func_00416338` | 2007 | 1893 | -5.7% |
+| `func_00416A10` | 832 | 776 | -6.7% |
+| `func_00416610` | 1198 | 1134 | -5.3% |
+
+**Verdict: parked.**
+- A 5-7% cut in instructions on the main thread is worth ~1% of frame time at most, and only on its non-poll
+  work (~28% of its samples).
+- That is below what an in-game A/B can resolve (3-10% between arms).
+- It would also mean rebuilding every PPU TU and changing the runtime where `ppu_vm_size` is set.
+- So the PPU codegen question closes here: the lift is not far from tight. What is left is spread over hundreds
+  of functions, and each is too small to be a lever.

@@ -1473,8 +1473,21 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
 
       - None of the five is outside the noise. Only the group showed (x436b, +5.3%, 8 of 9 blocks).
       - So the frame waits on the sum of several lists, not on one. No single job is the next lever. The lever is SPU throughput across the
-        General lists (the runtime's per-job cost), or the main thread's polling itself.
+        General lists (the runtime's per-job cost), or the main thread's non-poll work. Its polls are not one: the spin hint was neutral
+        (x318).
       - EDGE us_run and the walker's us_draw did not move with the lever in any arm.
+    - How big those two levers can be (no run; x440's sampler and a static pilot):
+      - SPU runtime on the five threads that run the General lists: 17-23% of each thread's samples.
+        - Biggest items: `spu_wrch` + `spu_wrch_impl` 4.5-7.4%, `spu_indirect_branch` 2.6-3.9%, `spu_drain_call` 2.1-2.8%,
+          `spu_overlay_note_get` up to 2.1%, `mfc_do_transfer` and `spu_coh_is_reserved` ~1.5% each.
+        - The thread with 13% in `spu_indirect_branch` runs the wid 8 (audio) job modules, which are off the frame's path.
+        - x436b caps the whole lever. Slowing those lists 20% cost +5.3% of frame time, so removing all of the runtime's 17-23%
+          would gain about 5%. A realistic cut (1-3% of SPU time) is under 1%.
+      - PPU codegen (docs/LIFTER_CODEGEN.md, PPU section):
+        - The inline guest-memory range guards are 37-39% of the instructions in the main thread's three hottest functions.
+        - A single precomputed span check removes 5-7% of those instructions, ~1% of frame time at most.
+        - `ppu_trace_enter` is one load and one branch. Context traffic is 11-14% of the instructions.
+      - Both levers are under the in-game A/B's resolution (3-10% between arms), so neither is built. Parked with these numbers.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
