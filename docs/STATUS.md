@@ -1283,6 +1283,17 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       RenderJobs 18%, wid 8 13%. The walker's first drain comes a median 5.9 ms after the request, and that pass ends on an EDGE park in 71% of frames. So the
       frame opens with the SPU side full and the walker waiting for EDGE output: what sets the pace there is SPU job code, not scheduling or any host wait,
       which matches every wait-side lever coming out flat (x397-x401, x405-x406).
+    - Generic SPU-side costs on the current build (x407, runZg, host sampler on every SPURS kernel thread, 480 s, 4000 buckets, 12.9 game frames/s): runtime
+      helpers ~18% of kernel-thread time (dispatch 7.2: `spu_indirect_branch` 2.6 and its slow path 0.6, `spu_drain_call` 1.1 and its loop 0.9, `spu_lookup` 1.1 and
+      its walk 0.9; channels/MFC 4.7; coherency 1.1; the interpreter's `spu_step` 0.4), `VCRUNTIME140` memcpy 6.3%, lifted and native job code ~74%. The top
+      buckets cover only 37% of samples and favour compact runtime functions, so job code is the rest by construction, not the 11% the covered buckets show.
+      The memcpy is DMA of data another core just wrote (~49 KB over ~24 transfers an EDGE job), cache misses rather than call cost.
+    - The indirect-branch cache (x408, runZg, `SPU_IBC_COUNT=1`, 300 s each, ~5M dispatches/s): 512 entries a thread (the default) hit 92.1%, miss 7.2%, refill
+      4.7%; 4096 entries hit 96.0%, miss 3.3%, refill 0.8%. In-run (x409, runZh, toolkit `spu_ibc_set_size`, lever `ibc` 4096 against 512): `us_run=` block
+      differences -0.49 (quartiles -0.79 / -0.17, 8 of 9) and -0.69 (-1.95 / +0.01) against the same exe's `none` -0.30 (-1.31 / +0.05). Under 1% of an EDGE
+      module run and frames flat (13.24 / 13.31, 14.09 / 13.86): halving the misses buys little because a miss is cheap next to the job. Default stays 512.
+    - Where that leaves the SPU side: what a generic runtime change can still take is a handful of items of 1-7% of SPU time each (dispatch, channels,
+      coherency), each worth ~1-3% of frame rate at best. The large share is the lifted job code itself.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

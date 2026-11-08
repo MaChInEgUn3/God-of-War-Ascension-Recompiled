@@ -13639,7 +13639,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..d40dd241 100644
+index 59f5e4b8..1920f96a 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13835,7 +13835,7 @@ index 59f5e4b8..d40dd241 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4419 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4430 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -19924,6 +19924,17 @@ index 59f5e4b8..d40dd241 100644
 +    const uint32_t gen = spu_ibc_gen();
 +    if (gen != t_ibc_gen) { memset(t_ibc, 0, sizeof t_ibc[0] * (s_ibc_mask + 1)); t_ibc_gen = gen; }
 +    t_ibc[slot].key = key; t_ibc[slot].fn = fn;
++}
++
++/* spu_ibc_set_size(n): a port's in-run A/B sets the entries a thread uses (64..4096, a
++ * power of two). The mask is stored before the epoch moves, so a thread that sees the
++ * new epoch clears the table at the new size and no entry from an older, larger size
++ * survives. */
++void spu_ibc_set_size(unsigned n)
++{
++    if (n < 64 || n > IBC_MAX || (n & (n - 1))) return;
++    __atomic_store_n(&s_ibc_mask, n - 1, __ATOMIC_RELEASE);
++    __atomic_add_fetch(&s_ibc_epoch, 1, __ATOMIC_SEQ_CST);
 +}
 +
 +/* SPU_IBC_COUNT=1 (diagnostic, leaves the cache on): every 4M dispatches print
