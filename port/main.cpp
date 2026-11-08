@@ -864,8 +864,13 @@ int main(int argc, char** argv)
      * in C (spurs_wws_native.c), the jobs stay lifted. x388, in-run ABBA: 98.9 -> 89.2
      * us per module run. x390, same exe, old new new old, 480 s: 90.5 / 81.1 / 80.1 /
      * 90.9 us and 14.07 / 14.39 / 15.23 / 13.71 game frames/s. x389: 30 minutes, no
-     * stall. SPURS_WWS_NATIVE=off goes back to the lifted module. */
-    if (!getenv("SPURS_WWS_NATIVE")) _putenv_s("SPURS_WWS_NATIVE", "15,16,17");
+     * stall. SPURS_WWS_NATIVE=off goes back to the lifted module.
+     * ,2,3,7,9,10,11,12,13 (added 2026-11-07): the other job lists on the same policy
+     * module; wid 8 (audio) is left out, its workload data has a high word the driver
+     * does not take. x410 check mode clean, native on 9-76% of their runs (the rest
+     * are empty polls); x411 in-run lever: +4.0% / +2.6% game frames/s; x412: 30 minutes
+     * in check mode, no CHECK FAILED, no stall. */
+    if (!getenv("SPURS_WWS_NATIVE")) _putenv_s("SPURS_WWS_NATIVE", "2,3,7,9,10,11,12,13,15,16,17");
     /* PS3_VERBOSE=0: the per-event [WAIT]/[evt] lines default ON whenever stderr is
      * redirected, and at hundreds per second from every thread through one FILE
      * lock they skew exactly the runs that measure timing. Set PS3_VERBOSE=1 to

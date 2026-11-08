@@ -1302,6 +1302,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       Game frames/s 14.49 / 13.93 (+4.0%, faster in 8 of 9 blocks, block median +0.40, quartiles +0.20 / +0.90) and 13.48 / 13.14 (+2.6%, 6 of 9), against the
       same exe's `none` -0.05 (-0.47 / +0.23). Their module runs stay ~170 us either way (most of a run is job code; the empty runs are lifted in both arms).
       All three arms ran at 4.4-5.3 cores of other load. A candidate: soak with check mode next, then a default.
+    - Soak (x412, runZi, all eleven lists native, `SPURS_WWS_CHECK=1`, 1771 s, masher throughout): no CHECK FAILED, no stall, 11.70 game frames/s from 300 s
+      (11.89 / 11.74 / 11.65 at 600, 1200 and 1711 s; check mode runs every other run twice), native shares as in x410, dark frames end at the load screen
+      (last at 13500, as the baseline). The port default is now `SPURS_WWS_NATIVE=2,3,7,9,10,11,12,13,15,16,17` (runZj); `off` goes back, wid 8 stays lifted.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
