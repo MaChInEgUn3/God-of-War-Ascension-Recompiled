@@ -1,7 +1,10 @@
 # Lifted SPU code: plan for tighter codegen
 
-Status: **plan only, not started.** Nothing here is in the build yet. It is waiting on a decision to spend
-several days on it.
+Status: **piloted 2026-11-08 and not recommended in this form.**
+- Phase 1, applied by script to one job module and replayed, came out flat. Numbers are under "Pilot result".
+- The cost is register count, not aliasing. Hot lifted functions touch a median of 70 SPU registers against
+  16 host vector registers, so values go to the stack whether they live in `ctx->gpr` or in locals.
+- The plan below is kept for the record. Nothing from it is in the build.
 
 ## Why
 
@@ -66,6 +69,58 @@ local the function touches. The hottest function has 47 calls, so this matters.
 
 Nothing changes for the runtime, the native EDGE stages or the WWS driver: they keep reading `ctx->gpr` at
 flush points.
+
+## Pilot result (2026-11-08, measurement only)
+
+`analysis/lifter_locals_pilot.py` applies phase 1 mechanically to the named lifted functions:
+- a `u128` local for every register the function touches, loaded at entry;
+- the written registers stored back before every exit, stop, channel op and nested call;
+- everything reloaded after a nested call.
+
+The output was compiled with the production flags. A lab exe was built from it (`work/buildlab.sh` with
+`LAB_LIFT`). The pilot never enters a production build.
+
+**Static count** (hottest wid 8 function, 356 SPU ops, 83 registers; same compile, `llvm-objdump`):
+
+| | Host instructions | Stack refs | Context-pointer refs |
+|---|---|---|---|
+| Lifted as now | 3820 | 1193 | 569 |
+| Registers in locals | 3135 | 1316 | 176 |
+
+The context round trips went away. The stack traffic rose, because 83 128-bit values do not fit in 16
+registers.
+
+**Replay timing** (General6 module a67e, functions 4930 and 4AB0: 74 and 128 registers, 5 nested calls).
+- Setup: `work/jobcapA67`, lifted path (`GOW_A67_NOISE=0`), `SPU_JOB_REPLAY_REPEAT=20`, run order base, pilot,
+  pilot, base.
+- The pilot code is in its exe: per the map, 4930 grew from 3376 to 3968 bytes and 4AB0 from 58032 to 69472.
+
+| Exe | Jobs identical | Median of per-job medians | Sum of per-job minimums |
+|---|---|---|---|
+| base (`build_runLab`) | 300/300 | 1.575 / 1.525 ms | 460.9 / 480.3 ms |
+| pilot (`build_runLabP`) | 300/300 | 1.570 / 1.571 ms | 474.0 / 470.0 ms |
+
+- The two pilot runs sit inside the 4% spread between the two base runs.
+- The noise path is ~55% of this job: the same capture with the native noise takes 0.70 ms a job. A 20% gain on
+  that code would have moved the sum by ~50 ms, well outside the spread.
+- So the null holds: removing the aliasing reloads does not buy time here.
+
+**Registers per function** (the 2721 lifted functions of 50 SPU ops or more; distinct `gpr[N]` a function names):
+
+| | Value |
+|---|---|
+| Median | 70 |
+| Quartiles | 50 / 80 |
+| Share of SPU ops in functions with <= 20 registers | 0.4% |
+| Share of SPU ops in functions with <= 30 registers | 2.1% |
+
+Distinct registers are an upper bound on how many are live at once. The replay is the direct evidence that the
+pressure is real in hot code.
+
+Phase 2 (liveness-narrowed boundaries) only trims the load and store at the edges. It cannot help the body,
+which is where the spills are. What would help is a different mapping, not this one. One option is wider
+blocks of fewer live registers, which is register allocation across SPU code. That is a research project, not a
+few days of emitter work, and is not planned.
 
 ## How it is checked
 

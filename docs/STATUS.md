@@ -1334,7 +1334,11 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - Codegen across all lifted modules (no run, production objects, `llvm-objdump`): 2718 functions of 50 SPU ops or more average 7.7 host
       instructions a SPU op (median 7.2, p90 14.3), 18% of them stack accesses; the hottest wid 8 function (10.1, 33%) is in the upper part, not an
       outlier. The job-lab harness still holds on the current tree (lab exe rebuilt 2026-11-08: `work/jobcap4` 400/400 and `work/jobcapA67` 300/300
-      identical, REPEAT=20 medians 0.054 and 0.699 ms a job). The plan for registers in locals is docs/LIFTER_CODEGEN.md; not started.
+      identical, REPEAT=20 medians 0.054 and 0.699 ms a job). The plan for registers in locals is docs/LIFTER_CODEGEN.md.
+      Its pilot (phase 1 applied by script to a67e's 4930 and 4AB0, lab exe, `jobcapA67` on the lifted noise path, REPEAT=20, base/pilot/pilot/base):
+      300/300 identical, sums of per-job minimums 460.9 / 474.0 / 470.0 / 480.3 ms, flat. On the hot wid 8 function the context references fell 569 -> 176 but
+      stack references rose 1193 -> 1316: lifted functions name a median of 70 SPU registers against 16 host vector registers, so values spill either way.
+      The cost is register count, not aliasing; the plan is not recommended in this form.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

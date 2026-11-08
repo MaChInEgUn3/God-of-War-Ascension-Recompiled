@@ -394,7 +394,7 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
 * **Job lab build**: capture, replay and the job timer exist only in an exe configured with
   `-DPS3RECOMP_SPU_JOBLAB=ON` (toolkit CMake option, default off). Without it the hooks compile to nothing (their
   run-time checks cost 1.1% level fps with the env unset), `SPU_JOB_CAPTURE` is ignored and `SPU_JOB_REPLAY` says
-  so and exits. Lab exes are staged as `build_runLab`; production builds stay off. Toggle with
+  so and exits. Lab exes are staged as `build_runLab`; production builds stay off. `work/buildlab.sh <dest>` builds one into `build_<dest>` (copying `build_runLab` for the DLLs when the directory is new) and rebuilds production afterwards; `LAB_LIFT="<lift dir> <file>"` swaps in another lift for the lab exe only (the pilot in LIFTER_CODEGEN.md used it). Toggle with
   `cmake -S work/port -B work/port/build_v017 -DPS3RECOMP_SPU_JOBLAB=ON|OFF` (only runtime files rebuild).
 * **Function boundary probe** (job lab): `analysis/spu_fnprobe_lift.py <lift.c> <out.c> <fn> [callees...]` wraps
   one lifted function in `spu_fn_probe` (toolkit `runtime/spu/spu_fn_probe.c`) and routes its and the listed
