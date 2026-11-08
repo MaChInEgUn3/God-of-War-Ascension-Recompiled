@@ -1316,6 +1316,12 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       (wids 9-11) and RenderJobs, 23% for General6, 73% for BatchJobList; load per job only 24 -> 21 us (wid 9), 26 -> 22 (wid 10), 53 -> 41 (wid 13), so most
       of their load is data, not code. Lever arm (480 s): 14.94 / 14.80 game frames/s, block median +0.40 (quartiles -0.40 / +0.45, 5 of 9), `us_run=` -0.56
       (-3.94 / +1.65): inside the spread. Stays off by default.
+    - How tight the lifted SPU code is (no run; the hottest wid 8 job function in x403, `jobmod_5bc2fdee17f4_e11a08_spu_func_00015400`, clang-cl /O2, `llvm-objdump`):
+      ~355 SPU operations become 3596 host instructions, ~10 a SPU op. 1178 of them address the stack (525 stores, 213 loads: 128-bit values spilled), 484 the
+      context (`ctx->gpr` round trips, ~1.4 a SPU op), 47 calls. The lifter writes every result to `ctx->gpr[n]`, and `ctx->ls` is a `uint8_t*`, so any local
+      store write may alias the registers as far as the compiler knows. That is where the 74% of SPU time in job code goes, and the generic lever is in the
+      lifter's output (registers in locals across a block, no aliasing between local store and the register file), a larger piece of work to plan on the
+      job-replay harness rather than in-game A/Bs.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
