@@ -1393,6 +1393,44 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         - No pm-hang in nine runs.
       - It frees ~14% of one core that the interpreter used. That is not frame time, because BatchJobList is not what the frame waits on.
       - Kept on (runZm is the default).
+    - Which job modules the frame-end lists run (x428, lab exe, `SPU_JOB_CAPTURE` on wids 2, 5, 9-12, 240 jobs, one in 40 from 150 s, `work/jobcapF`;
+      game data, not committed):
+
+      | Wid | List | Module |
+      |---|---|---|
+      | 9 | RenJobSet | `98f3fc98b30c` |
+      | 10 | RenJobSet | `8ae46d2d2727` |
+      | 11 | RenJobSet | `a00f81d5483b` |
+      | 12 | RenJobSet | `7fc1da1d2ec7` |
+      | 2 | HighestPrio6 | `e0194f1d9c80` |
+      | 5 | ModelServer | `e9f3f00d551e` |
+
+      - The 102 wid 11 jobs replay identical (sum of per-job minimums 12.2 ms).
+      - a00f's time is spread across many functions; its hottest, B708, is 11% of it.
+    - Which SPU group paces the frame (x429-x430, runZn). Method:
+      - The in-run lever `slow` turns on `SPU_SLOW_PCT` for the wids in `SPU_SLOW_WIDS` (`GOW_AB_SLOW=20`: each of their module runs busy-waits 20%
+        of its time). Toolkit 4c3fef6f made the probe settable at run time.
+      - 480 s per group, 5 s windows from 300 s.
+      - A group that fully paced the frame would add ~16.7% to frame time.
+
+      | Group slowed 20% | On-off ms/frame, block median (quartiles) | Frame time, on against off |
+      |---|---|---|
+      | none (floor) | +0.97 (-5.24 / +4.38) | -0.7% |
+      | RenJobSet 9-12 | +4.98 (-9.11 / +7.78) | +0.9% |
+      | EDGE 15-17 | +7.30 (-7.52 / +10.27) | +4.1% |
+      | HighestPrio6 + ModelServer 2, 5 | +2.70 (-14.42 / +4.64) | -2.0% |
+      | BrBDblBufWrkld (audio) 8 | +4.65 (-5.46 / +7.67) | +1.2% |
+
+      - No single SPU group paces the frame on the current build. EDGE couples most, at about a quarter of full pacing. So per-module SPU work
+        (a native B708, channel inlining on RenJobSet) is closed for frame rate. The next place to look is the PPU side: the main thread and
+        the walker.
+      - The interpreter time stayed at ~120 ms per 20 s over a full 480 s run (x429b).
+    - One freeze (x430b, the arm with `slow` on wids 7 and 13, runZn):
+      - Flips stopped at ~310 s, ten seconds after the lever began; the SPUs kept polling and there was no pm-hang.
+      - `[GSTACK:stall-main]`: lr 0x3E8388, chain `func_003E82A8+0xE0` <- `func_003C6450+0x5C` <- `func_0033A0F0+0x2EC`, r3 = 0x1E. The walker
+        had no new work for 31.5 s.
+      - Not reproduced in two more runs of the same arm (x431, with and without `SPU_RELOC_ADOPT`). It is the only frozen run of ~30 today.
+      - Left open with these details for when it recurs.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

@@ -13639,7 +13639,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..74da03e4 100644
+index 59f5e4b8..8f7a1145 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13835,7 +13835,7 @@ index 59f5e4b8..74da03e4 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4510 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4518 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -18712,6 +18712,14 @@ index 59f5e4b8..74da03e4 100644
 +        if (!n) s_on = 0;
 +    }
 +    if (!s_on || pc + 16 > SPU_LS_SIZE) return 0;
++    /* pc already inside a resident relocatable placement: nothing to adopt (it is no lifted
++     * entry there). The common case once copies are adopted, so before any scan. */
++    for (uint32_t m = ctx->resident_code_mask; m; m &= m - 1) {
++        const unsigned s = (unsigned)__builtin_ctz(m);
++        if (ctx->resident_code[s].canon && pc >= ctx->resident_code[s].lsa &&
++            pc - ctx->resident_code[s].lsa < ctx->resident_code[s].size)
++            return 0;
++    }
 +    extern uint8_t* vm_base;
 +    const uint8_t* at = ctx->ls + pc;
 +    uint64_t w; memcpy(&w, at, 8);
@@ -26729,7 +26737,7 @@ index 20089610..36e97069 100644
      CloseHandle(th);   /* detached */
  #else
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 905b3517..66d83a58 100644
+index 905b3517..30c852d9 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -26,6 +26,9 @@
@@ -26742,7 +26750,7 @@ index 905b3517..66d83a58 100644
  #include "spu_coherency.h"
  #include <stdio.h>
  #include <stdlib.h>
-@@ -34,24 +37,155 @@
+@@ -34,24 +37,157 @@
  
  extern int spu_run_with_halt(void (*)(spu_context*), spu_context*);
  
@@ -26770,6 +26778,8 @@ index 905b3517..66d83a58 100644
 + * that SPURS instance stops). Every 2 s while stuck: wid, lane, pc, lr, r3..r5 and
 + * the LS words at pc -- a moving pc is a loop, a fixed one a blocked op.
 + * Racy reads of the live context by design; diagnostic only. */
++/* SPU_SLOW_PCT, settable while the game runs (port in-run A/B); -1 = not read yet. */
++int g_spu_slow_pct = -1;
 +#ifdef _WIN32
 +#include <windows.h>
 +#define SPURS_HANG_SLOTS 64
@@ -26900,7 +26910,7 @@ index 905b3517..66d83a58 100644
  } s_pm_instances[SPURS_PM_INSTANCES];
  static SRWLOCK s_pm_directory_lock = SRWLOCK_INIT;
  static CONDITION_VARIABLE s_pm_directory_wake;
-@@ -98,7 +232,7 @@ static void policy_slot_release(struct PmSlot* slot)
+@@ -98,7 +234,7 @@ static void policy_slot_release(struct PmSlot* slot)
   * a direct caller that still owns a reference makes removal BUSY instead. */
  int spurs_policy_release_workload(uint32_t ea, uint32_t wid)
  {
@@ -26909,7 +26919,7 @@ index 905b3517..66d83a58 100644
      AcquireSRWLockExclusive(&s_pm_directory_lock);
      for (unsigned i = 0; i < SPURS_PM_INSTANCES; i++) {
          struct PmInstance* pi = &s_pm_instances[i];
-@@ -134,7 +268,7 @@ void spurs_policy_release_instance(uint32_t ea)
+@@ -134,7 +270,7 @@ void spurs_policy_release_instance(uint32_t ea)
          pi->retiring = 1;
          while (pi->users)
              SleepConditionVariableSRW(&s_pm_directory_wake, &s_pm_directory_lock, INFINITE, 0);
@@ -26918,7 +26928,7 @@ index 905b3517..66d83a58 100644
              struct PmSlot* slot = &pi->slots[w][n];
              AcquireSRWLockExclusive(&slot->lock);
              if (slot->ctx) {
-@@ -152,6 +286,19 @@ void spurs_policy_release_instance(uint32_t ea)
+@@ -152,6 +288,19 @@ void spurs_policy_release_instance(uint32_t ea)
      ReleaseSRWLockExclusive(&s_pm_directory_lock);
  }
  
@@ -26938,7 +26948,7 @@ index 905b3517..66d83a58 100644
  int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                            const uint8_t* pm_host, uint32_t pm_size,
                            uint64_t wkl_data, uint32_t wid, uint32_t spurs_ea,
-@@ -172,10 +319,15 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -172,10 +321,15 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * never progress its claim/stage pipeline). Image + context init happen
       * once; re-entries keep LS and only refresh the entry registers and the
       * (possibly game-updated) kernel-context fields. */
@@ -26955,7 +26965,7 @@ index 905b3517..66d83a58 100644
      spu_context* ctx = resident->ctx;
      int first = 0;
      /* SPURS_PM_FRESH=1: treat EVERY dispatch as first contact (zeroed LS, image
-@@ -225,6 +377,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -225,6 +379,8 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                          (unsigned long long)wkl_data);
          }
          first = 1;
@@ -26964,7 +26974,7 @@ index 905b3517..66d83a58 100644
          spu_coh_unregister(ctx);
          spu_mfc_release(ctx);
          memset(ctx, 0, sizeof(*ctx));
-@@ -255,6 +409,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -255,6 +411,12 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * selectWorkload -- so it called our exit intercept for every poll and
       * branched to 0 for every select. It also tests wklCurrentId (0x1DC) against
       * 1, which only reads sensibly at the correct offset. */
@@ -26977,7 +26987,7 @@ index 905b3517..66d83a58 100644
      KBE32(0x1C0, 0);                    /* spurs EA hi32 (u64 ptr)  */
      KBE32(0x1C4, spurs_ea);             /* spurs EA lo32            */
      KBE32(0x1C8, spu_num);              /* spuNum (virtual SPU / lane row) */
-@@ -281,15 +441,43 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -281,15 +443,43 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
       * treated the list header as an audit header and wrote FFFF over the
       * list's per-SPU cursor rows (SPU 0-3) and first job slots (SPU 4): the
       * "ticket values exploding" with extra SPUs. Titles pass a 32-bit list
@@ -27022,7 +27032,7 @@ index 905b3517..66d83a58 100644
  
      /* RUN/END tracing: thousands of policy dispatches per second made these
       * unconditional fprintf+fflush pairs a real fraction of movie playback.
-@@ -300,6 +488,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -300,6 +490,14 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      static SPU_THREAD_LOCAL unsigned long s_runs = 0;
      unsigned long runno = ++s_runs;
      int log_this = s_trace && (runno <= 64 || (runno & 0xFFF) == 0);
@@ -27037,7 +27047,7 @@ index 905b3517..66d83a58 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -391,7 +587,203 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -391,7 +589,206 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -27101,9 +27111,11 @@ index 905b3517..66d83a58 100644
 +     * falls by about n/(100+n). SPU_SLOW_WIDS=<w>[,<w>...] slows only those
 +     * workloads' runs (which chain paces the frame; the wait still holds the
 +     * kernel thread, as a slower job on a real SPU would). */
-+    { static int s_slow = -1; static uint64_t s_slow_wids = ~0ull;
++    /* g_spu_slow_pct: -1 until read from SPU_SLOW_PCT; a port may set it while the game runs (in-run A/B). */
++    { extern int g_spu_slow_pct; static int s_slow = -1; static uint64_t s_slow_wids = ~0ull;
 +      if (__builtin_expect(s_slow < 0, 0)) {
-+          const char* e = getenv("SPU_SLOW_PCT"); s_slow = e ? atoi(e) : 0;
++          const char* e = getenv("SPU_SLOW_PCT"); s_slow = 0;
++          if (g_spu_slow_pct < 0) g_spu_slow_pct = e ? atoi(e) : 0;
 +          const char* w = getenv("SPU_SLOW_WIDS");
 +          if (w && *w) {
 +              s_slow_wids = 0;
@@ -27115,9 +27127,10 @@ index 905b3517..66d83a58 100644
 +              }
 +          }
 +      }
-+      if (s_slow > 0 && (long long)wid >= 0 && (long long)wid < 64 && (s_slow_wids >> (unsigned)wid & 1)) {
++      const int slow = g_spu_slow_pct;
++      if (slow > 0 && (long long)wid >= 0 && (long long)wid < 64 && (s_slow_wids >> (unsigned)wid & 1)) {
 +          LARGE_INTEGER sl1; QueryPerformanceCounter(&sl1);
-+          const LONGLONG until = sl1.QuadPart + (sl1.QuadPart - prof_t0.QuadPart) * s_slow / 100;
++          const LONGLONG until = sl1.QuadPart + (sl1.QuadPart - prof_t0.QuadPart) * slow / 100;
 +          do { YieldProcessor(); QueryPerformanceCounter(&sl1); } while (sl1.QuadPart < until);
 +      } }
 +#endif
@@ -27242,7 +27255,7 @@ index 905b3517..66d83a58 100644
      /* A lane's run should only end through exitToKernel. Anything else strands
       * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
      if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-@@ -429,12 +821,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -429,12 +826,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */
