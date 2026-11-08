@@ -27156,10 +27156,10 @@ index 905b3517..66d83a58 100644
                      "lastStore=0x%X\n",
 diff --git a/runtime/spu/spurs_wws_native.c b/runtime/spu/spurs_wws_native.c
 new file mode 100644
-index 00000000..de157644
+index 00000000..4ba959be
 --- /dev/null
 +++ b/runtime/spu/spurs_wws_native.c
-@@ -0,0 +1,972 @@
+@@ -0,0 +1,980 @@
 +/* spurs_wws_native.c -- the WWS job manager's control flow in C, for chosen workloads.
 + *
 + * What a lifted run of the job manager policy module spends around a job is mostly
@@ -27584,10 +27584,17 @@ index 00000000..de157644
 +    uint64_t a[4], b[4], c[4];                 /* page masks 0x1230, 0x1250, 0x1270 */
 +    uint8_t bind[32];
 +    uint32_t first, avail, seq8, rec7, nctr, step;
-+    uint32_t run_set_lsa, run_base, run_end, cmd_top, note_ea;
++    uint32_t run_set_lsa, run_base, run_end, cmd_top, note_ea, note_size;
 +} wws_load_state;
 +typedef struct { uint32_t lsa, ea, size, list_lsa; } wws_xfer;
 +enum { WWS_MAX_XFER = 12, WWS_CODE_SIZE = 0xD000, WWS_CODE_TAIL = 0x1000 };
++/* g_spurs_wws_reuse_any (SPURS_WWS_REUSE_ANY=1, a port's in-run A/B flips it): reuse also
++ * applies to a reusable code buffer of another size (8 KB to 128 KB), not only the EDGE
++ * lists' 0xD000; the last 4 KB is fetched again the same way, and SPURS_WWS_CHECK compares
++ * the whole buffer. Off by default until the check says the other lists agree. */
++int g_spurs_wws_reuse_any;
++static inline int wws_code_size_ok(uint32_t size)
++{ return size == WWS_CODE_SIZE || (g_spurs_wws_reuse_any && size >= 2 * WWS_CODE_TAIL && size <= 0x20000); }
 +
 +static inline uint64_t be64(const uint8_t* p) { return (uint64_t)be32(p) << 32 | be32(p + 4); }
 +static inline void put32(uint8_t* p, uint32_t v) { put16(p, v >> 16); put16(p + 2, v & 0xFFFF); }
@@ -27689,12 +27696,12 @@ index 00000000..de157644
 +                const uint32_t lsa = start << 10;
 +                if (list) {
 +                    x[(*nx)++] = (wws_xfer){ ((start + pages) << 10) - size - ((w1 & 7u) << 4), ea, size, lsa };
-+                } else if (size == WWS_CODE_SIZE && g_spurs_wws_load >= 2 && wws_reusable(ctx, s, word, w0, w1, lsa, ea, size)) {
++                } else if (wws_code_size_ok(size) && g_spurs_wws_load >= 2 && wws_reusable(ctx, s, word, w0, w1, lsa, ea, size)) {
 +                    x[(*nx)++] = (wws_xfer){ lsa + size - WWS_CODE_TAIL, ea + size - WWS_CODE_TAIL, WWS_CODE_TAIL, 0 };
 +                    (*reused)++;
-+                    st->note_ea = ea;
++                    st->note_ea = ea; st->note_size = size;
 +                } else {
-+                    if (size == WWS_CODE_SIZE) st->note_ea = ea;
++                    if (wws_code_size_ok(size)) { st->note_ea = ea; st->note_size = size; }
 +                    /* 0x20B8: 16 KB at a time, a last GET of 0 when it ends on a multiple. */
 +                    uint32_t left = size, o = 0;
 +                    for (;;) {
@@ -27756,7 +27763,7 @@ index 00000000..de157644
 +    }
 +    memcpy(st.bind, ls + 0x11B0, 32);
 +    st.first = be32(ls + 0x1410); st.avail = be32(ls + 0x1420);
-+    st.note_ea = 0;
++    st.note_ea = 0; st.note_size = 0;
 +    st.seq8 = ls[0x1443]; st.rec7 = ls[0x14A7]; st.nctr = be32(ls + 0x14AC); st.step = ls[0x14A6];
 +    if (st.first > 32 || st.nctr > 4) { wws_note(WWS_LD_SLOT); return 0; }
 +    wws_xfer x[WWS_MAX_XFER];
@@ -27800,7 +27807,7 @@ index 00000000..de157644
 +    if (st.note_ea) {
 +        put32(w + WWS_NOTE_LSA, be32(w + 0x1440));
 +        put32(w + WWS_NOTE_LSA + 4, st.note_ea);
-+        put32(w + WWS_NOTE_LSA + 8, WWS_CODE_SIZE);
++        put32(w + WWS_NOTE_LSA + 8, st.note_size);
 +        put32(w + WWS_NOTE_LSA + 12, (uint32_t)ctx->resident_ovl);
 +    }
 +    spu_ls_write128(ctx, 0x12A0, spu_il(3));
@@ -28006,6 +28013,7 @@ index 00000000..de157644
 +
 +int spurs_wws_native_init(void)
 +{
++    { const char* e = getenv("SPURS_WWS_REUSE_ANY"); if (e && *e == '1') g_spurs_wws_reuse_any = 1; }
 +    const int mask = spurs_wws_native_env_mask();
 +    int expected = -1;
 +    __atomic_compare_exchange_n(&g_spurs_wws_native, &expected, mask, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
@@ -28134,10 +28142,10 @@ index 00000000..de157644
 +}
 diff --git a/runtime/spu/spurs_wws_native.h b/runtime/spu/spurs_wws_native.h
 new file mode 100644
-index 00000000..677401d7
+index 00000000..7bfa36e1
 --- /dev/null
 +++ b/runtime/spu/spurs_wws_native.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,39 @@
 +/* spurs_wws_native.h -- native control flow for one WWS job per policy module run. */
 +#pragma once
 +#include "spu_context.h"
@@ -28155,6 +28163,7 @@ index 00000000..677401d7
 +/* Workloads whose module runs are timed for an in-run A/B (one bit per wid, 0 = off):
 + * host ticks, runs, and runs the native driver took. */
 +extern int g_spurs_ab_mask;
++extern int g_spurs_wws_reuse_any;
 +extern long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 +
 +/* SPURS_WWS_NATIVE=<wid>[,<wid>...] as a mask (0 when unset). */

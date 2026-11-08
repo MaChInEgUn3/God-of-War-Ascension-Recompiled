@@ -287,6 +287,7 @@ extern "C" int g_spurs_wws_load;
 extern "C" int spurs_wws_native_env_mask(void);
 extern "C" int g_spurs_ab_mask;
 extern "C" long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
+extern "C" int g_spurs_wws_reuse_any;
 extern "C" int g_gcm_ab_on, g_gcm_fast_args;
 extern "C" int ppu_spin_pause, g_spurs_nap_us, g_spurs_lane_ovr[32];
 extern "C" void spu_ibc_set_size(unsigned n);
@@ -307,6 +308,7 @@ static void ab_set(const char* lever, int on)
     if (!strcmp(lever, "icall")) g_ppu_icall_fast = on;
     else if (!strcmp(lever, "dma")) g_spu_dma_diag = !on;
     else if (!strcmp(lever, "fifo")) g_gcm_fast_args = on;
+    else if (!strcmp(lever, "reuse")) g_spurs_wws_reuse_any = on;
     else if (!strcmp(lever, "ibc")) { const char* e = getenv("GOW_AB_IBC"); spu_ibc_set_size(on ? (e ? (unsigned)atoi(e) : 4096u) : 512u); }
     else if (!strcmp(lever, "lanes")) {   /* GOW_AB_LANES="<wid>=<n>[,<wid>=<n>...]", default 11=2 */
         const char* e = getenv("GOW_AB_LANES"); if (!e) e = "11=2";
@@ -342,7 +344,7 @@ static DWORD WINAPI ab_gate(LPVOID arg)
     Sleep(a.start_ms);
     LARGE_INTEGER f, t0, t1;
     QueryPerformanceFrequency(&f);
-    g_spurs_ab_mask = !strcmp(a.lever, "wws8") ? 1 << 8 : !strcmp(a.lever, "wwsx") ? ab_wws_bits() : 7 << 15;   /* us_run= of the lever's workloads: BrBDblBufWrkld, or the EDGE lists */
+    g_spurs_ab_mask = !strcmp(a.lever, "wws8") ? 1 << 8 : (!strcmp(a.lever, "wwsx") || !strcmp(a.lever, "reuse")) ? ab_wws_bits() : 7 << 15;   /* us_run= of the lever's workloads: BrBDblBufWrkld, or the EDGE lists */
     g_gcm_ab_on = 1;
     for (unsigned w = 0;; w++) {
         const int on = !(((w + 1) >> 1) & 1);

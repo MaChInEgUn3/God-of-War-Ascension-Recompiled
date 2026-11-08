@@ -1308,6 +1308,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     - Confirmed on the default build (x413, runZj, lever `wwsx` taking those lists off and on, 4.2-4.7 cores of other load): 12.28 / 11.86 (+3.5%, 7 of 8
       blocks, block median +0.40, quartiles +0.19 / +0.87) and 15.69 / 15.55 (+0.9%, 6 of 9, +0.30). Four arms in all: +4.0, +2.6, +3.5, +0.9%, every
       block median +0.3 to +0.4 against a `none` floor of -0.05.
+      Their module runs not moving while frames rise fits a shorter chain rather than less CPU (inferred): RenJobSet is single-lane on the frame-end chain,
+      ~150 jobs a frame, so ~10 us less wrapper a job is ~1.5-2 ms of a 64 ms frame. The empty `end` runs those lists leave lifted are not worth taking:
+      ~860 a second at under 25 us each is about 2% of one thread.
+    - Code reuse for the other lists (x414, runZk, toolkit `g_spurs_wws_reuse_any`, `SPURS_WWS_REUSE_ANY=1`, in-run lever `reuse`): the driver reused only EDGE's 0xD000
+      code buffer, so the other lists reloaded theirs every job. Check arm (300 s, `SPURS_WWS_CHECK=1`): no CHECK FAILED; reuse on 99% of native jobs for RenJobSet
+      (wids 9-11) and RenderJobs, 23% for General6, 73% for BatchJobList; load per job only 24 -> 21 us (wid 9), 26 -> 22 (wid 10), 53 -> 41 (wid 13), so most
+      of their load is data, not code. Lever arm (480 s): 14.94 / 14.80 game frames/s, block median +0.40 (quartiles -0.40 / +0.45, 5 of 9), `us_run=` -0.56
+      (-3.94 / +1.65): inside the spread. Stays off by default.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
