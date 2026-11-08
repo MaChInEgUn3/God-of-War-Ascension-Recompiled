@@ -1294,6 +1294,14 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       module run and frames flat (13.24 / 13.31, 14.09 / 13.86): halving the misses buys little because a miss is cheap next to the job. Default stays 512.
     - Where that leaves the SPU side: what a generic runtime change can still take is a handful of items of 1-7% of SPU time each (dispatch, channels,
       coherency), each worth ~1-3% of frame rate at best. The large share is the lifted job code itself.
+    - The native driver on the other job lists (x410, runZh, check mode, `SPURS_WWS_NATIVE=2,3,7,9,10,11,12,13,15,16,17 SPURS_WWS_CHECK=1`, 300 s): every list
+      but wid 8 has a zero high word in its workload data and the same policy module. No CHECK FAILED. Native share per list: HighestPrio6 9%, General6 48%,
+      BatchJobList 27%, RenJobSet 69 / 53 / 73 / 10% (wids 9-12), RenderJobs 51%; most of the rest are `end` runs (an empty list, which go to lifted code). No
+      code reuse on those lists, a load of 24-53 us a job.
+    - In-run (x411, runZi, port lever `wwsx` on wids 2,3,7,9-13 with the EDGE lists on throughout, `us_run=` timing those lists): native share 0% -> 55-57%.
+      Game frames/s 14.49 / 13.93 (+4.0%, faster in 8 of 9 blocks, block median +0.40, quartiles +0.20 / +0.90) and 13.48 / 13.14 (+2.6%, 6 of 9), against the
+      same exe's `none` -0.05 (-0.47 / +0.23). Their module runs stay ~170 us either way (most of a run is job code; the empty runs are lifted in both arms).
+      All three arms ran at 4.4-5.3 cores of other load. A candidate: soak with check mode next, then a default.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

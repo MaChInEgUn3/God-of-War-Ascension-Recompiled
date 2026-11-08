@@ -293,6 +293,15 @@ extern "C" void spu_ibc_set_size(unsigned n);
 static int s_idle_wait = -1;   /* GOW_IDLE_WAIT */
 extern "C" long long g_gcm_ab_ticks, g_gcm_ab_draws, g_gcm_ab_passes, g_gcm_ab_words;
 struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
+/* GOW_AB_WWS="<wid>[,<wid>...]" for the wwsx lever (default the non-EDGE lists 2,3,7,9-13). */
+static int ab_wws_bits(void)
+{
+    const char* e = getenv("GOW_AB_WWS"); if (!e) e = "2,3,7,9,10,11,12,13";
+    int bits = 0;
+    for (; *e; ) { const int w = atoi(e); if (w >= 0 && w < 31) bits |= 1 << w; e = strchr(e, ','); if (!e) break; e++; }
+    return bits;
+}
+
 static void ab_set(const char* lever, int on)
 {
     if (!strcmp(lever, "icall")) g_ppu_icall_fast = on;
@@ -309,6 +318,10 @@ static void ab_set(const char* lever, int on)
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
     else if (!strcmp(lever, "wwsload")) g_spurs_wws_load = on ? 2 : 0;
+    else if (!strcmp(lever, "wwsx")) {   /* the driver on the lists in GOW_AB_WWS only; the others as SPURS_WWS_NATIVE sets them */
+        const int bits = ab_wws_bits(), mask = spurs_wws_native_env_mask() & ~bits;
+        g_spurs_wws_native = on ? mask | bits : mask;
+    }
     else if (!strcmp(lever, "wws8")) {   /* the driver on BrBDblBufWrkld only, the EDGE lists as set */
         const int mask = spurs_wws_native_env_mask() & ~(1 << 8);
         g_spurs_wws_native = on ? mask | 1 << 8 : mask;
@@ -329,7 +342,7 @@ static DWORD WINAPI ab_gate(LPVOID arg)
     Sleep(a.start_ms);
     LARGE_INTEGER f, t0, t1;
     QueryPerformanceFrequency(&f);
-    g_spurs_ab_mask = !strcmp(a.lever, "wws8") ? 1 << 8 : 7 << 15;   /* us_run= of the lever's workloads: BrBDblBufWrkld, or the EDGE lists */
+    g_spurs_ab_mask = !strcmp(a.lever, "wws8") ? 1 << 8 : !strcmp(a.lever, "wwsx") ? ab_wws_bits() : 7 << 15;   /* us_run= of the lever's workloads: BrBDblBufWrkld, or the EDGE lists */
     g_gcm_ab_on = 1;
     for (unsigned w = 0;; w++) {
         const int on = !(((w + 1) >> 1) & 1);
