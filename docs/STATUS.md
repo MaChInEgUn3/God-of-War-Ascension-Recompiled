@@ -1461,6 +1461,20 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       - Toolkit d43b1246 looks the bytes up in a hashed index of the sources' words (8727) instead. After (x440): no `spu_reloc_adopt` in any
         thread's top 30, the slow path ~1%, interpreted time unchanged at ~130 ms per 20 s.
       - So x426/x427 compared runZl against a build that paid this cost. The quiet and loaded A/B is redone on runZr.
+    - One list at a time (x443, runZr, in-run `slow` 20% on a single wid, 480 s per arm, 2.8-8.6 cores of other load):
+
+      | wid | On-off ms/frame, block median (quartiles) | Frame time, on against off | Lever faster in |
+      |---|---|---|---|
+      | 3 | -1.21 (-17.14 / +4.16) | 70.13 against 74.91 ms | 4/8 |
+      | 1 | +1.03 (-7.41 / +5.96) | 64.11 against 64.48 ms | 3/9 |
+      | 0 | +1.74 (-7.79 / +4.92) | 70.93 against 71.67 ms | 3/9 |
+      | 4 | -0.68 (-10.73 / +2.92) | 81.93 against 83.59 ms | 5/9 |
+      | 6 | +4.43 (-8.64 / +8.83) | 78.89 against 77.54 ms | 4/9 |
+
+      - None of the five is outside the noise. Only the group showed (x436b, +5.3%, 8 of 9 blocks).
+      - So the frame waits on the sum of several lists, not on one. No single job is the next lever. The lever is SPU throughput across the
+        General lists (the runtime's per-job cost), or the main thread's polling itself.
+      - EDGE us_run and the walker's us_draw did not move with the lever in any arm.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
