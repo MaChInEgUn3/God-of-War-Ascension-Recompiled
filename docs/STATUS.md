@@ -1446,6 +1446,21 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
 
       - So the game's main thread is what paces the frame now. The walker and the EDGE chain (~25%, x430a) follow well behind.
       - The next lever is main-thread work.
+    - Where the main thread's time goes (x436a `PS3_POLLTOP`, x437 host sampler on every thread, runZp, 360 s):
+      - It sleeps only ~0.3-0.5 s per 60 s, so it is busy.
+      - ~72% of its samples are its job-list polls: `func_00416338` 34% (the job-slot scan), `func_00466E38` 25% (the HighestPrio6 progress
+        counters, from M0.7x), `func_00416610` 13%.
+      - So the frame waits on lists through the main thread, and the `mslow` share is that chain.
+      - Slowing lists 0, 1, 3, 4 and 6 together by 20% added +5.3% to frame time, slower in 8 of 9 blocks (x436b). That is the most consistent
+        SPU signal so far.
+    - A regression the sampler found in the adoption (x437-x440):
+      - On runZp, `spu_indirect_branch_slow` took 37% of the audio kernel thread and 4-13% of the others. On runZl, before adoption, it was
+        1-1.6% (x438).
+      - With the adopt path noinline (x439), the cost was `spu_reloc_adopt` itself: 30.6% of that thread and 3-9% of the others. It scanned
+        ~37 KB of relocatable sources for every unresolved target that was no copy.
+      - Toolkit d43b1246 looks the bytes up in a hashed index of the sources' words (8727) instead. After (x440): no `spu_reloc_adopt` in any
+        thread's top 30, the slow path ~1%, interpreted time unchanged at ~130 ms per 20 s.
+      - So x426/x427 compared runZl against a build that paid this cost. The quiet and loaded A/B is redone on runZr.
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

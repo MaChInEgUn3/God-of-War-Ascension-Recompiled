@@ -13658,7 +13658,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..2e788d70 100644
+index 59f5e4b8..92e17d8c 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13854,7 +13854,7 @@ index 59f5e4b8..2e788d70 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4541 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4585 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -18119,7 +18119,7 @@ index 59f5e4b8..2e788d70 100644
 + * longer there. Before running one, compare the 16 bytes at the target with the source they were
 + * lifted from; a placement that no longer matches is dropped and the target resolves as if it had
 + * never been resident. */
-+static int spu_reloc_slot_stale(spu_context* ctx, unsigned slot, uint32_t pc)
++static __attribute__((noinline)) int spu_reloc_slot_stale(spu_context* ctx, unsigned slot, uint32_t pc)
 +{
 +    extern uint8_t* vm_base;
 +    const uint32_t off = (pc & ~3u) - ctx->resident_code[slot].lsa;
@@ -18743,7 +18743,42 @@ index 59f5e4b8..2e788d70 100644
 + * would have, and dispatch again. Targets that match nothing go into a small negative cache
 + * keyed by (pc, first two words), so code that is not a copy pays the scan once.
 + * SPU_RELOC_ADOPT=0 turns it off. */
-+static int spu_reloc_adopt(spu_context* ctx, uint32_t pc)
++/* Index for spu_reloc_adopt: every 4-byte-aligned 8-byte word of every relocatable region's
++ * source (zero words left out), open addressing, value = (region << 18) | offset. Built once,
++ * on first use, after registration (sources are constant EBOOT code). */
++#define SPU_RX_N 65536u
++static uint64_t s_rx_key[SPU_RX_N];
++static uint32_t s_rx_val[SPU_RX_N];
++static volatile long s_rx_built;
++static inline uint32_t spu_rx_hash(uint64_t k) { return (uint32_t)((k * 0x9E3779B97F4A7C15ull) >> 48) & (SPU_RX_N - 1u); }
++static void spu_reloc_index_build(void)
++{
++    if (__builtin_expect(s_rx_built == 2, 1)) return;
++    static SRWLOCK lk = SRWLOCK_INIT;
++    AcquireSRWLockExclusive(&lk);
++    if (s_rx_built != 2) {
++        extern uint8_t* vm_base;
++        memset(s_rx_val, 0xFF, sizeof s_rx_val);
++        unsigned used = 0;
++        for (int i = 0; i < s_ovl_src_count && i < (1 << 14); i++) {
++            const spu_ovl_src* o = &s_ovl_src[i];
++            if (!o->canon || !o->span) continue;
++            const uint8_t* src = vm_base + o->src_ea;
++            for (uint32_t off = 0; off + 8 <= o->span && used < SPU_RX_N / 2; off += 4) {
++                uint64_t k; memcpy(&k, src + off, 8);
++                if (!k) continue;
++                uint32_t hh = spu_rx_hash(k);
++                while (s_rx_val[hh] != 0xFFFFFFFFu) hh = (hh + 1) & (SPU_RX_N - 1u);
++                s_rx_key[hh] = k; s_rx_val[hh] = (uint32_t)i << 18 | off; used++;
++            }
++        }
++        fprintf(stderr, "[spu-reloc] index: %u words of the relocatable sources\n", used);
++        _InterlockedExchange(&s_rx_built, 2);
++    }
++    ReleaseSRWLockExclusive(&lk);
++}
++
++static __attribute__((noinline)) int spu_reloc_adopt(spu_context* ctx, uint32_t pc)
 +{
 +    static int s_on = -1;
 +    if (__builtin_expect(s_on < 0, 0)) {
@@ -18769,12 +18804,21 @@ index 59f5e4b8..2e788d70 100644
 +    static volatile uint64_t s_neg[NNEG];
 +    const unsigned h = (unsigned)(key >> 52) & (NNEG - 1u);
 +    if (s_neg[h] == key) return 0;
-+    for (int i = 0; i < s_ovl_src_count; i++) {
-+        const spu_ovl_src* o = &s_ovl_src[i];
-+        if (!o->canon || !o->span) continue;
++    /* Candidates from the index of every relocatable source's 8-byte words (one probe chain),
++     * not a scan of the sources: unresolved targets that are no copy are frequent on some
++     * workloads (GoW:A's audio list), and scanning ~37 KB for each cost a third of that thread. */
++    spu_reloc_index_build();
++    if (!w) { s_neg[h] = key; return 0; }
++    uint32_t hh = spu_rx_hash(w);
++    for (int probes = 0; probes < SPU_RX_N; probes++, hh = (hh + 1) & (SPU_RX_N - 1u)) {
++        const uint32_t v = s_rx_val[hh];
++        if (v == 0xFFFFFFFFu) break;
++        if (s_rx_key[hh] != w) continue;
++        const spu_ovl_src* o = &s_ovl_src[v >> 18];
++        const uint32_t off = v & 0x3FFFFu;
 +        const uint8_t* src = vm_base + o->src_ea;
-+        for (uint32_t off = 0; off + 16 <= o->span; off += 4) {
-+            if (memcmp(src + off, at, 16) != 0) continue;
++        {
++            if (off + 16 > o->span || memcmp(src + off, at, 16) != 0) continue;
 +            if (off > pc) continue;
 +            const uint32_t base = pc - off;
 +            if ((base & 15u) || base + o->span > SPU_LS_SIZE) continue;
@@ -18820,7 +18864,7 @@ index 59f5e4b8..2e788d70 100644
 +    return 0;
 +}
 +
-+static int spu_smc_microstep(spu_context* ctx)
++static __attribute__((noinline)) int spu_smc_microstep(spu_context* ctx)
 +{
 +    uint32_t pc = ctx->pc & SPU_LS_MASK & ~3u;
 +    const uint32_t pc_entry = pc;   /* the unresolved branch target (SPU_INTERP_MISS) */
