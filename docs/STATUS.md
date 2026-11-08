@@ -1365,6 +1365,34 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         helpers, so the host was busy.
       - The frame gain is small next to the job gain because the EDGE lists, the bulk of the frame's SPU work, are 96% native; the helpers speed up the
         lifted job code. Now the default (runZl).
+    - Where the critical lists spend their SPU time (x420, runZl, host sampler restricted to a group of wids, 360 s each; scratchpad `sampres.py` resolves
+      the buckets with the exe's map):
+      - Frame end (wids 2, 5, 9-12): ~60% of the top-bucket samples are in lifted job code (`jobmod_a00f81d5483b` 20.8%, `7fc1da1d2ec7` 13.7%,
+        `98f3fc98b30c` 9.8%, `8ae46d2d2727` 9.8%, `e0194f1d9c80` 3.5%).
+      - Frame start (wids 7, 13): `jobmod_baef994426b2` 46%, `759dedc8269b` 7%, and the interpreter ~9% (`spu_step`, `spu_interp_run_until_impl`)
+        with another ~12% in lookups.
+    - The interpreter time (x421, `SPU_INTERP_MISS=1`, 360 s): 2.2-3.8 s interpreted per 20 s, almost all BatchJobList (wid 7) running copies of
+      the four relocatable EBOOT blobs.
+      - These copies had no resident slot. A blob becomes resident only when a GET of its source lands, and these copies got into local store
+        another way: moved, partial, or a placement whose slot a later GET of the same image took over.
+      - The largest single target, LS 0x359C0, is a partial copy of blob 0x6D66B0 from +0x640. No GET of wid 7 ever covers it (x422, x423,
+        `SPU_LSA_GETLOG`), and it alone took ~1.9 s per 20 s.
+      - Not the native WWS driver: with the driver off on wid 7, the time is the same (x424).
+    - Relocatable copies adopted by content (toolkit 6b7f39e3, `spu_reloc_adopt` at the top of `spu_smc_microstep`, `SPU_RELOC_ADOPT=0` turns it off):
+      - On an unresolved target the runtime looks for the bytes at pc inside each relocatable region's source.
+      - The intact quadword run around pc (at least 256 bytes) becomes resident with the matching canonical offset, so lifted code runs only where
+        its bytes are the ones it was lifted from.
+      - It dispatches again when the canonical lift has an entry at pc. Otherwise the interpreter runs on and rejoins the lift at its next entry.
+      - A negative cache keyed by (pc, first two words) keeps the scan to once per foreign target.
+      - The first version returned "dispatch again" for a target that was no lift entry and adopted the same copy forever: a pm-hang at wid 7,
+        fixed before any measurement.
+      - Results:
+        - x425: interpreted time 12-138 ms per 20 s (from 2.2-3.8 s), no pm-hang.
+        - x426, quiet, 480 s ABBA: runZl 16.17 / 16.26, runZm 16.23 / 16.27 game frames/s.
+        - x427, loaded, `burn.py 3`: runZl 14.93 / 14.56, runZm 14.39 / 14.50. Inside the spread; arm c started at 4.95 cores of other load.
+        - No pm-hang in nine runs.
+      - It frees ~14% of one core that the interpreter used. That is not frame time, because BatchJobList is not what the frame waits on.
+      - Kept on (runZm is the default).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,

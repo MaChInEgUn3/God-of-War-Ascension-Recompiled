@@ -13639,7 +13639,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..1920f96a 100644
+index 59f5e4b8..74da03e4 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -13835,7 +13835,7 @@ index 59f5e4b8..1920f96a 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4430 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4510 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -18692,10 +18692,90 @@ index 59f5e4b8..1920f96a 100644
 +        if (s_smc_st) spu_smc_stats(_t0, _pe);                                              \
 +    } while (0)
 +
++/* A relocatable region (spu_overlay_register_region_reloc) becomes resident when a GET of its
++ * source lands in local store. A copy that got there another way -- the title moving it within
++ * local store, or a placement whose slot a later GET of the same image took over -- has no
++ * resident slot, so its code fell to the interpreter (GoW:A's BatchJobList: ~3 s of
++ * interpreting in 20 s, ~2/3 of it in such copies). On an unresolved target, look for the
++ * bytes at pc inside each relocatable region's source; when the whole region sits intact at
++ * the 16-byte-aligned base that implies, make that placement resident, exactly as its GET
++ * would have, and dispatch again. Targets that match nothing go into a small negative cache
++ * keyed by (pc, first two words), so code that is not a copy pays the scan once.
++ * SPU_RELOC_ADOPT=0 turns it off. */
++static int spu_reloc_adopt(spu_context* ctx, uint32_t pc)
++{
++    static int s_on = -1;
++    if (__builtin_expect(s_on < 0, 0)) {
++        const char* e = getenv("SPU_RELOC_ADOPT"); s_on = !(e && e[0] == '0');
++        int n = 0;
++        for (int i = 0; i < s_ovl_src_count; i++) n += s_ovl_src[i].canon != 0;
++        if (!n) s_on = 0;
++    }
++    if (!s_on || pc + 16 > SPU_LS_SIZE) return 0;
++    extern uint8_t* vm_base;
++    const uint8_t* at = ctx->ls + pc;
++    uint64_t w; memcpy(&w, at, 8);
++    const uint64_t key = w ^ ((uint64_t)pc * 0x9E3779B97F4A7C15ull);
++    enum { NNEG = 4096 };
++    static volatile uint64_t s_neg[NNEG];
++    const unsigned h = (unsigned)(key >> 52) & (NNEG - 1u);
++    if (s_neg[h] == key) return 0;
++    for (int i = 0; i < s_ovl_src_count; i++) {
++        const spu_ovl_src* o = &s_ovl_src[i];
++        if (!o->canon || !o->span) continue;
++        const uint8_t* src = vm_base + o->src_ea;
++        for (uint32_t off = 0; off + 16 <= o->span; off += 4) {
++            if (memcmp(src + off, at, 16) != 0) continue;
++            if (off > pc) continue;
++            const uint32_t base = pc - off;
++            if ((base & 15u) || base + o->span > SPU_LS_SIZE) continue;
++            /* The intact part around pc, in quadwords: a copy may hold only part of the region,
++             * or the title may have written into the rest. Only that part becomes resident, so
++             * lifted code runs only where its instruction bytes are the ones it was lifted from;
++             * a branch out of it dispatches as before. At least 256 bytes. */
++            uint32_t lo = off & ~15u, hi = lo;
++            while (lo >= 16 && memcmp(ctx->ls + base + lo - 16, src + lo - 16, 16) == 0) lo -= 16;
++            while (hi + 16 <= o->span && memcmp(ctx->ls + base + hi, src + hi, 16) == 0) hi += 16;
++            if (hi < off + 16 || hi - lo < 256) continue;
++            /* Already resident there: nothing to adopt (pc is no lifted entry of it). */
++            for (uint32_t m = ctx->resident_code_mask; m; m &= m - 1) {
++                const unsigned s = (unsigned)__builtin_ctz(m);
++                if (ctx->resident_code[s].image_id == o->image_id &&
++                    pc >= ctx->resident_code[s].lsa && pc - ctx->resident_code[s].lsa < ctx->resident_code[s].size) {
++                    return 0;
++                }
++            }
++            int slot = -1;
++            for (unsigned s = 0; s < SPU_RESIDENT_CODE_SLOTS; ++s)
++                if (!(ctx->resident_code_mask & (1u << s))) { slot = (int)s; break; }
++            if (slot < 0)
++                for (unsigned s = 0; s < SPU_RESIDENT_CODE_SLOTS; ++s)
++                    if (ctx->resident_code[s].image_id == o->image_id) { slot = (int)s; break; }
++            if (slot < 0) return 0;
++            ctx->resident_code[slot].lsa = base + lo;
++            ctx->resident_code[slot].size = hi - lo;
++            ctx->resident_code[slot].source_ea = o->src_ea + lo;
++            ctx->resident_code[slot].image_id = o->image_id;
++            ctx->resident_code[slot].canon = o->canon + lo;
++            ctx->resident_code_mask |= 1u << slot;
++            { static volatile long s_n = 0; const long n = _InterlockedIncrement(&s_n);
++              if (n <= 8 || (n & (n - 1)) == 0)
++                  fprintf(stderr, "[spu-reloc] adopted image %d at LS 0x%05X, 0x%X of 0x%X bytes (pc 0x%05X, %ld so far)\n",
++                          o->image_id, base + lo, hi - lo, o->span, pc, n); }
++            /* Dispatch again only when the canonical lift has an entry at pc; otherwise the
++             * interpreter runs from pc and rejoins the now-resident lift at its next entry. */
++            return spu_lookup(pc - base + o->canon, o->image_id) != NULL;
++        }
++    }
++    s_neg[h] = key;
++    return 0;
++}
++
 +static int spu_smc_microstep(spu_context* ctx)
 +{
 +    uint32_t pc = ctx->pc & SPU_LS_MASK & ~3u;
 +    const uint32_t pc_entry = pc;   /* the unresolved branch target (SPU_INTERP_MISS) */
++    if (spu_reloc_adopt(ctx, pc)) { g_spu_trampoline_fn = spu_indirect_branch; return 1; }
 +    /* Straight runs of quadword loads and stores (lqa/stqa/lqd/stqd) go through
 +     * a tight loop: no decode chain, no per-access probe. The WWS handler's
 +     * generated save and restore stubs are 76 of them and a `bi`, run on every

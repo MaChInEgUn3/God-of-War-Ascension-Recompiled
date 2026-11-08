@@ -375,6 +375,9 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
 * **Indirect branches**: `SPU_IB_STATS=1` prints, every 20 s, how many indirect branches the SPU dispatcher resolved
   and the 24 most frequent by (workload, image or resident overlay, target, link register).
   `SPU_IB_STATS_WIDS=15,16,17` counts only those workloads.
+* **Relocatable copies by content**: `SPU_RELOC_ADOPT=0` turns off the runtime's adoption of relocatable-code copies on an unresolved
+  target (`spu_reloc_adopt`, `runtime/spu/spu_channels.c`, toolkit). With it on, a `[spu-reloc] adopted image ... at LS ..., <n> of <span>
+  bytes` line marks the first adoptions and each power of two after. `SPU_INTERP_MISS=1` shows what is left to the interpreter.
 * **SPU job capture**: `SPU_JOB_CAPTURE=<dir>` writes one file per policy-module job, `job_<wid>_<seq>.bin`: LS and
   GPRs at entry, then every GET/PUT (with the bytes), GETLLAR/PUTLLC/PUTLLUC line, channel read, JobApi dispatch,
   and LS and GPRs at the end. `SPU_JOB_CAPTURE_WIDS` (default `15,16,17`), `SPU_JOB_CAPTURE_N` (default 100, all
