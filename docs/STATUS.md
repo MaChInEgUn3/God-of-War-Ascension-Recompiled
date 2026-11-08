@@ -1359,6 +1359,8 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
 
       - In game (x417 + x418, runZk against runZl, 480 s, quiet host, game frames/s from 300 s): runZk 16.33 / 16.66 / 16.05, runZl 16.72 / 16.83, so +2.6%,
         and both runZl arms are above all three runZk arms.
+      - Loaded (x419, `burn.py 3` for each arm, order Zk Zl Zl Zk, 480 s): runZk 13.99 / 13.99, runZl 15.03 / 14.58 game frames/s from 300 s, so +5.8%.
+        Under load the SPU threads compete for cores, so cheaper job code pays more.
       - x417's third arm (runZl, 13.29) is left out: its walker took 25.9 us a draw against 19.3-20.6 in every other arm, and the walker does not use these
         helpers, so the host was busy.
       - The frame gain is small next to the job gain because the EDGE lists, the bulk of the frame's SPU work, are 96% native; the helpers speed up the
