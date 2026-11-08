@@ -1339,6 +1339,30 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       300/300 identical, sums of per-job minimums 460.9 / 474.0 / 470.0 / 480.3 ms, flat. On the hot wid 8 function the context references fell 569 -> 176 but
       stack references rose 1193 -> 1316: lifted functions name a median of 70 SPU registers against 16 host vector registers, so values spill either way.
       The cost is register count, not aliasing; the plan is not recommended in this form.
+    - What the remaining host instructions are (no run, the hottest wid 8 function compiled with `/FA` and DWARF line tables, each instruction charged to
+      the helper its line is in): of 3593, `spu_shufb` ~630 (84 ops, ~7.5 each), the float ops ~1300 (~57 ops, mostly the fast-path check around a single
+      `vfmadd`/`vaddps`/`vmulps`), LS access ~280, lifted glue (branches, address math, register moves) ~790.
+    - Cheaper `shufb` and float fast-path check (toolkit 93819cd1, `runtime/spu/spu_helpers.h`):
+      - `shufb` takes 9 vector ops instead of 12. The index is `C ^ 3` with no mask, A or B is chosen on `C << 3`, and the special selectors come from one
+        `pshufb` lookup on the top nibble, blended on C's bit 7.
+      - Under `SPU_FP_DAZ` (FTZ and DAZ set by `spu_run_with_halt`), fa/fs/fm/fma/fnms/fms flag only exponents 254 and 255 (`(r & 0x7F000000) == 0x7F000000`)
+        and turn -0 into +0 with one compare. Without `SPU_FP_DAZ` the old check stays.
+      - Old against new header, bitwise, with that MXCSR: 4M `shufb` cases (every control byte in every position) and 20M vectors for each float op, 0
+        differ. A deliberately broken variant gave millions of differences.
+      - Job replay (lab exes, REPEAT=20, ABBA, sum of per-job minimums, all identical):
+
+        | Capture | Old | New |
+        |---|---|---|
+        | `jobcapA67`, default | 210.8 / 209.8 ms | 175.7 / 159.3 ms |
+        | `jobcapA67`, lifted noise path | 522.4 / 460.7 ms | 387.4 / 389.1 ms |
+        | `jobcap4` (EDGE, mostly native) | 26.3 / 27.4 ms | 25.6 / 25.7 ms |
+
+      - In game (x417 + x418, runZk against runZl, 480 s, quiet host, game frames/s from 300 s): runZk 16.33 / 16.66 / 16.05, runZl 16.72 / 16.83, so +2.6%,
+        and both runZl arms are above all three runZk arms.
+      - x417's third arm (runZl, 13.29) is left out: its walker took 25.9 us a draw against 19.3-20.6 in every other arm, and the walker does not use these
+        helpers, so the host was busy.
+      - The frame gain is small next to the job gain because the EDGE lists, the bulk of the frame's SPU work, are 96% native; the helpers speed up the
+        lifted job code. Now the default (runZl).
     - Parked with reasons: walker vertex fetch / FIFO split (no causal share now), the native 0x3FEC0 stub
       (~0.05 core), wid 7 (off the frame's path), dispatch count (lifter architecture: direct call linking).
   - Frame rate: undecided. The paired A/B x309 (runWz = M1.02 against runXc = M1.03 + M1.04, under load,
