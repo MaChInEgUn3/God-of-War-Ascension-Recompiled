@@ -237,6 +237,27 @@ static DWORD WINAPI clock_watch(LPVOID arg)
     return 0;
 }
 
+#ifdef GOW_PGO_GEN
+/* Profile-guided optimization, instrumented build only (-DGOW_PGO_GEN, compiled with
+ * -fprofile-generate). The benchmark runs end by being killed, so the compiler
+ * runtime's exit-time write never happens: GOW_PGO_DUMP=<s>[,<reset_s>] writes the
+ * counters to LLVM_PROFILE_FILE at s seconds, and clears them first at reset_s
+ * (default: never), for a profile of the level alone. */
+extern "C" int __llvm_profile_write_file(void);
+extern "C" void __llvm_profile_reset_counters(void);
+static DWORD WINAPI pgo_dump(LPVOID)
+{
+    unsigned at = 0, rst = 0;
+    sscanf(getenv("GOW_PGO_DUMP"), "%u,%u", &at, &rst);
+    if (rst && rst < at) { Sleep(rst * 1000); __llvm_profile_reset_counters();
+                           fprintf(stderr, "[pgo] counters reset at %us\n", rst); }
+    Sleep((at - (rst < at ? rst : 0)) * 1000);
+    const int rc = __llvm_profile_write_file();
+    fprintf(stderr, "[pgo] profile written at %us rc=%d\n", at, rc);
+    return 0;
+}
+#endif
+
 /* GOW_HEARTBEAT=<s>: every s seconds, the flip count and GoW:A's game frame
  * counter (u32 at 0x9710C8), so a long run that never stalls still says how far
  * the game got. */
@@ -449,6 +470,10 @@ static DWORD WINAPI frame_clock(LPVOID)
       if (w && atoi(w) > 0) CreateThread(NULL, 0, clock_watch, (LPVOID)(uintptr_t)(atoi(w) * 1000), 0, NULL); }
     { const char* h = getenv("GOW_HEARTBEAT");
       if (h && atoi(h) > 0) CreateThread(NULL, 0, heartbeat, (LPVOID)(uintptr_t)(atoi(h) * 1000), 0, NULL); }
+#ifdef GOW_PGO_GEN
+    { const char* g = getenv("GOW_PGO_DUMP");
+      if (g && atoi(g) > 0) CreateThread(NULL, 0, pgo_dump, NULL, 0, NULL); }
+#endif
     { const char* ab = getenv("GOW_AB");
       if (ab) { static AbArg a; unsigned w = 10, st = 300; int n = 0;
                 sscanf(ab, "%15[^,],%u,%u%n", a.lever, &w, &st, &n);

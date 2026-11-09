@@ -1,11 +1,28 @@
-# Status (updated 2026-11-01)
+# Status (updated 2026-11-09)
 
-## Works
-* Loader, lifter, compile and link of the whole PPU; boot through CRT, FIOS, PSARC mounting, DCDS, savedata.
-* 12+ WWS SPURS workloads registered; Edge Zlib served by HLE (PSARC blocks inflate correctly).
-* Optional **firmware SPURS (LLE)**: the real `libsre` runs; the real SPURS kernel and system-service policy module
-  execute as lifted SPU code.
-* Vulkan backend on Windows (ported), GCM init, display buffers, about 890 flips; frames are black (clear only).
+## Where it stands
+* **Runs:** boot, intro movies, main menu with text and music, and the first level on the Vulkan backend: the attack
+  tutorial, the prison and the corridor fight, driven by a scripted pad. No hang in 25-minute runs.
+* **Speed, corridor fight, 6-core CPU + RTX 3080:** about 16-18 game frames/s on a quiet host (x415, x417-x418) and
+  about 14-15 with other programs busy (x416, x419). A frame takes ~65-70 ms. Not playable yet.
+* **Not known:** nothing past the corridor fight has been run. The pad script cannot walk on from there and nobody has
+  played further by hand, so how far the game gets is open.
+* **Open bugs:** texture garbage on some meshes in a minority of runs (2 of 30 when last counted); one unexplained
+  freeze in ~30 runs (x430b, below).
+
+## Where the time goes (2026-11-08, x429-x443)
+* The frame is the main thread's own work in series with its waits on the SPU job lists; about two thirds of the
+  main thread's samples are those waits.
+* No single part paces the frame. Slowed by 20% one at a time, the EDGE lists cost about a quarter of full pacing, the
+  General lists a third, the RSX walker under a third, and no single list is outside the noise.
+* The main thread's own work has no hot spot: outside its waits, no function has 1% of its samples (x440).
+* So a lever on one component is capped by that component's share. The ones sized since x429 all came out under what
+  the in-game A/B resolves (3-10% between arms) and are parked with their numbers in the log below.
+
+## Next
+* Levers that act on all of it at once. First: a profile-guided build (PGO) of the lifted PPU, the lifted SPU and
+  the runtime together, which has not been tried here (`GOW_PGO_DUMP` in `port/main.cpp` writes the profile).
+* A run past the corridor, to learn what breaks next.
 
 ## Resolved (M0.11): the GCM `MemTable entry not found` blocker
 Root cause: the Edge Zlib HLE (`cellSpursLFQueuePushBody`) ignored the slice offset (`w6 & 0xFFFF`) of a partial
@@ -19,7 +36,10 @@ microstep `stqa`/`lqa` address scale, the trampoline re-arm after interpreter ha
 ops (`bisled`, E/D bits, double precision, ...). The job pipeline advances and the PPU job waits release. SPURS HLE
 now models `CellSpurs2` (32 workloads); GoW:A registers 19 (EDGE2 and RsxSync were never scheduled before).
 
-## Current blocker
+## Log
+The first blockers in the order they fell (M0.12-M0.21), then the notes of each milestone and experiment, not in
+strict date order. Statements here describe the build of their date.
+
 All 19 SPURS workloads run (CellSpurs2 layout fixed: `flags1` at 0x74 with `SF1_32_WORKLOADS`, flag receiver at 0x77,
 signal2 at 0x78; `cellSpursGetWorkloadFlag`/`_cellSpursWorkloadFlagReceiver` implemented; kernel `tempArea` filled).
 EDGE2's job batch completes, but the next EDGE0 (wid 15) / EDGE1 (wid 16) batches never zero their completion counters
