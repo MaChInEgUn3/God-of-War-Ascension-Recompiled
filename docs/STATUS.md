@@ -59,8 +59,13 @@
   | All of the above together (x447a) | 18.29 | 17.11 | +6.9% | -0.58 (6/9) |
   | All of the above together (x447b) | 18.46 | 17.42 | +6.0% | -0.02 (5/9) |
 
-* Noise floor: the same on/off figure from the eight runs with no lever (x445, x446) reads -1.1% to +2.7%, mean
-  +1.3%. Only the RenJobSet lists on three lanes are clear of it on both the totals and the block medians.
+* Noise floor, recomputed 2026-11-10 from all 21 runs with no lever (x445, x446, x450w, x451): the on/off totals
+  read -4.1% to +6.3% (mean +1.0%, standard deviation 2.5); the block median reads -2.16 to +5.98 ms (mean +1.94,
+  standard deviation 2.3, so it is not centred on zero); the lever counts as faster in 2 to 6 blocks of 9. The first
+  eight runs alone had given -1.1% to +2.7%, which was too narrow.
+* Against that floor only the RenJobSet lists on three lanes stand out: three runs out of three, block medians
+  (-2.69, -5.82, -4.33 ms) all below the lowest null value, two of the three totals above the highest. The other
+  rows are inside it, including the "all together" rows.
 * Frames with the lanes on look like the default's; no `[pm-hang]` in any run.
 * Before (x405, x406): wid 11 alone on two lanes showed nothing, and 11 with ModelServer about +2%. The four lists
   together had not been tried.
@@ -101,9 +106,41 @@
   effects need the in-run lever or many more runs. The first run of a batch tends to start under more load than the
   rest, and reading logs while a run is inside its measurement window slows that run (run 4 of x451l).
 
+## Main thread after the lanes, and HighestPrio6 (2026-11-10, x452-x453)
+* Sampled profile of the current exe (x452, 300 s, all threads) against the one before the RenJobSet lanes (x440),
+  corridor fight only (samples from 240 s). One run a side, on different days, 4.7 against 1.4 cores of other load
+  at the start: direction only.
+
+  | Main thread | x440 (RenJobSet one lane) | x452 (three lanes) |
+  |---|---|---|
+  | Its share of all samples | 18.7% | 14.0% |
+  | `0x416338` job-slot scan | 31.5% of the thread | 14.3% |
+  | `0x466E38` wait on the HighestPrio6 counters | 24.3% | 31.0% |
+  | `0x416610` | 8.9% | 5.5% |
+
+  The scan at `0x416338` dropped to a third of its samples (2458 to 814); the HighestPrio6 wait did not move (1900
+  to 1763) and is now the largest item. The walker and the SPU threads look the same as before.
+* So HighestPrio6 (wid 2), which runs one lane wide, was tried on more lanes with the in-run lever on top of the
+  current default (x453, 0.4-2.9 cores of other load):
+
+  | Lanes switched | On | Off | Difference | Block median ms/frame (lever faster in) |
+  |---|---|---|---|---|
+  | 2 on 3 (x453ha) | 16.75 | 15.99 | +4.8% | -0.23 (5/9) |
+  | 2 on 3 (x453hb) | 17.15 | 16.83 | +1.9% | +2.41 (4/9) |
+  | 2 on 6 (x453sa) | 17.57 | 16.95 | +3.7% | +1.82 (3/9) |
+  | 2 and ModelServer (5) on 3 (x453ma) | 17.16 | 16.71 | +2.7% | +0.01 (4/9) |
+
+* All four are inside the noise floor above: not resolved, a few percent at most, default unchanged. ModelServer
+  added nothing on top. Not checked: that wid 2 really ran on more than one kernel thread with the lever on (a lane
+  only runs on a thread whose SPU number the workload has a priority for).
+* Why more lanes may not help here: `0x466E38` compares the lowest of the per-SPU job counters with the end of the
+  list, so it waits for every participating SPU. More lanes add participants; if the wait is the time until the
+  last lane picks the list up, not the job time, lanes cannot shorten it. Not measured yet.
+
 ## Next
-* Back to what the in-run lever resolves: a fresh profile of the main thread now that the RenJobSet lists are three
-  lanes wide, then lanes for ModelServer together with them.
+* Split the `0x466E38` wait in one trace window of the corridor fight: HighestPrio6 not picked up yet, running, or
+  finished with the main thread still waiting. That says whether the lever is dispatch latency, job time or
+  something upstream.
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
 * A run past the corridor, to learn what breaks next and to widen the profile beyond one scene.
 
