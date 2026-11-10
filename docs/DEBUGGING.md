@@ -500,6 +500,8 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   patch is followed at once.
   `GOW_IDLE_WAIT=<n>` (port, default 0) picks the frame loop's wait when no park applies: 0 = `Sleep(4)`, 1 = the
   toolkit's FIFO kick wait (wakes on the next put), 2 = `Sleep(1)`. Untested beyond one run (STATUS, x243).
+  `GCM_PARK_TICK_CAP=1` (port, default 0; in-run lever `parkcap`) ends the park spin and that wait when the next
+  vblank tick is due. Inside the noise in the corridor fight (STATUS, x450p).
 * **Stuck SPURS workloads** (port default `SPURS_PM_HANG=10`; `0` turns it off): `SPURS_PM_HANG=<s>` reports policy-module runs that have not returned after s seconds
   (every 2 s: wid, lane, pc, lr, r3..r5, event status/mask, interrupt enable, list-stall status, srr0, LS words at pc,
   then the tag mask, last tag status and every parked stall-and-notify list). Lifted SPU code updates pc only on
@@ -625,8 +627,9 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   (whether those workloads ever run side by side), `SPURS_MAXCONT="<wid>=<n>,..."` (run that workload on n virtual SPUs whatever its registered
   maxContention, lanes 1..n-1 on threads created per dispatch; slower than `SPURS_LANES`, not set by default),
   `SPURS_LANES="<wid>[,<wid>...]=<n>[;...]"` (up to n kernel threads run that workload's module at once, each as
-  the SPU it plays, only on SPUs the workload has a priority on; the port's default is `SPURS_LANES=15,16,17=3;3,7=3`,
-  the EDGE lists plus General6 and BatchJobList, `SPURS_LANES=off` disables it),
+  the SPU it plays, only on SPUs the workload has a priority on; the port's default is
+  `SPURS_LANES=15,16,17=3;3,7=3;9,10,11,12=3`, the EDGE lists, General6 and BatchJobList, and the four RenJobSet lists;
+  `SPURS_LANES=off` disables it),
   `SPURS_RERUN_YIELD=1` (end a rerun window when a workload this SPU ranks higher is ready; logs `[spurs-ry]`
   counts every 60 s; default off, measured neutral on GoW:A),
   `SPURS_PM_RERUN_WIDS="<wid>[,<wid>...]=<us>[;...]"` (a rerun window of their own for those workloads; default
