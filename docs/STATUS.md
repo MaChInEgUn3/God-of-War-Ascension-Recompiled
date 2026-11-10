@@ -6,8 +6,8 @@
 * **Speed, corridor fight, 6-core CPU + RTX 3080:** about 16-18 game frames/s on a quiet host (x415, x417-x418) and
   about 14-15 with other programs busy (x416, x419). A frame takes ~65-70 ms. Not playable yet. The optional
   profile-guided build adds about 5% (18.1-18.7 against 17.5-17.7 on a quiet host, x446). Those figures predate
-  the wider lane default of x447-x450 (+6% to +12% on the in-run lever; whole runs with it read 15.2-16.6, x451,
-  on a host that was less quiet than in x446).
+  the wider lane default of x447-x450 (+6% to +12% on the in-run lever). Whole runs with it read 17.9 on a quiet
+  host (x450w, second round) and 15.2-16.6 when the host was less quiet (x451).
 * **Not known:** nothing past the corridor fight has been run. The pad script cannot walk on from there and nobody has
   played further by hand, so how far the game gets is open.
 * **Open bugs:** texture garbage on some meshes in a minority of runs (2 of 30 when last counted); one unexplained
@@ -76,6 +76,11 @@
   the quiet rounds above. Four whole runs do not resolve a difference of this size: in the eight runs of x451 below,
   the same exe ranged over 8-9% from run to run. The in-run lever figures in the table are the evidence for the
   lanes; x450w only shows the whole-run result does not contradict them.
+* A second round of the same four runs (2026-11-10 06:52-07:26, load at the starts 2.4 / 1.9 / 0.9 / 0.7 cores):
+  13.17 / 17.94 / 17.94 / 16.85. The first run is discarded: other work of ours ran on the host inside its
+  measurement window (its EDGE module run took 81.8 us against 71-72 in the other three). The last three ran on a
+  quiet host: 17.94 and 17.94 for the new default against 16.85 for the old, +6.5%, in line with the in-run
+  figures. One pair, so still within what whole runs resolve.
 * An earlier attempt (x448w, all the lanes above against the old default) ran while another program used 3-5 cores
   and settles nothing: 15.88 / 13.32 for the default against 15.08 / 15.30.
 * Also tried: the walker's park spin and idle nap cut short at the next vblank tick (`GCM_PARK_TICK_CAP=1`, lever
@@ -104,7 +109,8 @@
   (cross-module inlining is driven by call counts when a profile is present), which would be the form to retest.
 * Method notes from these rounds. A four-run whole-run comparison on this host resolves about 5% at best; smaller
   effects need the in-run lever or many more runs. The first run of a batch tends to start under more load than the
-  rest, and reading logs while a run is inside its measurement window slows that run (run 4 of x451l).
+  rest, and reading logs while a run is inside its measurement window slows that run (run 4 of x451l). A quick check
+  of a run: the median EDGE module run is 71-72 us on a quiet host and 75-84 us when something else was busy.
 
 ## Main thread after the lanes, and HighestPrio6 (2026-11-10, x452-x453)
 * Sampled profile of the current exe (x452, 300 s, all threads) against the one before the RenJobSet lanes (x440),
