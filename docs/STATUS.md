@@ -8,10 +8,11 @@
   profile-guided build adds about 5% (18.1-18.7 against 17.5-17.7 on a quiet host, x446). Those figures predate
   the wider lane default of x447-x450 (+6% to +12% on the in-run lever). Whole runs with it read 17.9 on a quiet
   host (x450w, second round) and 15.2-16.6 when the host was less quiet (x451).
-* **Not known:** nothing past the corridor fight has been run. The pad script cannot walk on from there and nobody has
-  played further by hand, so how far the game gets is open.
-* **Open bugs:** texture garbage on some meshes in a minority of runs (2 of 30 when last counted); one unexplained
-  freeze in ~30 runs (x430b, below).
+* **Played by a person (2026-11-10):** New Game with a DualSense, 11.5 minutes: the opening, the tutorials and on
+  into a courtyard arena fight, where it drops to 7-9 game frames/s. How far the game gets beyond that is open.
+* **Open bugs:** many small graphics bugs in that session (not triaged); texture garbage on some meshes in a
+  minority of scripted runs (2 of 30 when last counted); one unexplained freeze in ~30 scripted runs (x430b, below).
+  Fixed on 2026-11-10: a freeze a minute into New Game (instructions the lift had left out, below).
 
 ## Where the time goes (2026-11-08, x429-x443)
 * The frame is the main thread's own work in series with its waits on the SPU job lists; about two thirds of the
@@ -137,18 +138,54 @@
   | 2 and ModelServer (5) on 3 (x453ma) | 17.16 | 16.71 | +2.7% | +0.01 (4/9) |
 
 * All four are inside the noise floor above: not resolved, a few percent at most, default unchanged. ModelServer
-  added nothing on top. Not checked: that wid 2 really ran on more than one kernel thread with the lever on (a lane
-  only runs on a thread whose SPU number the workload has a priority for).
-* Why more lanes may not help here: `0x466E38` compares the lowest of the per-SPU job counters with the end of the
-  list, so it waits for every participating SPU. More lanes add participants; if the wait is the time until the
-  last lane picks the list up, not the job time, lanes cannot shorten it. Not measured yet.
+  added nothing on top.
+* Why (x454, x455: 20 s trace windows of the corridor fight on a diagnostic exe that marks the main thread's wait
+  loops; frame 59 ms). The wait at `0x466E38` is 10.3 ms of the frame, ahead of the sleep at `0x3E8388` (6.4),
+  the scans called from `0x416654` and `0x416A44` (4.6 and 4.4) and the RSX `ref` throttle at `0x375A88` (4.2). But it
+  is not a wait for HighestPrio6: that list runs 1.35 ms a frame, and 89% of the wait has none of its runs inside.
+  With wid 2 on three lanes the list did spread over two or three SPUs and the wait stayed at 10.2 ms.
+* What it tracks is RenderJobs (wid 13), one lane wide, busy 24.3 ms a frame in 40 runs: it is running during 87% of
+  the wait, and the end of one of its runs is the nearest event to the end of the wait in 58% of the waits (the
+  short HighestPrio6 waits make up most of the rest). `0x466E38` is the generic "wait for this job list" routine.
+* RenderJobs on three or six lanes (x455c, x455d) removes that wait, 10.3 to 0.8 ms a frame, and the frame does not
+  get shorter: 58.6 ms. The time moves to the other waits (`0x3E8388` 8.9 ms, `0x375A88` 6.5, a poll at `0x3E8910`
+  3.6). So the main thread was waiting there for something that is ready no sooner; the frame is paced elsewhere,
+  the RSX side being the first suspect. This matches the in-run levers that had wid 13 on three lanes (inside the
+  noise). Default unchanged.
+
+## New Game froze a minute into the first level: instructions the lift left out (2026-11-10, x456-x457)
+* First run by a person (New Game, DualSense): the game froze 345 s in, in the courtyard after the attack tutorial.
+  In the log, 40 s before: a query returned a null object, the main thread walked a tree from it (322 indirect
+  calls to addresses that are not functions; the scripted corridor runs have none), then stalled waiting for a job
+  while the RSX walker sat on a self-jump in the command buffer.
+* Cause: the lifted PPU code was made by an older lifter that did not know `stvlx` (63 sites) or `vlogefp` (8) and
+  emitted them as no-ops. In `func_002E9270` four `stvlx` write vectors to the stack before a call; with them
+  missing the callee read whatever was there and the result's object pointer came out null. On the console that
+  read would fault, so the object exists there. The scripted route never takes this branch.
+* Fix: `scripts/patch_lift.py` fills those 71 instructions in with what the current lifter emits (a no-op on a
+  current lift). The other `TODO` lines in the lift are data inside code.
+* Check. The player's inputs were recorded (`PAD_RECORD`) and replayed (`PAD_PLAY`, see DEBUGGING.md). Before the
+  fix the null object came back in 3 of 5 replays, at 302-304 s, each time the routine was reached; after it, the
+  one replay that reached the routine (3050 calls) had no null read. Then the same person played 11.5 minutes on
+  the fixed exe, past that spot: no null read, no bad call, no freeze.
+* A fresh lift with the current lifter and the command in BUILDING.md is not a drop-in replacement: it came out as
+  29,299 functions in 35 files, 2.1 GB of C++, against 16,336 functions in 5 files, 190 MB. Not understood yet, so
+  the port keeps the old lift plus the patch.
+
+## Past the corridor: the arena fight is much slower (2026-11-10)
+* That 11.5-minute session went on into a courtyard arena fight. Game frames per second from the log's heartbeat:
+  12-15 on the way there, then 9.5, 8.1 and 6.6 over three consecutive minutes of the fight (the corridor fight
+  runs at 16-18). Nothing was profiled there yet. The save from that session is kept as a second scene.
+* The player also reports many small graphics bugs along the way; the frame dumps of the session show light and
+  dark rectangles on floors. Not triaged yet.
 
 ## Next
-* Split the `0x466E38` wait in one trace window of the corridor fight: HighestPrio6 not picked up yet, running, or
-  finished with the main thread still waiting. That says whether the lever is dispatch latency, job time or
-  something upstream.
+* The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
+  and a scripted way to reach it.
+* The graphics bugs seen in the played session.
+* What paces the corridor frame now that the job-list waits are known not to: the RSX `ref` throttle and the sleep
+  at `0x3E8388`.
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
-* A run past the corridor, to learn what breaks next and to widen the profile beyond one scene.
 
 ## Resolved (M0.11): the GCM `MemTable entry not found` blocker
 Root cause: the Edge Zlib HLE (`cellSpursLFQueuePushBody`) ignored the slice offset (`w6 & 0xFFFF`) of a partial

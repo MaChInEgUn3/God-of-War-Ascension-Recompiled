@@ -58,7 +58,7 @@ index 19e9eb18..bfb76cb9 100644
        # the shim grew joinable handles and multi-object waits; on Apple Silicon
        # it is the arm64 memory-model regression net for the primitives a game
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index bdd2f85a..067f06dc 100644
+index bdd2f85a..b8a747e3 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -50,8 +50,8 @@ list(FILTER HLE_SOURCES EXCLUDE REGEX "/tests/")
@@ -72,7 +72,7 @@ index bdd2f85a..067f06dc 100644
      endif()
      find_path(PS3RECOMP_VULKAN_INCLUDE_DIR vulkan/vulkan.h)
      if(NOT PS3RECOMP_VULKAN_INCLUDE_DIR)
-@@ -136,6 +136,18 @@ if(WIN32)
+@@ -136,6 +136,27 @@ if(WIN32)
          ole32       # COM for WASAPI audio
          bcrypt      # BCryptGenRandom for SSL RNG
      )
@@ -87,11 +87,20 @@ index bdd2f85a..067f06dc 100644
 +            target_link_libraries(ps3recomp_runtime PUBLIC ${SDL2_LIBRARIES})
 +        endif()
 +        message(STATUS "  SDL2:         found (Vulkan window)")
++        # PS3RECOMP_PAD_SDL2=ON: cellPad reads controllers through SDL2 on Windows too, so
++        # pads that are not XInput devices work (DualSense, DualShock 4, Switch Pro). XInput
++        # pads keep working through SDL2; the keyboard fallback stays.
++        option(PS3RECOMP_PAD_SDL2 "cellPad: SDL2 game-controller backend on Windows" OFF)
++        if(PS3RECOMP_PAD_SDL2)
++            set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/libs/input/cellPad.c
++                PROPERTIES COMPILE_DEFINITIONS PS3RECOMP_PAD_USE_SDL2)
++            message(STATUS "  cellPad:      SDL2 game-controller backend")
++        endif()
 +    endif()
  else()
      # cellPad and cellAudio select their SDL2 backends unconditionally off
      # Windows (see PAD_BACKEND_SDL2 / AUDIO_BACKEND_SDL2), so SDL2 is required
-@@ -203,6 +215,16 @@ if(PS3RECOMP_FFMPEG_RUNTIME)
+@@ -203,6 +224,16 @@ if(PS3RECOMP_FFMPEG_RUNTIME)
      message(STATUS "  FFmpeg:       run-time loaded (headers in ${PS3RECOMP_FFMPEG_INCLUDE_DIR})")
  endif()
  
@@ -108,7 +117,7 @@ index bdd2f85a..067f06dc 100644
  # ---------------------------------------------------------------------------
  # Guest shaders on Metal: HLSL -> SPIR-V -> MSL
  # ---------------------------------------------------------------------------
-@@ -291,6 +313,12 @@ endif()
+@@ -291,6 +322,12 @@ endif()
  # libs/video/rsx_shader_spirv.cpp is a stub and the Vulkan backend stays on
  # its fixed-function path.
  if(PS3RECOMP_RSX_VULKAN)
@@ -243,10 +252,56 @@ index 204a0055..1f5c7bc8 100644
      u32 fmt_ea = (u32)(uintptr_t)format, dst = (u32)(uintptr_t)outBuff;
      if (handle >= MAX_VDEC || !s_vdec[handle].in_use || !fmt_ea)
 diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
-index 7fa8cab9..252b32bd 100644
+index 7fa8cab9..6928d999 100644
 --- a/libs/input/cellPad.c
 +++ b/libs/input/cellPad.c
-@@ -771,15 +771,23 @@ skip_inject: ;
+@@ -48,11 +48,13 @@ static double pad_clock(unsigned long long t0_ms)
+   #define PAD_BACKEND_XINPUT 0
+ #endif
+ 
+-#if PAD_BACKEND_XINPUT
++#ifdef _WIN32
+   #ifndef WIN32_LEAN_AND_MEAN
+     #define WIN32_LEAN_AND_MEAN
+   #endif
+-  #include <windows.h>
++  #include <windows.h>     /* the keyboard fallback, whichever pad backend */
++#endif
++#if PAD_BACKEND_XINPUT
+   #include <xinput.h>
+   #pragma comment(lib, "xinput.lib")
+ #endif
+@@ -160,14 +162,16 @@ static u8 pad_xinput_stick_to_u8(short raw, short deadzone)
+     return (u8)val;
+ }
+ 
+-/* Keyboard fallback for port 0.
++#endif /* PAD_BACKEND_XINPUT (reopened after the keyboard fallback) */
++
++/* Keyboard fallback for port 0 (Windows, either pad backend).
+  *
+- * The only backend here is XInput, so on a machine with no controller plugged
+- * in a title gets a pad that is reported present and never presses anything --
++ * On a machine with no controller the backend can see, a title gets a pad that
++ * is reported present and never presses anything --
+  * it can be watched but not played. That is what The Simpsons Arcade Game hit:
+  * it reached its attract loop and no input existed to start a game.
+  *
+- * Only fills in for port 0, only when XInput found nothing there, so a real
++ * Only fills in for port 0, only when the backend found nothing there, so a real
+  * controller always wins and nothing changes for a port that has one. Keys are
+  * read only while a window of THIS process is in the foreground, so typing in
+  * another application does not drive the game. Set PAD_NO_KEYBOARD=1 to
+@@ -234,6 +238,8 @@ static void pad_poll_keyboard(void)
+ }
+ #endif
+ 
++#if PAD_BACKEND_XINPUT
++
+ static void pad_poll_xinput(void)
+ {
+     for (int i = 0; i < PAD_MAX_HOST_PORTS; i++) {
+@@ -771,15 +777,23 @@ skip_inject: ;
        static unsigned char s_v[4] = {128,128,128,128};
        /* Optional 5th/6th fields: the seconds the hold starts and ends, so the menus
         * before gameplay are not driven by it (PAD_STICK="128,0,128,128,300,320"). */
@@ -272,6 +327,96 @@ index 7fa8cab9..252b32bd 100644
                    hs->analog_rx = s_v[2]; hs->analog_ry = s_v[3];
                    hs->connected = 1; }
        /* PAD_SWEEP=<seconds per step>: walk the sticks through a fixed set of
+@@ -814,6 +828,54 @@ skip_inject: ;
+     data->button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_X]  = hs->analog_lx;
+     data->button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_Y]  = hs->analog_ly;
+ 
++    /* PAD_PLAY=<path>: replay a PAD_RECORD file on port 0: at each read, the buttons and
++     * sticks of the last recorded line whose time has come (buttons are OR-ed onto the
++     * live pad, the sticks replace it). The clock is seconds since the first read, as in
++     * the recording; PAD_PLAY_CLOCK=flips uses the recording's flip column instead, which
++     * follows the title's own pace when the run is slower or faster than the recorded one. */
++    if (port_no == 0) {
++        static int s_pp = -1, s_pn = 0, s_pi = 0, s_pflips = 0;
++        static struct PadPlayLine { double t; unsigned b; unsigned char s[4]; unsigned flips; } *s_pl;
++        static unsigned long long s_pt0;
++        if (s_pp < 0) {
++            s_pp = 0;
++            const char* e = getenv("PAD_PLAY");
++            FILE* f = (e && *e) ? fopen(e, "r") : NULL;
++            if (f) {
++                int cap = 0, has_flips = 1; char line[160];
++                while (fgets(line, sizeof line, f)) {
++                    double t; unsigned b, fl = 0; int a[4];
++                    const int n = sscanf(line, "%lf %x %d %d %d %d %u", &t, &b, &a[0], &a[1], &a[2], &a[3], &fl);
++                    if (n < 6) continue;
++                    if (n < 7) has_flips = 0;
++                    if (s_pn == cap) { cap = cap ? cap * 2 : 1024; s_pl = (struct PadPlayLine*)realloc(s_pl, (size_t)cap * sizeof *s_pl); }
++                    s_pl[s_pn].t = t; s_pl[s_pn].b = b; s_pl[s_pn].flips = fl;
++                    for (int k = 0; k < 4; k++) s_pl[s_pn].s[k] = (unsigned char)a[k];
++                    s_pn++;
++                }
++                fclose(f);
++                const char* c = getenv("PAD_PLAY_CLOCK");
++                s_pflips = c && !strcmp(c, "flips") && has_flips;
++                s_pp = s_pn > 0; s_pt0 = pad_now_ms();
++                printf("[cellPad] PAD_PLAY: %d line(s) from %s, clock %s\n", s_pn, e, s_pflips ? "flips" : "seconds");
++            }
++        }
++        if (s_pp) {
++            const double now = (double)(pad_now_ms() - s_pt0) / 1000.0;
++            const unsigned nf = s_pflips ? (unsigned)cellGcm_flip_request_count() : 0;
++            while (s_pi + 1 < s_pn && (s_pflips ? s_pl[s_pi + 1].flips <= nf : s_pl[s_pi + 1].t <= now)) s_pi++;
++            if (s_pflips ? s_pl[s_pi].flips <= nf : s_pl[s_pi].t <= now) {
++                const struct PadPlayLine* q = &s_pl[s_pi];
++                data->button[CELL_PAD_BTN_OFFSET_DIGITAL1] |= (u16)(q->b & 0xFF);
++                data->button[CELL_PAD_BTN_OFFSET_DIGITAL2] |= (u16)((q->b >> 8) & 0xFF);
++                data->button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_X]  = q->s[0];
++                data->button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_Y]  = q->s[1];
++                data->button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_X] = q->s[2];
++                data->button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_Y] = q->s[3];
++            }
++        }
++    }
++
+     /* Pressure-sensitive buttons (only meaningful if PRESS_ON) */
+     if (setting & CELL_PAD_SETTING_PRESS_ON) {
+         data->button[CELL_PAD_BTN_OFFSET_PRESS_RIGHT]    = hs->press_right;
+@@ -894,6 +956,34 @@ emit:
+             else                        s_data_fresh[port_no] = 0;
+         }
+     }
++    /* PAD_RECORD=<path>: write what the title is given on port 0, one line per change:
++     *   <seconds since the first packet> <buttons, hex> <lx> <ly> <rx> <ry> <guest flips>
++     * The buttons are DIGITAL1 | DIGITAL2 << 8, the same mask PAD_SCRIPT and PAD_FILE take;
++     * a stick counts as changed when it moves by 8 or more. PAD_PLAY replays the file: a
++     * route a person played becomes a run a script can repeat. */
++    if (port_no == 0 && data->len) {
++        static int s_rec = -1; static FILE* s_rf; static unsigned long long s_rt0;
++        static unsigned s_rb = 0xFFFFFFFFu; static int s_rs[4] = { -99, -99, -99, -99 };
++        if (s_rec < 0) {
++            const char* e = getenv("PAD_RECORD");
++            s_rf = (e && *e) ? fopen(e, "w") : NULL; s_rec = s_rf ? 1 : 0; s_rt0 = pad_now_ms();
++            if (s_rf) printf("[cellPad] PAD_RECORD: writing %s\n", e);
++        }
++        if (s_rec) {
++            const unsigned b = (unsigned)(data->button[CELL_PAD_BTN_OFFSET_DIGITAL1] & 0xFF) |
++                               ((unsigned)(data->button[CELL_PAD_BTN_OFFSET_DIGITAL2] & 0xFF) << 8);
++            const int st[4] = { data->button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_X], data->button[CELL_PAD_BTN_OFFSET_ANALOG_LEFT_Y],
++                                data->button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_X], data->button[CELL_PAD_BTN_OFFSET_ANALOG_RIGHT_Y] };
++            int ch = b != s_rb;
++            for (int k = 0; k < 4 && !ch; k++) { const int d = st[k] - s_rs[k]; if (d >= 8 || d <= -8) ch = 1; }
++            if (ch) {
++                fprintf(s_rf, "%.3f %04X %d %d %d %d %u\n", (double)(pad_now_ms() - s_rt0) / 1000.0, b, st[0], st[1], st[2], st[3],
++                        (unsigned)cellGcm_flip_request_count());
++                fflush(s_rf);
++                s_rb = b; for (int k = 0; k < 4; k++) s_rs[k] = st[k];
++            }
++        }
++    }
+     {
+         unsigned int ea = (unsigned int)(uintptr_t)data_guest;
+         vm_write32((unsigned long long)ea + 0, (unsigned int)data->len);   /* len (s32) */
 diff --git a/libs/spurs/cellSpurs.c b/libs/spurs/cellSpurs.c
 index 19a8516f..526744cc 100644
 --- a/libs/spurs/cellSpurs.c

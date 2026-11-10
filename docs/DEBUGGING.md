@@ -356,6 +356,18 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   (right-stick flicks every 400 ms pass the dodge tutorial) plus `scripts/pad_masher.sh 170 700 <file>` feeding
   `PAD_FILE=<file>` (the attack tutorial); measure 360-690 s. The older 360-720 s numbers are the dodge-tutorial loop,
   about twice the gameplay rate.
+* **Record and replay a person's route**: `PAD_RECORD=<path>` writes what the title is given on port 0, one line per
+  change: seconds since the first read, buttons (the `PAD_SCRIPT` mask), the four stick axes, guest flips.
+  `PAD_PLAY=<path>` replays such a file from the same save (buttons OR-ed onto the live pad, sticks replaced);
+  `PAD_PLAY_CLOCK=flips` follows the flip column instead of seconds. Neither clock tracks the game exactly: replayed
+  by seconds, a 340 s recording from New Game reached the same spot in 4 of 7 runs (a run that goes faster or slower
+  than the recorded one presses the tutorial prompts at the wrong moment); by flips it did not, because loading
+  screens take a different number of flips each run. Good enough to reproduce a bug a player hit; a long route needs
+  a sync point at the start of gameplay (not done).
+* **Controllers**: the port builds cellPad with `-DPS3RECOMP_PAD_SDL2=ON` (`scripts/cfg.bat`): SDL2's game-controller
+  backend, so a DualSense or DualShock 4 works (they are not XInput devices; XInput pads work through SDL2 too).
+  Without a controller, the keyboard drives port 0 while the game window has the focus: arrows = d-pad and left
+  stick, Z/X/A/S = cross/circle/square/triangle, Q/W = L1/R1, 1/2 = L2/R2, Enter = START, Tab = SELECT.
   - The save matters: the run that first got through (x109) let the game autosave a checkpoint into
     `BCUS98232-PROFDATA-0`, and since then the menu's first entry is "Continue Game", so every later run (all the
     corridor numbers, x110 on) starts from that checkpoint, not from the opening. A run that reaches the next

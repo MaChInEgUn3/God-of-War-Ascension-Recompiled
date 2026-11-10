@@ -14,7 +14,11 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `local/vfs/PS3_GAME/...`; the archives listed in `ARCHIVES` must be present (`LOCALIZED_ARCHIVES` lists the language ones).
 3. Load and lift: `ppu_loader`, then `ppu_lifter.py <elf> -o local/recompiled --functions ... --hle-stubs ...`
    (about 50 s, about 190 MB of C++). Then `python scripts/patch_lift.py local/recompiled` inserts the port's
-   function hooks (today: the VRAM-cache release guard in `port/gow_vram_guard.c`; idempotent). Regenerate the NID table:
+   function hooks (today: the VRAM-cache release guard in `port/gow_vram_guard.c`; idempotent) and fills in the
+   instructions an older lifter left as `/* TODO: ... */` no-ops (`stvlx`/`stvrx`, `vlogefp`; nothing to do on a
+   lift made by the current lifter). Check a lift for real instructions left out with
+   `grep -o "TODO: [a-z0-9_.]*" ppu_recomp_*.cpp | sort | uniq -c`: `.word`, `vmx_x...` and `op31_x...` are data
+   inside code, anything with a real mnemonic is a gap. Regenerate the NID table:
    `gen_hle_nids.py --all --out local/recompiled/ppu_hle_nids.cpp`. Rerun it whenever the patch adds an HLE function
    (NIDs are computed from the names; GoW:A needs at least `cellVdecQueryAttrEx`/`cellVdecOpenEx`).
    Optional: real MPEG-2 decoding of the menu video needs FFmpeg 9.0 (`-DPS3RECOMP_FFMPEG_RUNTIME=ON` with its headers,
