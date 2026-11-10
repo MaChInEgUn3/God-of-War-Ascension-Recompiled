@@ -1,11 +1,12 @@
-# Status (updated 2026-11-09)
+# Status (updated 2026-11-10)
 
 ## Where it stands
 * **Runs:** boot, intro movies, main menu with text and music, and the first level on the Vulkan backend: the attack
   tutorial, the prison and the corridor fight, driven by a scripted pad. No hang in 25-minute runs.
 * **Speed, corridor fight, 6-core CPU + RTX 3080:** about 16-18 game frames/s on a quiet host (x415, x417-x418) and
   about 14-15 with other programs busy (x416, x419). A frame takes ~65-70 ms. Not playable yet. The optional
-  profile-guided build adds about 5% (18.1-18.7 against 17.5-17.7 on a quiet host, x446).
+  profile-guided build adds about 5% (18.1-18.7 against 17.5-17.7 on a quiet host, x446). Those figures predate
+  the wider lane default of x447-x450, which measured about +3% over whole runs on an unsteady host (x450w).
 * **Not known:** nothing past the corridor fight has been run. The pad script cannot walk on from there and nobody has
   played further by hand, so how far the game gets is open.
 * **Open bugs:** texture garbage on some meshes in a minority of runs (2 of 30 when last counted); one unexplained
@@ -38,7 +39,7 @@
   is repeated.
 * Kept as an optional last build step; the experiments below and the next A/Bs use the standard build.
 
-## More SPURS lanes (2026-11-09, x447-x450)
+## More SPURS lanes (2026-11-09/10, x447-x450)
 * The four RenJobSet lists (wids 9-12) now run on up to three kernel threads, as the EDGE lists and General6 /
   BatchJobList already did: port default `SPURS_LANES=15,16,17=3;3,7=3;9,10,11,12=3`. They ran one lane wide at the
   end of the frame (wid 11 alone is ~13 ms of it, x402).
@@ -62,9 +63,14 @@
 * Frames with the lanes on look like the default's; no `[pm-hang]` in any run.
 * Before (x405, x406): wid 11 alone on two lanes showed nothing, and 11 with ModelServer about +2%. The four lists
   together had not been tried.
-* Not done yet: a whole-run comparison on a quiet host. The one attempted (x448w, all the lanes above against the
-  default, 480 s runs) ran while another program used 3-5 cores and settles nothing: 15.88 / 13.32 for the default
-  against 15.08 / 15.30.
+* As a whole-run setting (x450w, 2026-11-10): 480 s runs in the order old default / new / new / old, game frames/s
+  over 240-450 s: 15.47 / 15.85 / 14.56 / 13.90, so +3.5% for the new default (+2.5% and +4.7% in the two adjacent
+  pairs). The batch started after the host had been under 1.3 cores of other load for three minutes, but the load
+  did not stay there (1.7 / 0.9 / 4.1 / 1.1 cores at the four starts, 5 after the last) and every run is slower than
+  the quiet rounds above, so this is a sign and a rough size, not a clean figure. The whole-run gain is smaller than
+  the in-run one.
+* An earlier attempt (x448w, all the lanes above against the old default) ran while another program used 3-5 cores
+  and settles nothing: 15.88 / 13.32 for the default against 15.08 / 15.30.
 * Also tried: the walker's park spin and idle nap cut short at the next vblank tick (`GCM_PARK_TICK_CAP=1`, lever
   `parkcap`, x450p): +1.0% and +3.1% on the totals, block medians +3.20 and +0.02 ms. Inside the noise floor; the
   default stays off.
