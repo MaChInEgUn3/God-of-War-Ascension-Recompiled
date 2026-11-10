@@ -38,6 +38,37 @@
   is repeated.
 * Kept as an optional last build step; the experiments below and the next A/Bs use the standard build.
 
+## More SPURS lanes (2026-11-09, x447-x450)
+* The four RenJobSet lists (wids 9-12) now run on up to three kernel threads, as the EDGE lists and General6 /
+  BatchJobList already did: port default `SPURS_LANES=15,16,17=3;3,7=3;9,10,11,12=3`. They ran one lane wide at the
+  end of the frame (wid 11 alone is ~13 ms of it, x402).
+* Measured with the in-run lever (`GOW_AB=lanes`, `GOW_AB_LANES`, 5 s windows from 300 s, corridor fight, 1.6-3.8
+  cores of other load on the host). Game frames/s with the lanes on against off:
+
+  | Lanes switched | On | Off | Difference | Block median ms/frame (lever faster in) |
+  |---|---|---|---|---|
+  | 9-12 on 3 (x448ra) | 18.43 | 16.42 | +12.2% | -2.69 (7/9) |
+  | 9-12 on 3 (x449rb) | 15.60 | 14.27 | +9.3% | -5.82 (5/9) |
+  | 9-12 on 3 (x449rc) | 15.92 | 14.99 | +6.2% | -4.33 (7/9) |
+  | 9-12 on 6 (x449sa) | 13.36 | 12.36 | +8.1% | -1.20 (5/9) |
+  | 9-12 on 2 (x449ta) | 15.46 | 14.48 | +6.8% | +0.99 (4/9) |
+  | 3 and 7 on 6 instead of 3 (x448ga) | 17.51 | 17.54 | -0.2% | +2.35 (3/8) |
+  | 2 and 14 on 6, 13 on 3 (x448oa) | 16.76 | 15.91 | +5.3% | +1.55 (3/9) |
+  | All of the above together (x447a) | 18.29 | 17.11 | +6.9% | -0.58 (6/9) |
+  | All of the above together (x447b) | 18.46 | 17.42 | +6.0% | -0.02 (5/9) |
+
+* Noise floor: the same on/off figure from the eight runs with no lever (x445, x446) reads -1.1% to +2.7%, mean
+  +1.3%. Only the RenJobSet lists on three lanes are clear of it on both the totals and the block medians.
+* Frames with the lanes on look like the default's; no `[pm-hang]` in any run.
+* Before (x405, x406): wid 11 alone on two lanes showed nothing, and 11 with ModelServer about +2%. The four lists
+  together had not been tried.
+* Not done yet: a whole-run comparison on a quiet host. The one attempted (x448w, all the lanes above against the
+  default, 480 s runs) ran while another program used 3-5 cores and settles nothing: 15.88 / 13.32 for the default
+  against 15.08 / 15.30.
+* Also tried: the walker's park spin and idle nap cut short at the next vblank tick (`GCM_PARK_TICK_CAP=1`, lever
+  `parkcap`, x450p): +1.0% and +3.1% on the totals, block medians +3.20 and +0.02 ms. Inside the noise floor; the
+  default stays off.
+
 ## Next
 * More whole-program levers: link-time optimization across the lifted code and the runtime has not been tried.
 * A run past the corridor, to learn what breaks next and to widen the profile beyond one scene.

@@ -315,6 +315,7 @@ extern "C" int g_spu_slow_pct;
 extern "C" int g_rsx_slow_pct, g_gcm_main_slow_us;
 extern "C" void spu_ibc_set_size(unsigned n);
 static int s_idle_wait = -1;   /* GOW_IDLE_WAIT */
+static int s_park_cap = -1;    /* GCM_PARK_TICK_CAP */
 extern "C" long long g_gcm_ab_ticks, g_gcm_ab_draws, g_gcm_ab_passes, g_gcm_ab_words;
 struct AbArg { char lever[16]; DWORD window_ms, start_ms; };
 /* GOW_AB_WWS="<wid>[,<wid>...]" for the wwsx lever (default the non-EDGE lists 2,3,7,9-13). */
@@ -343,6 +344,7 @@ static void ab_set(const char* lever, int on)
     else if (!strcmp(lever, "mslow")) { const char* e = getenv("GOW_AB_MSLOW"); g_gcm_main_slow_us = on ? (e ? atoi(e) : 3000) : 0; }   /* flip-requesting thread +us a flip */
     else if (!strcmp(lever, "slow")) { const char* e = getenv("GOW_AB_SLOW"); g_spu_slow_pct = on ? (e ? atoi(e) : 20) : 0; }   /* the wids from SPU_SLOW_WIDS */
     else if (!strcmp(lever, "idle")) { const char* e = getenv("GOW_AB_IDLE"); s_idle_wait = on ? (e ? atoi(e) : 2) : 0; }
+    else if (!strcmp(lever, "parkcap")) s_park_cap = on;
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
     else if (!strcmp(lever, "wwsload")) g_spurs_wws_load = on ? 2 : 0;
@@ -502,9 +504,22 @@ static DWORD WINAPI frame_clock(LPVOID)
            * kick wait (4 ms, cut short when a guest fence poll finds the queue
            * dry); 2 = Sleep(1). */
           if (s_idle_wait < 0) { const char* e = getenv("GOW_IDLE_WAIT"); s_idle_wait = e ? atoi(e) : 0; }
-          if (s_ps <= 0 || cellGcm_park_spin((unsigned)s_ps) < 0) {
-              if (s_idle_wait == 1) cellGcm_fifo_kick_wait(4);
-              else Sleep(s_idle_wait == 2 ? 1 : 4);
+          /* GCM_PARK_TICK_CAP=1 (experiment, default 0; in-run lever "parkcap"): the park
+           * spin and the idle nap end when the next vblank tick is due instead of running
+           * their full 4 ms. If the title releases a park from its vblank handler, a spin
+           * that outlasts the tick holds that release back by up to its own length. */
+          if (s_park_cap < 0) { const char* e = getenv("GCM_PARK_TICK_CAP"); s_park_cap = (e && atoi(e) > 0) ? 1 : 0; }
+          unsigned spin_us = s_ps > 0 ? (unsigned)s_ps : 0u;
+          unsigned nap_ms = s_idle_wait == 2 ? 1u : 4u;
+          if (s_park_cap) {
+              const long long left = (long long)(next_tick - GetTickCount64());
+              const unsigned left_ms = left > 0 ? (unsigned)left : 0u;
+              if (spin_us > left_ms * 1000u) spin_us = left_ms * 1000u;
+              if (nap_ms > left_ms) nap_ms = left_ms;
+          }
+          if (s_ps <= 0 || cellGcm_park_spin(spin_us) < 0) {
+              if (s_idle_wait == 1) cellGcm_fifo_kick_wait(nap_ms);
+              else if (nap_ms) Sleep(nap_ms);
           } }
         ULONGLONG now = GetTickCount64();
 
@@ -890,8 +905,14 @@ int main(int argc, char** argv)
      * on up to three kernel threads too. Corridor, 360-690 s: 10.82/10.91 vs
      * 9.03/8.60 game frames/s with SPURS_MAXCONT=3=3,7=3 (worker threads per
      * dispatch, x131) and ~7.4 with neither; adding 9,10,11,13 to the group was
-     * noise (x132). */
-    if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3;3,7=3");
+     * noise (x132).
+     * ;9,10,11,12=3 (added 2026-11-09): the four RenJobSet lists, which ran one lane wide
+     * at the end of the frame (wid 11 alone is ~13 ms of it, x402). In-run lever, 5 s
+     * windows, corridor fight, game frames/s on against off: 18.43/16.42, 15.60/14.27,
+     * 15.92/14.99 (x448ra, x449rb, x449rc: +12%, +9%, +6%; the same figure with no lever
+     * reads -1..+3%). Two lanes +7% and six +8% in one run each; six lanes for wids 3 and
+     * 7 instead of three: nothing (x448ga). Frames as before. */
+    if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3;3,7=3;9,10,11,12=3");
     /* SPURS_WWS_NATIVE=15,16,17 (the default now): the EDGE lists' job manager runs
      * in C (spurs_wws_native.c), the jobs stay lifted. x388, in-run ABBA: 98.9 -> 89.2
      * us per module run. x390, same exe, old new new old, 480 s: 90.5 / 81.1 / 80.1 /
