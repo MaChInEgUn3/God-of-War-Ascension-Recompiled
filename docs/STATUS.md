@@ -4,7 +4,8 @@
 * **Runs:** boot, intro movies, main menu with text and music, and the first level on the Vulkan backend: the attack
   tutorial, the prison and the corridor fight, driven by a scripted pad. No hang in 25-minute runs.
 * **Speed, corridor fight, 6-core CPU + RTX 3080:** about 16-18 game frames/s on a quiet host (x415, x417-x418) and
-  about 14-15 with other programs busy (x416, x419). A frame takes ~65-70 ms. Not playable yet.
+  about 14-15 with other programs busy (x416, x419). A frame takes ~65-70 ms. Not playable yet. The optional
+  profile-guided build adds about 5% (18.1-18.7 against 17.5-17.7 on a quiet host, x446).
 * **Not known:** nothing past the corridor fight has been run. The pad script cannot walk on from there and nobody has
   played further by hand, so how far the game gets is open.
 * **Open bugs:** texture garbage on some meshes in a minority of runs (2 of 30 when last counted); one unexplained
@@ -19,10 +20,27 @@
 * So a lever on one component is capped by that component's share. The ones sized since x429 all came out under what
   the in-game A/B resolves (3-10% between arms) and are parked with their numbers in the log below.
 
+## Profile-guided build (2026-11-09, x444-x446)
+* Recipe ([BUILDING.md](BUILDING.md), `scripts\pgo.bat`): an instrumented build, one 14-minute scripted run of the
+  first level and its corridor fight (the instrumented exe runs at about 7 game frames/s), then a rebuild with that
+  profile. It covers the lifted PPU, the lifted SPU and the runtime together (56,693 functions with counts).
+* Corridor fight, game frames/s over 240-450 s, 480 s runs in the order standard / PGO / PGO / standard:
+
+  | Round | Host load at each start (cores) | Standard | PGO | PGO | Standard | PGO against standard |
+  |---|---|---|---|---|---|---|
+  | x445 | 1.7 / 1.1 / 0.5 / 1.4 | 16.44 | 17.71 | 18.43 | 16.23 | +10.6% |
+  | x446 (waited for a quiet host) | 0.5 / 0.5 / 0.6 / 0.5 | 17.73 | 18.70 | 18.13 | 17.46 | +4.7% |
+
+* The profile-guided exe was ahead in both pairs of both rounds. The quiet round is the cleaner figure, about +5%:
+  in x445 the standard runs started under more load than the PGO runs, so part of its +10% may be the host.
+* Limits. The profile comes from one scene: code that scene never ran is optimized as cold, so other levels may gain
+  less or lose (not measured). Lifted code that changes after the profile loses its counts until the training run
+  is repeated.
+* Kept as an optional last build step; the experiments below and the next A/Bs use the standard build.
+
 ## Next
-* Levers that act on all of it at once. First: a profile-guided build (PGO) of the lifted PPU, the lifted SPU and
-  the runtime together, which has not been tried here (`GOW_PGO_DUMP` in `port/main.cpp` writes the profile).
-* A run past the corridor, to learn what breaks next.
+* More whole-program levers: link-time optimization across the lifted code and the runtime has not been tried.
+* A run past the corridor, to learn what breaks next and to widen the profile beyond one scene.
 
 ## Resolved (M0.11): the GCM `MemTable entry not found` blocker
 Root cause: the Edge Zlib HLE (`cellSpursLFQueuePushBody`) ignored the slice offset (`w6 & 0xFFFF`) of a partial

@@ -72,6 +72,25 @@ against `https://api.anaconda.org/package/conda-forge/<name>/files`.
 4. Run with `PS3RECOMP_VK_GUEST_PROGRAMS=1`. `PS3RECOMP_VK_DUMP=<file.ppm>` with `PS3RECOMP_VK_DUMP_EVERY=<n>`
    writes every n-th presented frame to that file.
 
+## Optional: profile-guided build (PGO)
+
+A last build step that lets the compiler lay out and inline the lifted PPU, the lifted SPU and the runtime from a
+profile of the game running. Measured on the first level's corridor fight: about +5% game frames/s on a quiet host
+(STATUS.md, x444-x446). `scripts\pgo.bat` wraps it; the standard build above is not touched.
+
+1. `scripts\pgo.bat gen` builds `port\build_pgogen` (instrumented, `-fprofile-generate`, `-DGOW_PGO_GEN`; about half
+   the standard exe's speed).
+2. Run that exe through the part of the game to optimize for, with
+   `LLVM_PROFILE_FILE=%GOW_ROOT%\local\pgo\gow.profraw` and `GOW_PGO_DUMP=<s>[,<reset_s>]`: the profile is written
+   about `s` seconds into the run (the log says `[pgo] profile written`), so the run may be killed afterwards.
+   `reset_s` clears the counters first, for a profile without boot and loading. `GOW_PGO_DUMP` exists only in the
+   instrumented build.
+3. `scripts\pgo.bat merge`, then `scripts\pgo.bat use` builds `port\build_pgouse` (a full rebuild).
+
+The profile matches the lifted sources it was made from: after re-lifting or a toolkit change, functions that changed
+lose their counts (the build still succeeds), so repeat from step 1 when much has changed. Code the training run
+never reached is optimized as cold; a profile from one level says nothing about the others.
+
 ## Optional: firmware SPURS (LLE)
 
 Decrypt your own `libsre.sprx`, then run `lift_prx.py libsre.prx --base 0x30000000`,
