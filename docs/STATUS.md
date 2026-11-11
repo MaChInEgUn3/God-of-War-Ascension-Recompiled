@@ -232,11 +232,18 @@ scripted corridor scene and the scene the played session's save opens on. Both f
   * The colour sub-rectangle read (above) costs 3-4% here: 10.4-11.1 frames/s with it against 11.3-11.7 with
     `RSX_SUBRECT_TEX=0`, 0.9-1.0 s per 30 s in the store to guest memory against 0.05 s. About 900 draws a frame
     sample that texture in this view, not one.
-  * **Open bug:** when Kratos moves on from there (walking, or lunging with attacks), the camera closes in on him
-    at the arena entrance and nothing follows: no cutscene, no enemies, input does nothing for the rest of the run
-    (every run that got there, 6). In the played session, reached by playing rather than by Continue, a cutscene
-    of about 40 s played there and the fight began. The log shows no error. `PS3_MUTE` is not it: it only silences
-    the device. START still opens the items menu before that point.
+  * **Open bug: the arena cutscene starts and stops on its first shot after Continue.** A few seconds' walk from
+    the spawn point (the played session's own stick path does it) the picture dissolves to a close shot of Kratos
+    at the arena entrance, and stays there for the rest of the run (9 runs of 9, up to 3 minutes): three camera
+    framings cycle, the stick and the attack buttons do nothing, START still opens and closes the items menu, no
+    other button has an effect. In the played session, reached by playing rather than by Continue, the same
+    cutscene ran about 40 s through its other shots and the fight began.
+    * Looked at (g6a, a `PS3_FTRACE` of 90 s around the trigger): file reads go on for about 20 s after the
+      trigger and then fall to a trickle, so nothing is stuck reading; no PPU thread that shows in the trace blocks
+      for good; the two `snd_stream_parsing_thread`s never return from their wait in those 90 s, before or after
+      the trigger. There is no trace of the played session to compare against, so that last point is a lead, not
+      a finding. The game prints no batch-job message after the trigger, and the log shows no error.
+    * Not it: `PS3_MUTE` (it only silences the device).
 * Replaying the played session's recorded inputs from New Game went out of step in the opening fight (the game
   ran at a different speed than when it was recorded), so that is not a scripted way into the arena.
 * The arena fight draws about as much as the corridor fight (about 2000 draws per frame in both, from the played
