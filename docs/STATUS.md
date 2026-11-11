@@ -209,8 +209,36 @@ scripted corridor scene and the scene the played session's save opens on. Both f
     shadow mask). That read now goes through guest memory, which takes the texture's own size; the pass output
     is then the left half alone instead of both halves squeezed side by side. This path waits for the GPU once
     a frame. Its cost has not been measured, and a copy on the GPU would avoid it.
-* The save of the played session does not open in the arena fight: it opens on a still close-up before it, at
-  about 20 frames/s.
+* The save of the played session opens at the end of the corridor before the arena, not in the fight. Two things
+  seen there with a scripted pad (g2-g3):
+  * That still view runs at 11-12 frames/s with no input at all, so it is a slow scene that repeats exactly.
+    Profiled against the corridor scene in back-to-back runs of one exe, the host in use by other programs both
+    times (g5b, g5c; a comparison, not figures to quote):
+
+    | | still view at the corridor end | corridor scene |
+    |---|---|---|
+    | frames/s | 11.3-11.7 | 14.3-16.6 |
+    | draws per frame | about 2400 | about 2050-2130 |
+    | RSX walker, CPU per draw end | 27.4-27.8 us | 22.5-25.4 us |
+    | RSX walker, CPU per frame | about 66 ms of 87 | about 50 ms of 65 |
+    | main thread, largest share of samples | 26% in the frame-start wait, 10% in the end-of-frame call | 19% waiting for the render jobs, 13% in the RSX `ref` throttle |
+
+    The frame-start wait is the game's own limit on frames in flight: `func_003E799C` (called at `0x3E8384`)
+    sleeps 30 us at a time until the flag of the frame slot two back is clear. That is the "sleep at `0x3E8388`"
+    left open on 2026-11-10. So in the still view the main thread is ahead of the RSX and waits for it, and the
+    frame is the walker's: more draws, each a little dearer, and the same split as before (vertex fetch about
+    10 us per draw, textures 3-8, backend 5-6, pipeline lookup 2, index build 1.6). No cause of its own was found
+    in this view; it is the corridor scene's limit, further along.
+  * The colour sub-rectangle read (above) costs 3-4% here: 10.4-11.1 frames/s with it against 11.3-11.7 with
+    `RSX_SUBRECT_TEX=0`, 0.9-1.0 s per 30 s in the store to guest memory against 0.05 s. About 900 draws a frame
+    sample that texture in this view, not one.
+  * **Open bug:** when Kratos moves on from there (walking, or lunging with attacks), the camera closes in on him
+    at the arena entrance and nothing follows: no cutscene, no enemies, input does nothing for the rest of the run
+    (every run that got there, 6). In the played session, reached by playing rather than by Continue, a cutscene
+    of about 40 s played there and the fight began. The log shows no error. `PS3_MUTE` is not it: it only silences
+    the device. START still opens the items menu before that point.
+* Replaying the played session's recorded inputs from New Game went out of step in the opening fight (the game
+  ran at a different speed than when it was recorded), so that is not a scripted way into the arena.
 * The arena fight draws about as much as the corridor fight (about 2000 draws per frame in both, from the played
   session's log), while its draws per second fall from about 40 thousand to 15-20 thousand. So the slowdown is
   not the amount drawn, and it is not something that builds up: the rate recovers later in the same session.
@@ -219,9 +247,13 @@ scripted corridor scene and the scene the played session's save opens on. Both f
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
-* The speed cost of the colour sub-rectangle read, and a GPU-side copy if it shows.
-* What paces the corridor frame now that the job-list waits are known not to: the RSX `ref` throttle and the sleep
-  at `0x3E8388`.
+* The cutscene at the arena entrance that does not start after Continue (above).
+* The RSX walker is now the limit in both measured scenes (busy 77-88% of the time in the corridor scene, about
+  three quarters of the frame in the still view), with the SPU lanes widened. Its per-draw cost has no single hot
+  spot left (2026-10 entries in the log), so the step that remains is running parts of it on a second thread.
+* A copy on the GPU for the colour sub-rectangle read (3-4% in the still view).
+* (Answered 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight, so with the RSX `ref`
+  throttle both of the corridor frame's remaining waits are waits for the RSX walker.)
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
 
 ## Resolved (M0.11): the GCM `MemTable entry not found` blocker
