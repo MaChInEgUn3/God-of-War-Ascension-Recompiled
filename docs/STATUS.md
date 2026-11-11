@@ -1,4 +1,4 @@
-# Status (updated 2026-11-10)
+# Status (updated 2026-11-11)
 
 ## Where it stands
 * **Runs:** boot, intro movies, main menu with text and music, and the first level on the Vulkan backend: the attack
@@ -10,7 +10,8 @@
   host (x450w, second round) and 15.2-16.6 when the host was less quiet (x451).
 * **Played by a person (2026-11-10):** New Game with a DualSense, 11.5 minutes: the opening, the tutorials and on
   into a courtyard arena fight, where it drops to 7-9 game frames/s. How far the game gets beyond that is open.
-* **Open bugs:** many small graphics bugs in that session (not triaged); texture garbage on some meshes in a
+* **Open bugs:** graphics bugs reported in that session, of which two causes are fixed (2026-11-11, below: blown-out
+  bloom and decals, and rectangles in the shadows) and the rest is not triaged; texture garbage on some meshes in a
   minority of scripted runs (2 of 30 when last counted); one unexplained freeze in ~30 scripted runs (x430b, below).
   Fixed on 2026-11-10: a freeze a minute into New Game (instructions the lift had left out, below).
 
@@ -177,12 +178,48 @@
   12-15 on the way there, then 9.5, 8.1 and 6.6 over three consecutive minutes of the fight (the corridor fight
   runs at 16-18). Nothing was profiled there yet. The save from that session is kept as a second scene.
 * The player also reports many small graphics bugs along the way; the frame dumps of the session show light and
-  dark rectangles on floors. Not triaged yet.
+  dark rectangles on floors. Two causes were found the next day (below).
+
+## Graphics: two causes found in the played session's bugs (2026-11-11, g1-g2)
+Method: a per-pass capture (`RSX_ENGINE_PASS_DUMP`, DEBUGGING.md) of one frame in two scenes that hold still, the
+scripted corridor scene and the scene the played session's save opens on. Both fixes are in the toolkit patch.
+
+* **Blend constant never applied.** The Vulkan backend mapped the four constant blend factors (`0x8001`-`0x8004`:
+  constant colour, constant alpha and their complements) to ONE, and nothing read `SET_BLEND_COLOR`. The game uses
+  them in three places: its bloom up-chain (`8003/8001`, constants `FF000000` and `4C3D3D3D`, so "source x 1 +
+  destination x 0" and "source x 0.30 + destination x 0.24"), the bloom add (`8003/1`) and floor decals (`8001/8004`,
+  37 draws in the captured corridor frame). All of them went in as a plain add. Now the constant is passed before
+  every draw and carried as Vulkan dynamic state; `VK_BLEND_CONST=0` gives the old mapping.
+  * Measured: over 10 fight frames of the corridor scene, pixels at full brightness were 0.90% and 1.09% before
+    (two runs) and 0.40% after. The runs are separate and their frames do not line up, so this shows the direction
+    only.
+  * Not verified: the decals themselves (the frame captured after the fix had none on screen), and the half-float
+    target branch (the game's blended targets are 8-bit).
+* **A texture smaller than the target at its address.** The game renders into the top-left part of a target and
+  then samples that part with a texture that declares only its size. The engine bound the whole target, so the
+  lookup covered all of it. `RSX_SUBRECT_TEX=0` turns the fix off.
+  * Shadows: the four shadow cascades share one depth target (1402x1408 in the captured frame) and each uses a
+    part of it (754x172, 348x514, 52x54 and 124x140). With the whole target bound, the third and fourth cascade
+    changed 0 pixels of the shadow mask. The mask is filled in 80x90 screen tiles, so the missing cascades showed
+    as rectangles with stepped edges on floors: the "light and dark rectangles" of the played session. With the
+    declared size passed to the shadow lookup they change 3307 and 31902 pixels, and the rectangles are gone from
+    the mask and from the scene pass of that frame. Judged on one still scene; the fight has not been looked at
+    again by a person.
+  * Colour: once a frame the game reads 320x360 of a 640x360 target (a half-size pass that feeds the alpha of the
+    shadow mask). That read now goes through guest memory, which takes the texture's own size; the pass output
+    is then the left half alone instead of both halves squeezed side by side. This path waits for the GPU once
+    a frame. Its cost has not been measured, and a copy on the GPU would avoid it.
+* The save of the played session does not open in the arena fight: it opens on a still close-up before it, at
+  about 20 frames/s.
+* The arena fight draws about as much as the corridor fight (about 2000 draws per frame in both, from the played
+  session's log), while its draws per second fall from about 40 thousand to 15-20 thousand. So the slowdown is
+  not the amount drawn, and it is not something that builds up: the rate recovers later in the same session.
 
 ## Next
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
-* The graphics bugs seen in the played session.
+* A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
+* The speed cost of the colour sub-rectangle read, and a GPU-side copy if it shows.
 * What paces the corridor frame now that the job-list waits are known not to: the RSX `ref` throttle and the sleep
   at `0x3E8388`.
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).

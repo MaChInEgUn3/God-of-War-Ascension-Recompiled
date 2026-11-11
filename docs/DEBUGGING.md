@@ -75,6 +75,14 @@ Lessons that cost days; keep them.
     (topology, vertex fetch, pipeline, no target). `RSX_ENGINE_COHERENCE_LOG=<n>` logs the first n syncs to stderr.
   * `VK_ENG_DEBUG_NODS=<mask>` turns pipeline tests off: 1 depth, 2 stencil, 4 culling, 8 colour mask. If an
     image appears with a test off, that test is what rejects the draws.
+  * Reading a pass dump for a wrong image: find the first `passNNN_tK.ppm` that shows it, then look at that
+    pass's inputs. Each draw line in `draws.txt` reads `blend <on> <src>/<dst> a <src>/<dst> eq <rgb>/<alpha> k
+    <SET_BLEND_COLOR>`, and each texture in `passes.txt` gives its declared size next to the target it names. Two
+    bugs found this way (2026-11-11): blend factors `0x8001`-`0x8004` with a constant nobody applied, and textures
+    declaring less than the target at their address (a pass whose image did not change the target at all was the
+    sign). Filter both files to the passes in question; a frame is 60-90 passes and thousands of draw lines.
+  * `VK_BLEND_CONST=0` maps the constant blend factors to ONE again, and `RSX_SUBRECT_TEX=0` binds the whole target
+    to a texture that declares only its top-left part: the behaviour before those two fixes, for comparison.
 * **Who fills the FIFO, and when**: `SPU_DMA_EA` lines carry `t=<ms>`; `SPU_DMA_EA_DUMP=<n>` hex-dumps the whole
   payload of the first n lines that had a `SPU_DMA_EA_FIND` hit. `GCM_EXEC_WATCH=<io lo>-<io hi>` logs each method the
   walker executes from that FIFO range with its time, so a block can be placed before or after the job that wrote it.
