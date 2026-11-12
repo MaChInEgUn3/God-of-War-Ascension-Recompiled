@@ -410,6 +410,26 @@ so far came from the menu, the first level and its corridor. The scenes after it
   the character against a wall. The replay from the corridor's own checkpoint (r1a) ends the same way.
 * So the fight is still measured only when a person plays it.
 
+## Where an EDGE job run's time is, corridor fight (2026-11-12, s1a)
+* Host samples of the threads while they run workloads 15-17 (`PS3_SAMPLE=1 PS3_SAMPLE_HOST=1
+  PS3_SAMPLE_WIDS=15,16,17`, 48,755 samples from 240 s on, resolved against the link map):
+
+  | Share | What |
+  |---|---|
+  | 55.9% | the hand-made native stages (largest: 11.5%, 6.9%, 6.0%, 5.3%, 4.5%, 3.9%, 3.4%) |
+  | 25.2% | the SPU runtime: indirect branches and lookup 5.3%, channel writes 4.2%, MFC transfers 3.5%, draining calls 2.6%, the per-GET overlay bookkeeping 2.0%, reservation checks 2.0%, channel reads 1.8% |
+  | 13.2% | lifted job-module code, flat (no function above 1.1%) |
+  | 1.4% | lifted code fragments |
+  | 4.3% | other |
+
+* So lifted code is about 15% of an EDGE run in this scene. Two cheap ideas for it were tried on one fragment
+  file and dropped on the generated assembly alone: `restrict` on the context pointer changes nothing (6598 to
+  6597 instruction lines), and keeping the registers in locals for the length of a block makes it longer (6598
+  to 7191; blocks are short and use each register about once). A lifter that merges blocks would be working on
+  that 15%.
+* What is left is spread: the native stages are already 8-wide with a checked fast path, and no runtime item
+  is above 5%. In this scene the next percent comes from several small things, not one.
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)
