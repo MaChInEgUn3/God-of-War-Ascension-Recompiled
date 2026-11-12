@@ -381,8 +381,21 @@ so far came from the menu, the first level and its corridor. The scenes after it
   derived from the game, so it is not something to ship); the slow draw ends that remain are texture work
   (0.6 s) and the backend (0.3 s); the driver's own pipeline cache is not kept between runs yet.
 
+## A scripted way to the arena fight: not yet (2026-11-12, r1-r4)
+* The arena fight is the slowest scene a person has played and no script reaches it: the scripted corridor run
+  never leaves the corridor (30 minutes, x412), and Continue from the checkpoint before the arena stops on the
+  cutscene's first shot (above).
+* Replaying the person's 11.5-minute recording from New Game now gets through the opening and the first fight on
+  time: the replay re-aligns at each autosave and no longer skips short presses
+  ([DEBUGGING.md](DEBUGGING.md), "Record and replay"). Autosaves when played: 41, 158, 260, 326, 354 s. Replayed
+  (r4a): 41, 148, 246 s, and then none.
+* It stops in the corridor fight: enemies and gates need a reaction, and the same inputs replayed blind leave
+  the character against a wall. The replay from the corridor's own checkpoint (r1a) ends the same way.
+* So the fight is still measured only when a person plays it.
+
 ## Next
-* The first run through a scene: translate shaders off the walker thread; keep the driver's pipeline cache.
+* The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
+  is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)
 * A played session with the fragment capture on: the arena fight's placements, and whether the interpreter is
   what slows it.
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),

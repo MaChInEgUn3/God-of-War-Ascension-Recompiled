@@ -381,8 +381,24 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   `PAD_PLAY_CLOCK=flips` follows the flip column instead of seconds. Neither clock tracks the game exactly: replayed
   by seconds, a 340 s recording from New Game reached the same spot in 4 of 7 runs (a run that goes faster or slower
   than the recorded one presses the tutorial prompts at the wrong moment); by flips it did not, because loading
-  screens take a different number of flips each run. Good enough to reproduce a bug a player hit; a long route needs
-  a sync point at the start of gameplay (not done).
+  screens take a different number of flips each run. Good enough to reproduce a bug a player hit.
+  * **Anchors (2026-11-12).** Each autosave is a point that is the same in the recorded session and in a replay.
+    `PAD_RECORD` writes a line `@ <seconds> <flips>` for it; `PAD_PLAY` moves its clock to the k-th `@` line when the
+    replay's k-th autosave happens and logs `[cellPad] PAD_PLAY anchor k: replay at .. , recording at ..`. A
+    recording made before that gets its `@` lines from the session's log: `analysis/pad_anchors.py <log> <pad> <out>`.
+  * A replay read also takes the due lines one button change at a time, so a press shorter than the gap between two
+    reads is not skipped.
+  * What that reaches (the 11.5-minute recording of 2026-11-10, replayed from New Game, r2-r4): without anchors the
+    replay reached the second autosave 10 s late or early and then sat in the first fight's "press square or
+    triangle to attack" prompt for five minutes; with anchors it still did, because the prompt came up later than in
+    the recording and the person's presses had ended. With square presses added to the recording's quiet stretch
+    after them (`analysis/pad_mash.py <pad> <out> <from s> <to s> <buttons hex> [period]`) the third autosave came
+    at 246 s (recorded: 260 s) and the stretch before it took 98 s against 102 s recorded.
+  * What it does not reach: the corridor fight after that. Enemies and gates need a reaction; replayed blind, the
+    character ends up against a wall and the fourth autosave never comes (r1a from the checkpoint, r4a from New
+    Game). A scripted way to the arena fight is still missing.
+  * `PAD_PLAY_CLOCK=flips` from boot is no use even with anchors: menus and loading screens count flips at another
+    rate and the replay never got its first autosave (r3b).
 * **Controllers**: the port builds cellPad with `-DPS3RECOMP_PAD_SDL2=ON` (`scripts/cfg.bat`): SDL2's game-controller
   backend, so a DualSense or DualShock 4 works (they are not XInput devices; XInput pads work through SDL2 too).
   Without a controller, the keyboard drives port 0 while the game window has the focus: arrows = d-pad and left
