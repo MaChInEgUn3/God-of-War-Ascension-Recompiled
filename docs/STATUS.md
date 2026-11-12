@@ -337,7 +337,30 @@ so far came from the menu, the first level and its corridor. The scenes after it
 * Whether the arena fight (6.6-9.5 frames/s when played) has the same cause is not known: nothing scripted reaches
   it. A played session with the capture on would say, and would give its placements.
 
+## Hitches: every run translated every shader again (2026-11-12, k1)
+* Frame times of the played session of 2026-11-10, from the `[flip]` lines (one every 10 flips, so each value is
+  a 10-frame mean): in the corridor part the median frame is 53 ms, but 18% of the time goes to stretches whose
+  mean is over twice that, up to 223-442 ms a frame. In the arena fight there are no such stretches: the frame is
+  evenly slow, median 97 ms and later 156 ms. Two different complaints, "stutters" and "slow".
+* `ENG_SLOW_MS=40` on a replay of the opening names the stutter: of 6.0 s in draw ends over 40 ms, 5.5 s is
+  pipeline creation, 35-130 ms each, at the first use of a material. Almost all of that is glslang translating
+  the shader to SPIR-V on the walker thread. The toolkit can keep the translations on disk
+  (`PS3RECOMP_SPIRV_CACHE=<directory>`), and the port never gave it a directory.
+
+  | opening, 4 minutes | cache cold | cache warm |
+  |---|---|---|
+  | pipeline creation in slow draw ends | 4.7 s | 0.1 s |
+  | draw ends over 40 ms | 64 | 20 |
+  | worst 10-frame mean | 147 ms | 78 ms |
+
+  The port now sets it to `%LOCALAPPDATA%\gow-ascension-recomp\spirv_cache` (383 shaders and 16 MB for the
+  opening); with that default and a filled directory the same replay shows 0.0 s of pipeline creation.
+* What is left: the first time through a scene still translates (the cache fills as one plays, and it is
+  derived from the game, so it is not something to ship); the slow draw ends that remain are texture work
+  (0.6 s) and the backend (0.3 s); the driver's own pipeline cache is not kept between runs yet.
+
 ## Next
+* The first run through a scene: translate shaders off the walker thread; keep the driver's pipeline cache.
 * A played session with the fragment capture on: the arena fight's placements, and whether the interpreter is
   what slows it.
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),

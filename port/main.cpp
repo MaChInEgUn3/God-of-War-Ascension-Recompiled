@@ -990,6 +990,23 @@ int main(int argc, char** argv)
      * previous draw's (~78% here) reuses its answer. Exact (=2 check: 3.3M hits,
      * 0 differ); pipeline lookup 2.25 -> 1.5 us per draw, frame rate unchanged. */
     if (!getenv("RSX_PIPE_CACHE")) _putenv_s("RSX_PIPE_CACHE", "1");
+    /* PS3RECOMP_SPIRV_CACHE=<directory> (toolkit, off without one): keep the HLSL -> SPIR-V translations on
+     * disk. glslang takes 20-150 ms per shader on the thread that walks the FIFO, so the first use of every
+     * material hitched, in every run: the opening spent 4.7 s in pipeline creation cold and 0.1 s warm
+     * (2026-11-12). Default: %LOCALAPPDATA%\gow-ascension-recomp\spirv_cache (about 16 MB for the first
+     * level). The files are keyed by the shader text and the translator build, so a stale one is a miss.
+     * Point the variable at a directory that does not exist to run without the disk cache. */
+    if (!getenv("PS3RECOMP_SPIRV_CACHE")) {
+        const char* la = getenv("LOCALAPPDATA");
+        if (la && *la) {
+            char dir[MAX_PATH];
+            snprintf(dir, sizeof dir, "%s\\gow-ascension-recomp", la);
+            CreateDirectoryA(dir, NULL);
+            snprintf(dir, sizeof dir, "%s\\gow-ascension-recomp\\spirv_cache", la);
+            if (CreateDirectoryA(dir, NULL) || GetLastError() == ERROR_ALREADY_EXISTS)
+                _putenv_s("PS3RECOMP_SPIRV_CACHE", dir);
+        }
+    }
     /* GCM_LEGACY_SKIP=1 (M0.97): the vtable decoder's state feeds nothing while
      * the engine draws, so it only sees the reference, notify and semaphore
      * methods. Walker CPU per draw -3-4% (A/B on a busy host). */

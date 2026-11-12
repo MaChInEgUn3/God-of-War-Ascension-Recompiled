@@ -85,6 +85,11 @@ Lessons that cost days; keep them.
     to a texture that declares only its top-left part: the behaviour before those two fixes, for comparison.
     `RSX_SUBRECT_TEX=2` keeps the fix but sends a colour part through guest memory instead of the copy on the GPU
     (`[eng-stats]` then shows it under `s2guest`; the copy counts under `csnap`).
+* **Hitches**: `ENG_SLOW_MS=<ms>` logs every draw end slower than that with its time by phase (`[eng-slow] ...
+  | us: fetch pipe tex idxbuild be rest`), `VK_SLOW_MS=<ms>` every slow driver call (`[vk-slow]`). A large `pipe`
+  is a pipeline being created, mostly the shader translation. The translations are kept on disk in
+  `PS3RECOMP_SPIRV_CACHE` (port default `%LOCALAPPDATA%\gow-ascension-recomp\spirv_cache`); point it at a
+  directory that does not exist to run without the disk cache, for example to measure a cold start.
 * **A scene that holds still, without a person**: `SAVE_SNAP=<save dir>` in the bench harness starts from another
   save, and a `PAD_PLAY` file of a few recorded stick lines walks to a spot. The save of the 2026-11-10 played
   session opens on a still view (no input needed) that is slower than the corridor scene; STATUS.md has its
