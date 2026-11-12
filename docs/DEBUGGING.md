@@ -106,7 +106,7 @@ Lessons that cost days; keep them.
     have: hash, create, upload), `reupload` (content changed), `hash`, and a line `texture cache: N of M entries,
     E evictions in this window`. `ENG_TEX_MISS_LOG=1` prints `[tex-miss]` with the key and the content hash of
     every miss. `VK_TEX_CREATE_BATCHED=1` (experiment) records a new texture's layout transition into the open
-    draw batch instead of waiting on a submission of its own. `RSX_TEX_REUSE=1` (off by default) lets a miss
+    draw batch instead of waiting on a submission of its own. `RSX_TEX_REUSE` (on by default, `=0` off) lets a miss
     take the image of a cached texture with the same content instead of decoding it again; `[eng-stats]` then
     shows `texture misses: N took a cached image, M created (X MB decoded)`. If a texture ever looks wrong
     with it on, that switch is the first thing to turn off.

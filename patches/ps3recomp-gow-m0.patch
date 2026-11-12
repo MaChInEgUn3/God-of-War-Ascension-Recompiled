@@ -4155,7 +4155,7 @@ index b58a830b..807bac71 100644
      /* coverage accounting */
      u32 seen[RSX_DSP_NUM_REGS];       /* per-register write count           */
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b3..1555c6e1 100644
+index f99986b3..3e9060cf 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -22,6 +22,9 @@
@@ -4624,7 +4624,7 @@ index f99986b3..1555c6e1 100644
 +static unsigned long long s_tex_create_bytes;    /* guest bytes decoded and uploaded on misses */
 +static unsigned long long s_tex_miss_hash_us;    /* of the miss bucket: hashing the new bytes */
 +
-+/* RSX_TEX_REUSE=1 (experiment, default off): a miss whose bytes and descriptor
++/* RSX_TEX_REUSE=0 turns this off (default on): a miss whose bytes and descriptor
 + * match a cached texture that has not been checked this frame takes that
 + * texture's image and gives the entry the new address, instead of decoding and
 + * uploading the same texels again. GoW:A places the same few hundred DXT
@@ -4634,7 +4634,7 @@ index f99986b3..1555c6e1 100644
 +static int eng_tex_reuse(void)
 +{
 +    static int s = -1;
-+    if (s < 0) { const char* e = getenv("RSX_TEX_REUSE"); s = e && e[0] == '1'; }
++    if (s < 0) { const char* e = getenv("RSX_TEX_REUSE"); s = !(e && e[0] == '0'); }
 +    return s;
 +}
  static u32 eng_texture_slot(u32 location, u32 offset, u32 fmt, u32 w, u32 h,

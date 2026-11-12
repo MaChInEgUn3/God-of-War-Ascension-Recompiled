@@ -471,7 +471,7 @@ so far came from the menu, the first level and its corridor. The scenes after it
   held 794 different contents, and 92% of the misses carried content an earlier miss had (87% within the last
   1024 misses; the same content comes back after a median of 161 misses). The title keeps placing the same
   textures at new addresses, and the engine, which knows a texture by its address, uploads each one again.
-* Built, off by default (`RSX_TEX_REUSE=1`, z1): on a miss of a DXT texture, a cached entry with the same
+* Built (`RSX_TEX_REUSE`, z1): on a miss of a DXT texture, a cached entry with the same
   content and descriptor that was not checked in this frame gets the new address and keeps its image. Corridor,
   390 s, off / on / on / off after a discarded run:
 
@@ -483,9 +483,13 @@ so far came from the menu, the first level and its corridor. The scenes after it
   | texture phase, all draw ends | 50.8 s | 41.4 s | 43.6 s | 56.7 s |
   | flips/s, 240-360 s | 15.30 | 17.28 | 16.02 | 15.72 |
 
-  The frame rate is not resolved by these runs (the discarded off-run read 17.76). One contact sheet of the
-  corridor looked right. It stays off until a still scene is compared pixel by pixel and the opening is looked
-  at. Not built: the same lookup where an address's content has changed (about 4,000 re-uploads and 8-9 s a
+  The frame rate is not resolved by these runs (the discarded off-run read 17.76). **On by default since the
+  evening of 2026-11-12** (`RSX_TEX_REUSE=0` turns it off), after two image checks (y5): the opening replay with
+  it on (86% of its misses reused) shows menus, cutscenes and the first fight with the right textures on a sheet
+  of 48 frames, and the still view with it on differs from a run with it off no more than two runs with it off
+  differ from each other (mean absolute difference 26.3 and 12.3 against 24.5; that view is not still enough at
+  a given present for the comparison to be sharp, so this says "nothing gross", not "identical"). The engine's
+  unit test was not run with it. Scenes no script reaches (the arena) have not been seen with it. Not built: the same lookup where an address's content has changed (about 4,000 re-uploads and 8-9 s a
   run, now as large as what is left of the miss bucket).
 * Open: why the title re-places textures at all. With nothing moving (the still view at the corridor's end, no
   input) there are still 808 misses in the last two minutes, 233 different contents, one of them 83 times. The
