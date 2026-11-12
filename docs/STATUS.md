@@ -394,6 +394,10 @@ so far came from the menu, the first level and its corridor. The scenes after it
 
   The port now sets it to `%LOCALAPPDATA%\gow-ascension-recomp\spirv_cache` (383 shaders and 16 MB for the
   opening); with that default and a filled directory the same replay shows 0.0 s of pipeline creation.
+
+  **Correction (2026-11-12, evening).** The `[eng-slow]` log stops after 64 lines. The "6.0 s", "5.5 s" and the
+  cold column above are therefore the first 64 slow draw ends of the run, not the run; the warm column (20 lines)
+  is complete. Whole-run figures are in the next section.
 * What is left: the first time through a scene still translates (the cache fills as one plays, and it is
   derived from the game, so it is not something to ship); the slow draw ends that remain are texture work
   (0.6 s) and the backend (0.3 s); the driver's own pipeline cache is not kept between runs yet.
@@ -421,26 +425,40 @@ so far came from the menu, the first level and its corridor. The scenes after it
   |---|---|---|
   | translation, opening, cache empty | 37.8 ms | 9.3 ms |
   | translation, corridor fight, cache empty | 42.3 ms | 10.4 ms |
-  | slow draw ends, corridor, cache empty | 5.5 s (pipeline 5.2) | 4.6 s (backend 2.7, pipeline 1.5) |
-  | slow draw ends, corridor, cache warm | 1.7 s | 1.8 s |
   | flips/s 240-360 s, corridor, cache warm (val / full / full / val) | 16.94, 15.51 | 17.12, 15.81 |
 
   750 translations, none failed validation, no shader module or pipeline failure.
-* Limits. The backend's 2.7 s in the cold validate-only run is the driver compiling SPIR-V it had never seen;
-  the full-list modules were already in the driver's own cache from earlier runs, so the two cold totals are not
-  a fair pair and the gain on a machine that has seen neither is not measured. Only this GPU and driver were
-  tried.
-* What is left when the cache is warm is texture work: draw ends of 40-80 ms at the first use of a texture
-  (0.8-0.9 s in the corridor run, in both modes). They were there before and sat behind the translations at
-  the same draw ends.
+* **What that is worth on a first pass: 16% less time in slow draw ends, not a factor of four.** The driver
+  compiles what it is given, and unoptimized SPIR-V costs it more. The fair comparison needs the driver's own
+  shader cache cold as well, and totals that count every draw end (the two things the first version of this
+  section got wrong: it compared against modules the driver had already seen, and it summed the `[eng-slow]`
+  log, which stops after 64 lines). `PS3RECOMP_SPIRV_SALT=<n>` changes a header word of each module so that the
+  driver has not seen it, and `ENG_PHASE_STATS` now prints the total of all draw ends over `ENG_SLOW_MS`.
+  Opening replay, 240 s, translation cache empty, modules salted (m2):
+
+  | passes | translations | draw ends over 10 ms | of that: pipeline | texture | backend |
+  |---|---|---|---|---|---|
+  | glslang's full list | 11.6 s (33.0 ms each) | 679, 33.9 s | 14.0 s | 9.2 s | 10.6 s |
+  | none, validator (default) | 3.3 s (9.4 ms each) | 736, 28.6 s | 4.7 s | 11.4 s | 12.5 s |
+  | inline + local load/store removal | 7.7 s (19.4 ms each) | 689, 29.5 s | 8.6 s | 9.8 s | 11.1 s |
+  | the same + dead code elimination | 7.7 s (19.2 ms each) | 688, 29.5 s | 8.6 s | 10.1 s | 10.8 s |
+
+  Without passes the pipeline phase is 9.3 s shorter and the texture and backend phases, where the driver's
+  work shows, 4.1 s longer. The two short lists land in between and are no better in total. One run per mode;
+  only this GPU and driver.
+* Whether a run meets a shader for the first time matters less than this table suggests once the directory is
+  filled: the translation cache now survives rebuilds and is shared by the standard and the profile-guided exe.
+* Texture phases over 10 ms are 9-11 s of those 240 s in every mode, so they are not a product of the
+  unoptimized shaders, though those add about 2 s. Where that time goes is open.
   * Tried and taken out again (x1): the texture create's layout transition is a submission of its own that the
     walker waits for, behind everything the queue holds. Recording it into the open draw batch instead did not
-    shorten the stalls (opening 1.1 s against 1.6 s, corridor 2.1 s against 1.9 s), so it is not what the
-    texture phase waits on.
-  * `VK_SLOW_MS=10` on the opening (x2a): of 2.7 s of slow texture phases, 0.9 s is 27 `vkQueueSubmit` calls of
-    13-89 ms each (the driver, at a batch that a texture upload flushes); the other 1.8 s is in no driver call
-    over 10 ms and is not attributed yet. Next: split the texture phase (guest read and conversion, create,
-    upload) in the `ENG_SLOW_MS` line.
+    shorten the texture stalls over 40 ms (opening 1.1 s against 1.6 s, corridor 2.1 s against 1.9 s; these
+    counts are under 64, so complete, but a 40 ms cut sits inside a cluster of 41-48 ms stalls and is a noisy
+    measure). Not shown to help; not shown to be useless either.
+  * `VK_SLOW_MS=10` on the opening (x2a): slow `vkQueueSubmit` calls of 13-89 ms each, 13-24 per run and under
+    1 s in total in every mode of the table above, so they are a small part of it.
+  * Next: split the texture phase (guest read and conversion, create, upload) in the `[eng-stats]` line's
+    `tex:` buckets, which already exist, over a whole run.
 
 ## A scripted way to the arena fight: not yet (2026-11-12, r1-r4)
 * The arena fight is the slowest scene a person has played and no script reaches it: the scripted corridor run

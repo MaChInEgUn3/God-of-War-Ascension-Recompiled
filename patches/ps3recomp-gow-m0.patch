@@ -4155,7 +4155,7 @@ index b58a830b..807bac71 100644
      /* coverage accounting */
      u32 seen[RSX_DSP_NUM_REGS];       /* per-register write count           */
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b3..203863f8 100644
+index f99986b3..bb772758 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -22,6 +22,9 @@
@@ -6296,7 +6296,7 @@ index f99986b3..203863f8 100644
  static void pd_present(u32 presented)
  {
      if (s_pd.state == 0) pd_capturing();
-@@ -2527,14 +4072,230 @@ static void pd_present(u32 presented)
+@@ -2527,14 +4072,240 @@ static void pd_present(u32 presented)
      }
  }
  
@@ -6311,7 +6311,8 @@ index f99986b3..203863f8 100644
 +static unsigned long long s_slow_t[5];
 +static struct {
 +    unsigned long long t0, method_us, end_us, max_us, phase_us[6], cpu0;
-+    u32 methods, ends, drawn;
++    unsigned long long slow_us, slow_phase_us[6];   /* ENDs over ENG_SLOW_MS: all of them, not the 64 logged */
++    u32 methods, ends, drawn, slow_n;
 +} s_st;
 +#define ENG_SLOW_MARK(i) do { if (s_slow_ms > 0 || s_stats_s > 0) s_slow_t[i] = eng_now_us(); } while (0)
 +
@@ -6356,6 +6357,10 @@ index f99986b3..203863f8 100644
 +        s_st.end_us += t1 - t0;
 +        if (t1 - t0 > s_st.max_us) s_st.max_us = t1 - t0;
 +        for (int i = 0; i < 6; i++) if (d[i] > 0) s_st.phase_us[i] += (unsigned long long)d[i];
++        if (s_slow_ms > 0 && t1 - t0 >= (unsigned long long)s_slow_ms * 1000ull) {
++            s_st.slow_n++; s_st.slow_us += t1 - t0;
++            for (int i = 0; i < 6; i++) if (d[i] > 0) s_st.slow_phase_us[i] += (unsigned long long)d[i];
++        }
 +        if (t1 - s_st.t0 >= (unsigned long long)s_stats_s * 1000000ull) {
 +            const double wall = (double)(t1 - s_st.t0) / 1000.0;
 +            fprintf(stderr, "[eng-stats] %.0f ms: methods %u %.0f ms, ends %u (drawn %u) %.0f ms | "
@@ -6364,6 +6369,11 @@ index f99986b3..203863f8 100644
 +                    s_st.end_us / 1000.0, s_st.phase_us[0] / 1000.0, s_st.phase_us[1] / 1000.0,
 +                    s_st.phase_us[2] / 1000.0, s_st.phase_us[3] / 1000.0, s_st.phase_us[4] / 1000.0,
 +                    s_st.phase_us[5] / 1000.0, s_st.max_us / 1000.0);
++            if (s_slow_ms > 0)
++                fprintf(stderr, "[eng-stats]   ends over %d ms: %u, %.0f ms | fetch %.0f pipe %.0f tex %.0f idxbuild %.0f "
++                        "be %.0f rest %.0f\n", s_slow_ms, s_st.slow_n, s_st.slow_us / 1000.0,
++                        s_st.slow_phase_us[0] / 1000.0, s_st.slow_phase_us[1] / 1000.0, s_st.slow_phase_us[2] / 1000.0,
++                        s_st.slow_phase_us[3] / 1000.0, s_st.slow_phase_us[4] / 1000.0, s_st.slow_phase_us[5] / 1000.0);
 +            fprintf(stderr, "[eng-stats]   tex:");
 +            for (int k = 0; k < ST_N; k++)
 +                fprintf(stderr, " %s %u/%.0f", s_st_sub_name[k], s_st_sub_n[k], s_st_sub_us[k] / 1000.0);
@@ -6530,7 +6540,7 @@ index f99986b3..203863f8 100644
  
      const u32 prim = g.rsx.current_primitive;
      /* Everything that becomes triangles -- lists, strips, fans, quads, quad
-@@ -2549,41 +4310,81 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2549,41 +4320,81 @@ static void sink_end(void* user, const rsx_dispatch* r)
      int scratch = 0;
      const int rebuild = eng_topology_rebuild(prim, 0, &scratch) != 0;
      if (!rebuild) {
@@ -6627,7 +6637,7 @@ index f99986b3..203863f8 100644
  
      /* A guest program pair that will not translate has no fallback: the draw
       * is dropped, as the reference engine drops it. Substituting the built-in
-@@ -2592,11 +4393,31 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2592,11 +4403,31 @@ static void sink_end(void* user, const rsx_dispatch* r)
      int pipeline_is_fixed = 1;
      u32 tex_used = 0;
      u64 fp_hash = 0;
@@ -6660,7 +6670,7 @@ index f99986b3..203863f8 100644
      if (fp_hash && eng_debug_fp(fp_hash, pipeline)) return;
  
      /* Textures before any pipeline or target binding: a cache refresh can
-@@ -2609,14 +4430,29 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2609,14 +4440,29 @@ static void sink_end(void* user, const rsx_dispatch* r)
      memset(samplers, 0, sizeof samplers);
      memset(vtextures, 0, sizeof vtextures);
      memset(vsamplers, 0, sizeof vsamplers);
@@ -6696,7 +6706,7 @@ index f99986b3..203863f8 100644
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
              dc.refs_remapped ? dc.ref_remap.occurrence_to_unique : NULL,
-@@ -2641,13 +4477,15 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2641,13 +4487,15 @@ static void sink_end(void* user, const rsx_dispatch* r)
          xf[5] = -((vp.translate[1] - Hv * 0.5f) / (Hv * 0.5f));
          xf[6] = vp.translate[2];
      }
@@ -6714,7 +6724,7 @@ index f99986b3..203863f8 100644
      if (g.fp_cb_cap < fp_bytes) {
          u8* n = (u8*)realloc(g.fp_cb, fp_bytes);
          if (!n) return;
-@@ -2659,7 +4497,59 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2659,7 +4507,59 @@ static void sink_end(void* user, const rsx_dispatch* r)
          memcpy(g.fp_cb, g.fp_constants.values, g.fp_constants.count * 16u);
      { float* alpha = (float*)(g.fp_cb + nslots * 16u);
        alpha[0] = rsx_fp_alpha_ref(rs.alpha_ref_raw, rs.alpha_ref_format);
@@ -6775,7 +6785,7 @@ index f99986b3..203863f8 100644
  
      pd_note(targets, n_targets, zslot, &rs, pipeline, tex_mask);
  
-@@ -2678,8 +4568,12 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2678,8 +4578,12 @@ static void sink_end(void* user, const rsx_dispatch* r)
      for (u32 i = 0; i < n_targets; i++) handles[i] = g.surfaces[targets[i]].handle;
      g.be->bind_targets(g.be->user, handles, n_targets, depth_handle);
      g.be->bind_pipeline(g.be->user, pipeline);
@@ -6790,7 +6800,7 @@ index f99986b3..203863f8 100644
      g.be->bind_textures(g.be->user, textures, samplers, tex_mask);
      g.be->bind_vertex_textures(g.be->user, vtextures, vsamplers, vtex_mask);
      g.be->set_viewport(g.be->user, 0.0f, 0.0f, W, H);
-@@ -2720,14 +4614,148 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2720,14 +4624,148 @@ static void sink_end(void* user, const rsx_dispatch* r)
          memcpy(&fmax, &hi, sizeof fmax);
          g.be->set_depth_bounds(g.be->user, fmin, fmax);
      }
@@ -6942,7 +6952,7 @@ index f99986b3..203863f8 100644
  
      if (rs.color_mask) eng_surfaces_wrote(targets, n_targets);
      if (zslot != ENG_INVALID && rs.depth_test && rs.depth_write) {
-@@ -2738,6 +4766,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
+@@ -2738,6 +4776,7 @@ static void sink_end(void* user, const rsx_dispatch* r)
  
  static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
  {
@@ -6950,7 +6960,7 @@ index f99986b3..203863f8 100644
      (void)user; (void)r;
      if (!g.ready) return;
      u32 targets[RSX_BE_MAX_COLOR_TARGETS];
-@@ -2787,6 +4816,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
+@@ -2787,6 +4826,13 @@ static void sink_clear(void* user, const rsx_dispatch* r, u32 mask)
          const float depth = !zs ? 1.0f
                            : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                  : (float)(zs >> 8) / 16777215.0f;
@@ -6964,7 +6974,7 @@ index f99986b3..203863f8 100644
          g.be->clear_depth_stencil(g.be->user, g.zdepths[zslot].handle, flags,
                                    depth, z16 ? 0 : (u8)(zs & 0xFFu));
          g.zdepths[zslot].cleared = 1;
-@@ -2818,9 +4854,32 @@ static u32 eng_present_surface(u32 buffer_id)
+@@ -2818,9 +4864,32 @@ static u32 eng_present_surface(u32 buffer_id)
  
  static void eng_present(u32 buffer_id)
  {
@@ -6998,7 +7008,7 @@ index f99986b3..203863f8 100644
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
-@@ -2834,12 +4893,16 @@ static void eng_present(u32 buffer_id)
+@@ -2834,12 +4903,16 @@ static void eng_present(u32 buffer_id)
      g.last_present_surface = target;
      g.be->present(g.be->user, g.surfaces[target].handle);
      g.frames++;
@@ -7015,7 +7025,7 @@ index f99986b3..203863f8 100644
      (void)user; (void)r;
      g.last_flip_buffer = arg & 7u;
      eng_present(g.last_flip_buffer);
-@@ -2883,6 +4946,11 @@ int rsx_draw_engine_init(u32 width, u32 height)
+@@ -2883,6 +4956,11 @@ int rsx_draw_engine_init(u32 width, u32 height)
      g.height = height ? height : 720;
      { const char* e = getenv("PS3RECOMP_ENG_TEXHASH_FULL");
        s_texhash_full_always = e && *e && strcmp(e, "0") != 0; }
@@ -7027,7 +7037,7 @@ index f99986b3..203863f8 100644
      g.vp_cb = (u8*)calloc(1, ENG_VP_CB_BYTES);
      if (!g.vp_cb) return -1;
      if (g.be->init && g.be->init(g.be->user, g.width, g.height) != 0) {
-@@ -2933,6 +5001,8 @@ void rsx_draw_engine_shutdown(void)
+@@ -2933,6 +5011,8 @@ void rsx_draw_engine_shutdown(void)
      const rsx_draw_backend* be = g.be;
      memset(&g, 0, sizeof g);
      g.be = be;
@@ -7036,7 +7046,7 @@ index f99986b3..203863f8 100644
  }
  
  void rsx_draw_engine_method(u32 method, u32 arg)
-@@ -2945,12 +5015,43 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+@@ -2945,12 +5025,43 @@ void rsx_draw_engine_method(u32 method, u32 arg)
       * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
       * preserve them with the wider mask. */
      u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
@@ -7080,7 +7090,7 @@ index f99986b3..203863f8 100644
      if (buffer_id >= 8) return;
      eng_display_buffer* d = &g.display_buffers[buffer_id];
      d->location = location;
-@@ -2963,12 +5064,14 @@ void rsx_draw_engine_set_display_buffer(u32 buffer_id, u32 location, u32 offset,
+@@ -2963,12 +5074,14 @@ void rsx_draw_engine_set_display_buffer(u32 buffer_id, u32 location, u32 offset,
  
  void rsx_draw_engine_flush(void)
  {
@@ -7095,7 +7105,7 @@ index f99986b3..203863f8 100644
      /* A host that drives the flip itself gets whichever buffer the guest's
       * own last flip named, and display buffer 0 before there has been one:
       * a runner that both consumes 0xE944 and calls here would otherwise
-@@ -2980,12 +5083,14 @@ void rsx_draw_engine_present(void)
+@@ -2980,12 +5093,14 @@ void rsx_draw_engine_present(void)
  
  void rsx_draw_engine_present_buffer(u32 buffer_id)
  {
@@ -7441,7 +7451,7 @@ index 670e8863..2cd7d574 100644
      const u8* ucode, u32 max_bytes, u32 ctrl, u32 tex_cube_mask,
      const rsx_fp_shadow_desc shadow[16], const u8 gamma_masks[16],
 diff --git a/libs/video/rsx_shader_spirv.cpp b/libs/video/rsx_shader_spirv.cpp
-index 4aa4a176..f7fc7f76 100644
+index 4aa4a176..dccaef2e 100644
 --- a/libs/video/rsx_shader_spirv.cpp
 +++ b/libs/video/rsx_shader_spirv.cpp
 @@ -36,7 +36,15 @@
@@ -7460,7 +7470,7 @@ index 4aa4a176..f7fc7f76 100644
  #include <mutex>
  #include <string>
  #include <thread>
-@@ -62,6 +70,35 @@ bool glslang_ready()
+@@ -62,6 +70,41 @@ bool glslang_ready()
      return true;
  }
  
@@ -7489,6 +7499,12 @@ index 4aa4a176..f7fc7f76 100644
 +#endif
 +        if (e && !strcmp(e, "full")) mode = 2;
 +        else if (e && *e == '0') mode = 0;
++#if defined(RSX_SPIRV_OWN_LEGALIZE)
++        else if (e && !strcmp(e, "val")) mode = 1;     /* no passes, validator */
++        else if (e && !strcmp(e, "tiny")) mode = 3;    /* inline + local load/store removal, validator */
++        else if (e && !strcmp(e, "small")) mode = 4;   /* tiny + dead code elimination, validator */
++        else if (e && !strcmp(e, "legal")) mode = 5;   /* SPIRV-Tools' legalization list, validator */
++#endif
 +    }
 +    return mode;
 +}
@@ -7496,7 +7512,7 @@ index 4aa4a176..f7fc7f76 100644
  int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
                char* log, u32 log_size)
  {
-@@ -91,10 +128,17 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
+@@ -91,10 +134,17 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
      shader.setShiftBinding(glslang::EResSampler, RSX_SPIRV_SAMPLER_BINDING);
      if (lang == EShLangVertex) shader.setInvertY(true);
  
@@ -7514,7 +7530,7 @@ index 4aa4a176..f7fc7f76 100644
      glslang::TProgram program;
      program.addShader(&shader);
      if (!program.link(msgs)) {
-@@ -106,14 +150,54 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
+@@ -106,14 +156,81 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
          return -1;
      }
  
@@ -7526,7 +7542,27 @@ index 4aa4a176..f7fc7f76 100644
 +    opts.disableOptimizer = mode != 2;
      glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, &logger, &opts);
 +#if defined(RSX_SPIRV_OWN_LEGALIZE)
-+    if (mode == 1 && !spirv.empty()) {
++    if (mode >= 3 && !spirv.empty()) {
++        /* A short list of our own: inline, then turn function-local variables into
++         * values. What the driver's compiler otherwise does itself, at a higher price. */
++        spvtools::Optimizer o(SPV_ENV_VULKAN_1_0);
++        if (mode == 5) o.RegisterLegalizationPasses();
++        else {
++            o.RegisterPass(spvtools::CreateWrapOpKillPass())
++             .RegisterPass(spvtools::CreateDeadBranchElimPass())
++             .RegisterPass(spvtools::CreateMergeReturnPass())
++             .RegisterPass(spvtools::CreateInlineExhaustivePass())
++             .RegisterPass(spvtools::CreateEliminateDeadFunctionsPass())
++             .RegisterPass(spvtools::CreateLocalSingleBlockLoadStoreElimPass())
++             .RegisterPass(spvtools::CreateLocalSingleStoreElimPass());
++            if (mode == 4) o.RegisterPass(spvtools::CreateAggressiveDCEPass());
++        }
++        spvtools::OptimizerOptions oo;
++        oo.set_run_validator(false);
++        std::vector<unsigned int> out;
++        if (o.Run(spirv.data(), spirv.size(), &out, oo) && !out.empty()) spirv.swap(out);
++    }
++    if ((mode == 1 || mode >= 3) && !spirv.empty()) {
 +        /* Callers hold the cache lock, so one validator is enough. Its messages are dropped. */
 +        static spvtools::SpirvTools s_val(SPV_ENV_VULKAN_1_0);
 +        static unsigned s_fixed = 0, s_full = 0;
@@ -7554,6 +7590,13 @@ index 4aa4a176..f7fc7f76 100644
          put_log(log, log_size, "SPIR-V generation", logger.getAllMessages().c_str());
          return -1;
      }
++    {   /* PS3RECOMP_SPIRV_SALT=<n>: measuring only. XORed into the header's generator
++         * word, so the driver's own shader cache has never seen these modules and a
++         * run pays the driver's compile as a first run on a new machine would. */
++        static long s_salt = -1;
++        if (s_salt < 0) { const char* e = getenv("PS3RECOMP_SPIRV_SALT"); s_salt = e ? strtol(e, nullptr, 0) : 0; }
++        if (s_salt && spirv.size() > 2) spirv[2] ^= (unsigned int)s_salt;
++    }
 +    if (s_time) {
 +        static std::mutex s_tm; static double s_ms[3]; static unsigned s_n; static size_t s_src, s_words;
 +        const auto t3 = std::chrono::steady_clock::now();
@@ -7570,7 +7613,7 @@ index 4aa4a176..f7fc7f76 100644
      return 0;
  }
  
-@@ -121,10 +205,17 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
+@@ -121,10 +238,17 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
  
  const u32 kCacheFormat = 1;
  const u32 kCacheMagic = 0x56505352u;   /* "RSPV" */
@@ -7592,7 +7635,7 @@ index 4aa4a176..f7fc7f76 100644
  
  struct Cache {
      std::mutex lock;
-@@ -176,7 +267,9 @@ void cache_header(u32 hdr[kHeaderWords], const std::string& key, size_t nwords)
+@@ -176,7 +300,9 @@ void cache_header(u32 hdr[kHeaderWords], const std::string& key, size_t nwords)
      const glslang::Version v = glslang::GetVersion();
      hdr[0] = kCacheMagic; hdr[1] = kCacheFormat;
      hdr[2] = (u32)v.major; hdr[3] = (u32)v.minor; hdr[4] = (u32)v.patch;

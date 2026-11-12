@@ -97,6 +97,15 @@ Lessons that cost days; keep them.
   too (measuring only). A cache file is used only by a build with the same translator revision and the same
   mode. To time pass lists outside the game, point a small program at a cache directory written with `=0`: the
   file is 13 header words, the key (word 11 gives its length in bytes), then the SPIR-V words (word 12).
+  * **`[eng-slow]` stops after 64 lines.** A total summed from those lines is the first 64 slow draw ends of a
+    run. For a whole run set `ENG_PHASE_STATS=<s>` as well: every `<s>` seconds it prints `[eng-stats]` with the
+    time in all draw ends by phase, a line `ends over <ms> ms: N, T ms | fetch pipe tex idxbuild be rest` for
+    those over `ENG_SLOW_MS`, and the texture path's buckets. `python analysis/engstats.py <log>...` sums them
+    over the run, with the `[spirv-time]` total and the slow `vkQueueSubmit` calls.
+  * **Comparing shader pass lists fairly.** `PS3RECOMP_SPIRV_OPT=full|val|tiny|small|legal|0` picks the list
+    (default `val`), and `PS3RECOMP_SPIRV_SALT=<n>` XORs `n` into each module's header so that the GPU driver's
+    own shader cache has not seen it. Use an empty `PS3RECOMP_SPIRV_CACHE` directory and a new salt per run;
+    without the salt the run with the modules the driver already knows looks cheaper than it is.
 * **A scene that holds still, without a person**: `SAVE_SNAP=<save dir>` in the bench harness starts from another
   save, and a `PAD_PLAY` file of a few recorded stick lines walks to a spot. The save of the 2026-11-10 played
   session opens on a still view (no input needed) that is slower than the corridor scene; STATUS.md has its
