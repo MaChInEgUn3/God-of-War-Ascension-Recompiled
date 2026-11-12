@@ -458,7 +458,28 @@ so far came from the menu, the first level and its corridor. The scenes after it
   * `VK_SLOW_MS=10` on the opening (x2a): slow `vkQueueSubmit` calls of 13-89 ms each, 13-24 per run and under
     1 s in total in every mode of the table above, so they are a small part of it.
   * Next: split the texture phase (guest read and conversion, create, upload) in the `[eng-stats]` line's
-    `tex:` buckets, which already exist, over a whole run.
+    `tex:` buckets, which already exist, over a whole run. Done, below.
+
+### The texture cache misses 23 times a second, on textures it already has (2026-11-12, y1-y3)
+* The `tex:` buckets of `[eng-stats]` over whole corridor runs (390 s): 8,400-9,200 cache misses a run at
+  2-2.5 ms each (16-22 s), about 4,000 re-uploads of changed textures (8 s) and 3-4 s of hashing. The opening has
+  12,378 misses in 240 s (27 s). That is 7-11% of the walker's time, all the time, not a first-use cost.
+* It is not a cache that is too small. The engine keeps 1024 textures and the cache is full, but with 4096
+  entries the misses are the same (9,226): it fills and goes on evicting.
+* `ENG_TEX_MISS_LOG=1` prints each missed key. 8,021 misses had 7,983 different offsets: all in VRAM, DXT1 and
+  DXT5, 128 to 1024 px with full mip chains, 2.6 GB of texture data. With the content hash added: 9,895 misses
+  held 794 different contents, and 92% of the misses carried content an earlier miss had (87% within the last
+  1024 misses; the same content comes back after a median of 161 misses). The title keeps placing the same
+  textures at new addresses, and the engine, which knows a texture by its address, uploads each one again.
+* Next: on a miss, find the cached image with the same content and descriptor and give it the new address
+  instead of creating and uploading; the same at the place where an address's content has changed. What it
+  saves will show in the miss bucket; a frame-rate change of a few percent is under what these runs resolve.
+* Open: why the title re-places some 800 textures every few seconds in a corridor. If its own VRAM cache is
+  not settling in this port, that cause is worth more than the fix above. Not looked at yet.
+* On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
+  into the open draw batch, a miss cost 1.96 and 1.93 ms against 2.50 and 2.15 ms, with no change in frame rate
+  that the runs resolve. The earlier "did not shorten the stalls" above looked only at draw ends over 40 ms.
+  Frames were not compared; to be measured again after the content reuse.
 
 ## A scripted way to the arena fight: not yet (2026-11-12, r1-r4)
 * The arena fight is the slowest scene a person has played and no script reaches it: the scripted corridor run

@@ -102,6 +102,11 @@ Lessons that cost days; keep them.
     time in all draw ends by phase, a line `ends over <ms> ms: N, T ms | fetch pipe tex idxbuild be rest` for
     those over `ENG_SLOW_MS`, and the texture path's buckets. `python analysis/engstats.py <log>...` sums them
     over the run, with the `[spirv-time]` total and the slow `vkQueueSubmit` calls.
+  * **Texture cache.** `[eng-stats]` has a `tex:` line of buckets (count/ms): `miss` (a texture the cache did not
+    have: hash, create, upload), `reupload` (content changed), `hash`, and a line `texture cache: N of M entries,
+    E evictions in this window`. `ENG_TEX_MISS_LOG=1` prints `[tex-miss]` with the key and the content hash of
+    every miss. `VK_TEX_CREATE_BATCHED=1` (experiment) records a new texture's layout transition into the open
+    draw batch instead of waiting on a submission of its own.
   * **Comparing shader pass lists fairly.** `PS3RECOMP_SPIRV_OPT=full|val|tiny|small|legal|0` picks the list
     (default `val`), and `PS3RECOMP_SPIRV_SALT=<n>` XORs `n` into each module's header so that the GPU driver's
     own shader cache has not seen it. Use an empty `PS3RECOMP_SPIRV_CACHE` directory and a new salt per run;
