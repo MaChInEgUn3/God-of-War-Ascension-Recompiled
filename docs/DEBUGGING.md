@@ -390,10 +390,13 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
     reads is not skipped.
   * What that reaches (the 11.5-minute recording of 2026-11-10, replayed from New Game, r2-r4): without anchors the
     replay reached the second autosave 10 s late or early and then sat in the first fight's "press square or
-    triangle to attack" prompt for five minutes; with anchors it still did, because the prompt came up later than in
-    the recording and the person's presses had ended. With square presses added to the recording's quiet stretch
-    after them (`analysis/pad_mash.py <pad> <out> <from s> <to s> <buttons hex> [period]`) the third autosave came
-    at 246 s (recorded: 260 s) and the stretch before it took 98 s against 102 s recorded.
+    triangle to attack" prompt for five minutes; with anchors alone it still did (r3a). The run that passed (r4a)
+    changed two things at once: the reads that no longer skip short presses, and square presses added to the
+    recording's quiet stretch after the person's own
+    (`analysis/pad_mash.py <pad> <out> <from s> <to s> <buttons hex> [period]`). Which of the two did it is not
+    separated; the likely reading is that the prompt came up later than in the recording, after the person's
+    presses had ended. In r4a the third autosave came at 246 s (recorded: 260 s) and the stretch before it took
+    98 s against 102 s recorded.
   * What it does not reach: the corridor fight after that. Enemies and gates need a reaction; replayed blind, the
     character ends up against a wall and the fourth autosave never comes (r1a from the checkpoint, r4a from New
     Game). A scripted way to the arena fight is still missing.
