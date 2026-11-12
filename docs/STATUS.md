@@ -224,11 +224,32 @@ scripted corridor scene and the scene the played session's save opens on. Both f
     | main thread, largest share of samples | 26% in the frame-start wait, 10% in the end-of-frame call | 19% waiting for the render jobs, 13% in the RSX `ref` throttle |
 
     The frame-start wait is the game's own limit on frames in flight: `func_003E799C` (called at `0x3E8384`)
-    sleeps 30 us at a time until the flag of the frame slot two back is clear. That is the "sleep at `0x3E8388`"
-    left open on 2026-11-10. So in the still view the main thread is ahead of the RSX and waits for it, and the
-    frame is the walker's: more draws, each a little dearer, and the same split as before (vertex fetch about
-    10 us per draw, textures 3-8, backend 5-6, pipeline lookup 2, index build 1.6). No cause of its own was found
-    in this view; it is the corridor scene's limit, further along.
+    sleeps 30 us at a time until the count of the frame slot two back is zero. That is the "sleep at `0x3E8388`"
+    left open on 2026-11-10. The walker's split per draw is the same as before (vertex fetch about 10 us,
+    textures 3-8, backend 5-6, pipeline lookup 2, index build 1.6).
+  * **What paces the still view: the EDGE geometry lists, not the RSX walker** (in-run causal probes, one run
+    each, 16 windows on and 15 off of 5 s, g8a-g8e). A stage that fully paces the frame loses 16.7% to a 20%
+    slow-down, or the whole added wait:
+
+    | probe | frames/s on | off | change |
+    |---|---|---|---|
+    | RSX walker passes +20% (`rslow`) | 11.50 | 11.57 | -0.6% |
+    | main thread +10 ms at each flip request (`mslow`) | 11.52 | 11.53 | -0.1% |
+    | SPU workload 3 +20% | 11.27 | 11.32 | -0.4% |
+    | SPU workload 8 +20% | 11.25 | 11.51 | -2.2% |
+    | SPU workloads 15, 16, 17 (EDGE geometry) +20% | 9.91 | 11.32 | -12.4% |
+
+    The first reading of this view, from the walker's CPU share and the main thread's wait, was that the walker
+    paced it. The probe says it has slack: it catches up with the main thread about 113 times a frame and its
+    drains take 53 ms of a 72 ms frame (a `PS3_FTRACE` of the view, g6a). The GPU waits inside them are 5.5 ms a
+    frame (3.4 for a batch slot, 2.1 in synchronous submits, of which 2.0 creating textures and 0.4 a readback).
+    Each of the three EDGE workloads is busy 77-80% of the time here (55-69% in the corridor scene), about 570
+    job runs a frame each. The probes that spin also add host CPU, so -12.4% is a floor on a share that is
+    mostly theirs. The corridor scene was not probed again tonight; its last probes (2026-11-08) predate the
+    wider lanes.
+  * A new texture costs about 3.4 ms on the walker (hash, create, upload and a synchronous submit). In this
+    view they fall from about 4 a frame after the spawn to under 1; in the corridor scene to almost none.
+    Recording the first upload in the draw batch, as the in-place re-upload already is, would remove the wait.
   * The colour sub-rectangle read (above) cost 3-4% here while it went through guest memory: 10.4-11.1 frames/s
     against 11.3-11.7 with `RSX_SUBRECT_TEX=0`, 0.9-1.0 s per 30 s in the store against 0.05 s. About 900 draws a
     frame sample that texture in this view, not one. Fixed the same evening with a copy on the GPU (backend
@@ -259,11 +280,13 @@ scripted corridor scene and the scene the played session's save opens on. Both f
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
 * The cutscene at the arena entrance that does not start after Continue (above).
-* The RSX walker is now the limit in both measured scenes (busy 77-88% of the time in the corridor scene, about
-  three quarters of the frame in the still view), with the SPU lanes widened. Its per-draw cost has no single hot
-  spot left (2026-10 entries in the log), so the step that remains is running parts of it on a second thread.
-* (Answered 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight, so with the RSX `ref`
-  throttle both of the corridor frame's remaining waits are waits for the RSX walker.)
+* The EDGE geometry workloads (15, 16, 17) pace the still view at the corridor end (probes above): what their
+  job runs cost there, and whether more of them can run side by side. The same probes on the corridor scene.
+* A second thread for the RSX walker was the plan until the probe showed the walker has slack in the still
+  view; it stays an option only where a probe says the walker binds.
+* (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
+  the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
+  and slowing the EDGE workloads does.)
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
 
 ## Resolved (M0.11): the GCM `MemTable entry not found` blocker
