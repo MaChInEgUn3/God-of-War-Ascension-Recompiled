@@ -305,7 +305,7 @@ scripted corridor scene and the scene the played session's save opens on. Both f
       the trigger. There is no trace of the played session to compare against, so that last point is a lead, not
       a finding. The game prints no batch-job message after the trigger, and the log shows no error.
     * Not it: `PS3_MUTE` (it only silences the device).
-    * Ruled out on 2026-11-12 (11 runs of 11 now):
+    * Ruled out on 2026-11-12 (12 runs of 12 now):
       * The test's own input. The nine runs above had the scripted X presses of the run script during the shot;
         the person pressed nothing during the cutscene. Without them, and with the person's recorded inputs from
         the checkpoint to the end of the session, the picture stays on one framing for 340 s at 30 frames/s (r5a).
@@ -313,6 +313,10 @@ scripted corridor scene and the scene the played session's save opens on. Both f
         with `GOW_RELEASE_GUARD=0` (r5b).
       * The sound-stream threads. They show no wake in 70 s of a cutscene that does run either (the first
         fight's intro in a replay, r6a), so their silence says nothing.
+      * A later change to the port: the same on the exe the session was played with (r7a).
+      * Continue as such: from the checkpoint before the first fight, with no input, that fight's intro cutscene
+        runs through its shots to the attack prompt (r8a). So it is this checkpoint, or this cutscene reached
+        from it. Parked until a person plays through it again with the profile capture on.
     * Seen in both the played session and the repro, so not a difference: the game's
       `BATCHJOB: AddJob: waiting for room in job list 3 for job 56...`, six `UnmapIoAddress` and two
       `MapMainMemory` (0x800000 and 0x700000). In the played session the maps came 13 s after the trigger, in the
