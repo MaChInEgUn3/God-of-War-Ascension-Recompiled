@@ -83,6 +83,12 @@ Lessons that cost days; keep them.
     sign). Filter both files to the passes in question; a frame is 60-90 passes and thousands of draw lines.
   * `VK_BLEND_CONST=0` maps the constant blend factors to ONE again, and `RSX_SUBRECT_TEX=0` binds the whole target
     to a texture that declares only its top-left part: the behaviour before those two fixes, for comparison.
+    `RSX_SUBRECT_TEX=2` keeps the fix but sends a colour part through guest memory instead of the copy on the GPU
+    (`[eng-stats]` then shows it under `s2guest`; the copy counts under `csnap`).
+* **A scene that holds still, without a person**: `SAVE_SNAP=<save dir>` in the bench harness starts from another
+  save, and a `PAD_PLAY` file of a few recorded stick lines walks to a spot. The save of the 2026-11-10 played
+  session opens on a still view (no input needed) that is slower than the corridor scene; STATUS.md has its
+  profile.
 * **Who fills the FIFO, and when**: `SPU_DMA_EA` lines carry `t=<ms>`; `SPU_DMA_EA_DUMP=<n>` hex-dumps the whole
   payload of the first n lines that had a `SPU_DMA_EA_FIND` hit. `GCM_EXEC_WATCH=<io lo>-<io hi>` logs each method the
   walker executes from that FIFO range with its time, so a block can be placed before or after the job that wrote it.

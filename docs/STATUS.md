@@ -206,9 +206,9 @@ scripted corridor scene and the scene the played session's save opens on. Both f
     the mask and from the scene pass of that frame. Judged on one still scene; the fight has not been looked at
     again by a person.
   * Colour: once a frame the game reads 320x360 of a 640x360 target (a half-size pass that feeds the alpha of the
-    shadow mask). That read now goes through guest memory, which takes the texture's own size; the pass output
-    is then the left half alone instead of both halves squeezed side by side. This path waits for the GPU once
-    a frame. Its cost has not been measured, and a copy on the GPU would avoid it.
+    shadow mask). That read now takes the texture's own size; the pass output is then the left half alone
+    instead of both halves squeezed side by side. First done through guest memory, then with a copy on the GPU
+    (below, with its cost).
 * The save of the played session opens at the end of the corridor before the arena, not in the fight. Two things
   seen there with a scripted pad (g2-g3):
   * That still view runs at 11-12 frames/s with no input at all, so it is a slow scene that repeats exactly.
@@ -229,9 +229,13 @@ scripted corridor scene and the scene the played session's save opens on. Both f
     frame is the walker's: more draws, each a little dearer, and the same split as before (vertex fetch about
     10 us per draw, textures 3-8, backend 5-6, pipeline lookup 2, index build 1.6). No cause of its own was found
     in this view; it is the corridor scene's limit, further along.
-  * The colour sub-rectangle read (above) costs 3-4% here: 10.4-11.1 frames/s with it against 11.3-11.7 with
-    `RSX_SUBRECT_TEX=0`, 0.9-1.0 s per 30 s in the store to guest memory against 0.05 s. About 900 draws a frame
-    sample that texture in this view, not one.
+  * The colour sub-rectangle read (above) cost 3-4% here while it went through guest memory: 10.4-11.1 frames/s
+    against 11.3-11.7 with `RSX_SUBRECT_TEX=0`, 0.9-1.0 s per 30 s in the store against 0.05 s. About 900 draws a
+    frame sample that texture in this view, not one. Fixed the same evening with a copy on the GPU (backend
+    `color_part`: the part is copied into a texture of the declared size that stays with the surface and is
+    refilled only after the surface was drawn to; on Vulkan the copy joins the draw batch): 11.0-11.8 frames/s and
+    0.05 s (g7b), and the pass that reads the part shows the same image as before (g7a).
+    `RSX_SUBRECT_TEX=2` keeps the guest-memory path.
   * **Open bug: the arena cutscene starts and stops on its first shot after Continue.** A few seconds' walk from
     the spawn point (the played session's own stick path does it) the picture dissolves to a close shot of Kratos
     at the arena entrance, and stays there for the rest of the run (9 runs of 9, up to 3 minutes): three camera
@@ -258,7 +262,6 @@ scripted corridor scene and the scene the played session's save opens on. Both f
 * The RSX walker is now the limit in both measured scenes (busy 77-88% of the time in the corridor scene, about
   three quarters of the frame in the still view), with the SPU lanes widened. Its per-draw cost has no single hot
   spot left (2026-10 entries in the log), so the step that remains is running parts of it on a second thread.
-* A copy on the GPU for the colour sub-rectangle read (3-4% in the still view).
 * (Answered 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight, so with the RSX `ref`
   throttle both of the corridor frame's remaining waits are waits for the RSX walker.)
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
