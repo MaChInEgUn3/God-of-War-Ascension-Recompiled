@@ -433,6 +433,14 @@ so far came from the menu, the first level and its corridor. The scenes after it
 * What is left when the cache is warm is texture work: draw ends of 40-80 ms at the first use of a texture
   (0.8-0.9 s in the corridor run, in both modes). They were there before and sat behind the translations at
   the same draw ends.
+  * Tried and taken out again (x1): the texture create's layout transition is a submission of its own that the
+    walker waits for, behind everything the queue holds. Recording it into the open draw batch instead did not
+    shorten the stalls (opening 1.1 s against 1.6 s, corridor 2.1 s against 1.9 s), so it is not what the
+    texture phase waits on.
+  * `VK_SLOW_MS=10` on the opening (x2a): of 2.7 s of slow texture phases, 0.9 s is 27 `vkQueueSubmit` calls of
+    13-89 ms each (the driver, at a batch that a texture upload flushes); the other 1.8 s is in no driver call
+    over 10 ms and is not attributed yet. Next: split the texture phase (guest read and conversion, create,
+    upload) in the `ENG_SLOW_MS` line.
 
 ## A scripted way to the arena fight: not yet (2026-11-12, r1-r4)
 * The arena fight is the slowest scene a person has played and no script reaches it: the scripted corridor run
