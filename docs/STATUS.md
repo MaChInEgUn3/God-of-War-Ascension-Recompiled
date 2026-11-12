@@ -471,11 +471,26 @@ so far came from the menu, the first level and its corridor. The scenes after it
   held 794 different contents, and 92% of the misses carried content an earlier miss had (87% within the last
   1024 misses; the same content comes back after a median of 161 misses). The title keeps placing the same
   textures at new addresses, and the engine, which knows a texture by its address, uploads each one again.
-* Next: on a miss, find the cached image with the same content and descriptor and give it the new address
-  instead of creating and uploading; the same at the place where an address's content has changed. What it
-  saves will show in the miss bucket; a frame-rate change of a few percent is under what these runs resolve.
-* Open: why the title re-places some 800 textures every few seconds in a corridor. If its own VRAM cache is
-  not settling in this port, that cause is worth more than the fix above. Not looked at yet.
+* Built, off by default (`RSX_TEX_REUSE=1`, z1): on a miss of a DXT texture, a cached entry with the same
+  content and descriptor that was not checked in this frame gets the new address and keeps its image. Corridor,
+  390 s, off / on / on / off after a discarded run:
+
+  | | off | on | on | off |
+  |---|---|---|---|---|
+  | misses that took a cached image | 0 | 7,975 (84%) | 10,263 (85%) | 0 |
+  | time in the miss bucket | 19.0 s | 6.6 s | 9.3 s | 22.7 s |
+  | texture data decoded on misses | 3,197 MB | 630 MB | 637 MB | 3,638 MB |
+  | texture phase, all draw ends | 50.8 s | 41.4 s | 43.6 s | 56.7 s |
+  | flips/s, 240-360 s | 15.30 | 17.28 | 16.02 | 15.72 |
+
+  The frame rate is not resolved by these runs (the discarded off-run read 17.76). One contact sheet of the
+  corridor looked right. It stays off until a still scene is compared pixel by pixel and the opening is looked
+  at. Not built: the same lookup where an address's content has changed (about 4,000 re-uploads and 8-9 s a
+  run, now as large as what is left of the miss bucket).
+* Open: why the title re-places textures at all. With nothing moving (the still view at the corridor's end, no
+  input) there are still 808 misses in the last two minutes, 233 different contents, one of them 83 times. The
+  title's own VRAM cache does not settle in this port. That cause is worth more than the fix above, and the same
+  save is the one whose cutscene does not start. Not looked at yet.
 * On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
   into the open draw batch, a miss cost 1.96 and 1.93 ms against 2.50 and 2.15 ms, with no change in frame rate
   that the runs resolve. The earlier "did not shorten the stalls" above looked only at draw ends over 40 ms.
