@@ -315,7 +315,18 @@ so far came from the menu, the first level and its corridor. The scenes after it
   first (with the `[interp-miss]` lines in the same pass, new lifts of the natively patched blobs got an entry at
   the patched loop's head and the port's generator refused them); and the fragment image ids now reach 997, so
   the reloc blobs moved from 900-903 to 2000-2003.
-* With the geometry faster, SPU workload 3 is busy 97-101% of the time in the still view. Not probed yet.
+* The same probes on the still view with the new exe (h3a-h3e, one run each, 16 windows on and 15 off,
+  13.2-13.8 frames/s off). The frame is now shared, with the EDGE lists still the largest share:
+
+  | probe | frames/s on | off | change | before the lift |
+  |---|---|---|---|---|
+  | SPU workloads 15, 16, 17 (EDGE geometry) +20% | 12.02 | 13.59 | -11.5% | -12.4% |
+  | main thread +10 ms at each flip request | 12.62 | 13.36 | -5.5% | -0.1% |
+  | SPU workload 3 +20% | 13.05 | 13.73 | -5.0% | -0.4% |
+  | RSX walker passes +20% | 12.72 | 13.20 | -3.6% | -0.6% |
+  | SPU workload 8 +20% | 13.61 | 13.80 | -1.4% | -2.2% |
+
+  Workload 3 is busy 97-101% of the time there now (82% before).
 * Whether the arena fight (6.6-9.5 frames/s when played) has the same cause is not known: nothing scripted reaches
   it. A played session with the capture on would say, and would give its placements.
 
