@@ -2,11 +2,13 @@
 rem Optional profile-guided build (PGO) of the lifted PPU, the lifted SPU and the runtime together.
 rem Needs GOW_ROOT like cfg.bat. Steps and measured gain: docs\BUILDING.md, "Optional: profile-guided build".
 rem   pgo.bat gen    configure + build port\build_pgogen: instrumented exe (-fprofile-generate, GOW_PGO_GEN)
-rem   pgo.bat merge  %GOW_ROOT%\local\pgo\gow.profraw -> gow.profdata
+rem   pgo.bat merge  every %GOW_ROOT%\local\pgo\*.profraw -> gow.profdata
 rem   pgo.bat use    configure + build port\build_pgouse, optimized with gow.profdata
 rem The configure line is cfg.bat's plus the profile flags: keep the two in step.
 rem CLANG_RT_DIR overrides where clang_rt.profile-x86_64.lib is (the "23" is the clang major version).
 if "%GOW_ROOT%"=="" (echo set GOW_ROOT first & exit /b 1)
+rem NINJA_JOBS: one compiler takes 3.4 GB or more on the large lifted files with a profile (docs\BUILDING.md)
+if "%NINJA_JOBS%"=="" set NINJA_JOBS=2
 if "%CLANG_RT_DIR%"=="" set "CLANG_RT_DIR=%GOW_ROOT%/local/tools/llvm/lib/clang/23/lib/windows"
 set "PGO_DATA=%GOW_ROOT%/local/pgo/gow.profdata"
 if "%1"=="gen" goto gen
@@ -16,7 +18,9 @@ echo usage: pgo.bat gen^|merge^|use
 exit /b 2
 
 :merge
-call "%GOW_ROOT%\scripts\env.bat" llvm-profdata merge -o "%PGO_DATA%" "%GOW_ROOT%/local/pgo/gow.profraw"
+rem every .profraw in local\pgo (one per training run), through a list file so paths with spaces survive
+dir /b /s "%GOW_ROOT%\local\pgo\*.profraw" > "%GOW_ROOT%\local\pgo\profraw.lst" || (echo no .profraw in %GOW_ROOT%\local\pgo & exit /b 1)
+call "%GOW_ROOT%\scripts\env.bat" llvm-profdata merge -o "%PGO_DATA%" --input-files="%GOW_ROOT%\local\pgo\profraw.lst"
 exit /b %ERRORLEVEL%
 
 :gen
@@ -39,5 +43,5 @@ exit /b 1
 :build
 call "%GOW_ROOT%\scripts\env.bat" cmake -B %BDIR% -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DPS3RECOMP_DIR="%GOW_ROOT%/local/tools/ps3recomp" -DRECOMP_DIR="%GOW_ROOT%/local/recompiled" -DCMAKE_EXE_LINKER_FLAGS="dxguid.lib /MAP %PGOLINK%" -DPS3RECOMP_RSX_VULKAN=ON -DPS3RECOMP_PAD_SDL2=ON -DCMAKE_C_FLAGS="-I\"%GOW_ROOT%/local/tools/sdl2/inc\" %PGOFLAGS%" -DCMAKE_CXX_FLAGS="-I\"%GOW_ROOT%/local/tools/sdl2/inc\" %PGOFLAGS%" -DPS3RECOMP_VULKAN_INCLUDE_DIR="%GOW_ROOT%/local/tools/vulkan-headers/include" -DCMAKE_PREFIX_PATH="%GOW_ROOT%/local/tools/glslang/sdk/Library" -DSDL2_DIR="%GOW_ROOT%/local/tools/sdl2/SDL2-2.32.10/cmake" -DPS3RECOMP_FFMPEG_RUNTIME=ON -DPS3RECOMP_FFMPEG_INCLUDE_DIR="%GOW_ROOT%/local/tools/ffmpeg/sdk/include"
 if errorlevel 1 exit /b 1
-call "%GOW_ROOT%\scripts\env.bat" ninja -C %BDIR% MyGameRecomp
+call "%GOW_ROOT%\scripts\env.bat" ninja -C %BDIR% -j %NINJA_JOBS% MyGameRecomp
 exit /b %ERRORLEVEL%

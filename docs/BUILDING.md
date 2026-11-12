@@ -95,8 +95,14 @@ profile of the game running. Measured on the first level's corridor fight: about
    `LLVM_PROFILE_FILE=%GOW_ROOT%\local\pgo\gow.profraw` and `GOW_PGO_DUMP=<s>[,<reset_s>]`: the profile is written
    about `s` seconds into the run (the log says `[pgo] profile written`), so the run may be killed afterwards.
    `reset_s` clears the counters first, for a profile without boot and loading. `GOW_PGO_DUMP` exists only in the
-   instrumented build.
-3. `scripts\pgo.bat merge`, then `scripts\pgo.bat use` builds `port\build_pgouse` (a full rebuild).
+   instrumented build. For more than one scene, do one run per scene with a different `.profraw` name each
+   (the 2026-11-12 profile is the corridor fight plus a still view from a later save).
+3. `scripts\pgo.bat merge` merges every `.profraw` in `local\pgo`, then `scripts\pgo.bat use` builds
+   `port\build_pgouse` (a full rebuild).
+
+Memory: with the instrumentation or with a profile, one compiler process takes 3.4 GB or more on the large lifted
+files. Set `NINJA_JOBS` low (on 32 GB: 2 for `gen`, 1 for `use`; more were killed for memory). The `use` build
+then takes about an hour.
 
 The profile matches the lifted sources it was made from: after re-lifting or a toolkit change, functions that changed
 lose their counts (the build still succeeds), so repeat from step 1 when much has changed. Code the training run

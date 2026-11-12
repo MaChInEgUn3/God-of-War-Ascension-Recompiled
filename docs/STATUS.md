@@ -40,6 +40,28 @@
 * Limits. The profile comes from one scene: code that scene never ran is optimized as cold, so other levels may gain
   less or lose (not measured). Lifted code that changes after the profile loses its counts until the training run
   is repeated.
+
+### Rebuilt on the 2026-11-12 source, trained on two scenes (p1-p2)
+* The x444 profile predated the lane default, the graphics fixes and the 129 EDGE placements lifted on 2026-11-12,
+  so the profile was made again: two training runs of the instrumented exe (the corridor fight, 14 minutes; the
+  still view at the corridor's end from a later save, 10 minutes), merged into one profile.
+* Freshly booted host, 390 s runs in the order standard / PGO / PGO / standard, flips/s over 240-360 s:
+
+  | Round | Standard | PGO | PGO | Standard |
+  |---|---|---|---|---|
+  | p1a-p1d | 15.53 | 17.35 | 18.14 | 17.35 |
+  | p1e-p1h | 18.04 | 18.08 | 18.12 | 16.52 |
+
+  Still view, one run each, 240-330 s: PGO 14.97, standard 14.38 (+4%).
+* Reading. The PGO runs sit at 17.4-18.1 (mean 17.9); the standard runs spread over 15.5-18.0 (mean 16.9). That
+  spread is as large as the difference and the best standard run equals the PGO runs, so the +6% between the means
+  is not a proven figure; p1a was also the first run after the reboot. What repeats in every run is the cost of an
+  EDGE job run: 73-77 us with the profile against 76-87 us without in the corridor (per run 73, 74, 77, 75
+  against 79, 80, 76, 87), and 78 against 84 us in the still view, about -7%. No PGO run was behind the standard
+  run next to it. The earlier figure of about +5% (x446) still describes it.
+* Cost of the build: with a profile (and with the instrumentation) one compiler process takes 3.4 GB or more on
+  the large lifted files. On a 32 GB machine 4 jobs (instrumented) and 2 jobs (profile use) were killed for
+  memory; 2 and 1 jobs worked, and the profile-use build then takes about an hour.
 * Kept as an optional last build step; the experiments below and the next A/Bs use the standard build.
 
 ## More SPURS lanes (2026-11-09/10, x447-x450)
