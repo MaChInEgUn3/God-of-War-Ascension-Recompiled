@@ -14,7 +14,7 @@ code is reported with the blob's image id and the canonical pc
   [interp-miss]   wid=7 img=<image> pc=0x<canonical pc> ...
 and the entries of an existing lift are passed again, so a re-lift keeps them.
 Output: <port>/spu/relocblob_<ea>/spu_recomp.{c,h} and <port>/spu/relocblobs_register.c
-(image ids 900+). Derived from the game: keep it out of the repository.
+(image ids 2000+). Derived from the game: keep it out of the repository.
 
 Usage: python analysis/lift_reloc_blobs.py [--merge-chunks] <EBOOT.elf> <port_dir> <ps3recomp_dir> [miss log...]
 """
@@ -23,7 +23,7 @@ import os, re, subprocess, sys
 # (source EA, bytes): the largest GET seen of each (x112; 0x6D66B0 is also loaded as 0xB70 bytes)
 BLOBS = [(0x716730, 0x2450), (0x6D66B0, 0xB80), (0x6AC8B0, 0x28E0), (0x6AF1B0, 0x32E0)]
 CANON = 0x20000       # canonical LS base of every blob's lift (images differ, so they can share it)
-IMAGE_BASE = 900
+IMAGE_BASE = 2000   # above the EDGE fragment ids (300 + one per placement: 698 placements reach 997)
 
 def main():
     args = [a for a in sys.argv[1:] if a != "--merge-chunks"]

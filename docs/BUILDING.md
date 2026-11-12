@@ -38,11 +38,18 @@ local under `local/` (git-ignored) and set `GOW_ROOT` to the checkout.
    `SPU_LSA_GETLOG=10000-3E000 SPU_LSA_GETLOG_EA=10000-820000 SPU_INTERP_MISS=1`, then
    `python analysis/lift_edge_frags.py --merge-chunks <elf> port <ps3recomp> <run log>...` (generates `port/spu/edgefrag_*` and
    `port/spu/edgefrags_register.c`, image ids 300+). A placement not seen in the logs stays interpreted. Pass a copy of
-   the previous `edgefrags_register.c` among the inputs to keep its placements (the menu, the first level and its corridor
-   use 569; existing lifts keep their function entries, and `edgefrag_7228c0_11150`, patched at build time, is not re-lifted),
-   then re-run `scripts\cfg.bat` so CMake picks up the new directories.
+   the previous `edgefrags_register.c` among the inputs to keep its placements (the menu, the first level, its corridor
+   and the way to the first arena use 698; existing lifts keep their function entries, and `edgefrag_7228c0_11150`,
+   patched at build time, is not re-lifted), then configure again (`cmake -B <build dir>`) so CMake picks up the new
+   directories. A scene nobody has run yet shows as `i<n>%` on workloads 15-17 in `[pm-prof]` (STATUS.md, 2026-11-12:
+   a quarter of the geometry time).
+   Lift new placements in two passes. First from the `[lsa-get]` lines alone (`grep "^\[lsa-get\]" <log>`): with
+   the `[interp-miss]` lines in the same pass every branch target the interpreter met becomes a function entry, and
+   an entry at the head of a loop the port replaces (`port/gen_edge_frag_lift.py`, blobs 7228c0 and 719900) makes
+   the build fail with `0 fall-through entries into 0x... (want 1)`. Then, if `SPU_INTERP_MISS=1` still reports
+   time inside a lifted placement, add those entries in a second pass, leaving the natively patched blobs out.
    BatchJobList's position-independent blobs: `python analysis/lift_reloc_blobs.py --merge-chunks <elf> port <ps3recomp>
-   [SPU_INTERP_MISS run log...]` (generates `port/spu/relocblob_*` and `port/spu/relocblobs_register.c`, images 900-903,
+   [SPU_INTERP_MISS run log...]` (generates `port/spu/relocblob_*` and `port/spu/relocblobs_register.c`, images 2000-2003: above the fragment ids, which grow by one per placement,
    lifted with `spu_lifter.py --reloc`). The port runs them only with `SPU_RELOC_OFF=0` (M0.86).
    SPU lifts made before the toolkit's SPU_DIRECT tails (M0.76): `python scripts/spu_direct_rewrite.py port/spu --apply`
    rewrites their known-target tails in place (keeps `.pre_direct` copies, git-ignored like the rest of `port/spu/`).

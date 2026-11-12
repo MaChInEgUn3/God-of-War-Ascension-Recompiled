@@ -1,4 +1,4 @@
-# Status (updated 2026-11-11)
+# Status (updated 2026-11-12)
 
 ## Where it stands
 * **Runs:** boot, intro movies, main menu with text and music, and the first level on the Vulkan backend: the attack
@@ -289,13 +289,46 @@ scripted corridor scene and the scene the played session's save opens on. Both f
   session's log), while its draws per second fall from about 40 thousand to 15-20 thousand. So the slowdown is
   not the amount drawn, and it is not something that builds up: the rate recovers later in the same session.
 
+## Past the corridor the geometry jobs ran partly in the interpreter (2026-11-12, h1-h2)
+The probes above named the EDGE geometry workloads; their profile said why. In the still view at the corridor end
+a quarter of their busy time was the SPU interpreter (`[pm-prof]` `i24-25%`), in the corridor scene none. The
+EDGE jobs load small code fragments into local store, each placement is lifted on its own, and the 569 lifted
+so far came from the menu, the first level and its corridor. The scenes after it use placements nobody had seen.
+
+* Capture (`SPU_LSA_GETLOG`, `SPU_INTERP_MISS=1`; no measurable cost, a 2 MB log): 12 s interpreted in every 20 s
+  in the still view, summed over the lanes, and about 31 s in every 20 s in the first shot of the arena cutscene,
+  all of it at fragment placements. 129 new placements lifted: 698 now.
+* Before and after, one run each, the host in use (the first three rows do not depend on host load):
+
+  | still view at the corridor end | before | after |
+  |---|---|---|
+  | interpreter share of EDGE busy time | 24-25% | 0% |
+  | EDGE job run | 113-117 us | 86-90 us |
+  | interpreted, per 20 s | about 12000 ms | about 230 ms |
+  | frames/s | 11.3-11.7 | 13.2-14.0 |
+
+  First shot of the arena cutscene: interpreted time about 31000 -> 240 ms per 20 s, about 21 -> 23-26 frames/s.
+  Corridor scene: nothing interpreted before or after, its native stages and reloc blobs still in use, EDGE job
+  run 89 us against 86-88 us for the previous exe run right after it (the same, within run-to-run spread),
+  13.8-15.7 frames/s. Frames of the still view from both exes show the same geometry.
+* Two things the lift ran into, now in BUILDING.md: placements must be lifted from the `[lsa-get]` lines alone
+  first (with the `[interp-miss]` lines in the same pass, new lifts of the natively patched blobs got an entry at
+  the patched loop's head and the port's generator refused them); and the fragment image ids now reach 997, so
+  the reloc blobs moved from 900-903 to 2000-2003.
+* With the geometry faster, SPU workload 3 is busy 97-101% of the time in the still view. Not probed yet.
+* Whether the arena fight (6.6-9.5 frames/s when played) has the same cause is not known: nothing scripted reaches
+  it. A played session with the capture on would say, and would give its placements.
+
 ## Next
+* A played session with the fragment capture on: the arena fight's placements, and whether the interpreter is
+  what slows it.
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
 * The cutscene at the arena entrance that does not start after Continue (above).
-* The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes and the only one
-  in the still view (probes above): what their job runs cost, and whether more of them can run side by side.
+* The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes (probes above).
+  Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
+  cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
 * A second thread for the RSX walker was the plan until the probe showed the walker has slack in the still
   view. In the corridor scene it carries a bit under half a share, so it comes after the EDGE lists.
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
