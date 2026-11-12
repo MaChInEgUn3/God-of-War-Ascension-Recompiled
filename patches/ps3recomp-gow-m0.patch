@@ -7440,6 +7440,169 @@ index 670e8863..2cd7d574 100644
  int rsx_fp_decompile_buffered_shadow_color_expand_ex(
      const u8* ucode, u32 max_bytes, u32 ctrl, u32 tex_cube_mask,
      const rsx_fp_shadow_desc shadow[16], const u8 gamma_masks[16],
+diff --git a/libs/video/rsx_shader_spirv.cpp b/libs/video/rsx_shader_spirv.cpp
+index 4aa4a176..f7fc7f76 100644
+--- a/libs/video/rsx_shader_spirv.cpp
++++ b/libs/video/rsx_shader_spirv.cpp
+@@ -36,7 +36,15 @@
+ #include <glslang/Public/ShaderLang.h>
+ #include <glslang/Public/ResourceLimits.h>
+ #include <glslang/SPIRV/GlslangToSpv.h>
++#if defined(__has_include)
++#  if __has_include(<spirv-tools/optimizer.hpp>)
++#    include <spirv-tools/libspirv.hpp>
++#    include <spirv-tools/optimizer.hpp>
++#    define RSX_SPIRV_OWN_LEGALIZE 1
++#  endif
++#endif
+ 
++#include <chrono>
+ #include <mutex>
+ #include <string>
+ #include <thread>
+@@ -62,6 +70,35 @@ bool glslang_ready()
+     return true;
+ }
+ 
++/* Which SPIRV-Tools passes run on what glslang generates from the HLSL.
++ *   2  glslang's own list for HLSL (disableOptimizer = false): a whole optimization
++ *      pipeline. Measured on GoW:A's first 400 shaders it was 34.6 of the 37.8 ms a
++ *      translation took (parse 2.9, link and io map 0.3).
++ *   1  none, then the SPIRV-Tools validator (Vulkan 1.0). What the decompilers emit
++ *      came out valid without any pass for all 400 of those shaders, and the
++ *      validator costs 4.1 ms where the passes cost 34.6. A shader that does not
++ *      validate gets SPIRV-Tools' legalization list (24.5 ms on the same set), and
++ *      glslang's list if that is still not valid. The default where
++ *      <spirv-tools/optimizer.hpp> is there.
++ *   0  none and no check; for measuring only.
++ * PS3RECOMP_SPIRV_OPT=full|0 picks 2 or 0. The mode is part of the disk cache's
++ * header, so files written under another mode are misses. */
++int pass_mode()
++{
++    static int mode = -1;
++    if (mode < 0) {
++        const char* e = getenv("PS3RECOMP_SPIRV_OPT");
++#if defined(RSX_SPIRV_OWN_LEGALIZE)
++        mode = 1;
++#else
++        mode = 2;
++#endif
++        if (e && !strcmp(e, "full")) mode = 2;
++        else if (e && *e == '0') mode = 0;
++    }
++    return mode;
++}
++
+ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
+               char* log, u32 log_size)
+ {
+@@ -91,10 +128,17 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
+     shader.setShiftBinding(glslang::EResSampler, RSX_SPIRV_SAMPLER_BINDING);
+     if (lang == EShLangVertex) shader.setInvertY(true);
+ 
++    /* PS3RECOMP_SPIRV_TIME=1: where a translation's time goes (parse, link and io
++     * map, SPIR-V generation with its legalization passes), summed and printed
++     * every 50 translations. */
++    static int s_time = -1;
++    if (s_time < 0) { const char* e = getenv("PS3RECOMP_SPIRV_TIME"); s_time = (e && *e == '1') ? 1 : 0; }
++    const auto t0 = std::chrono::steady_clock::now();
+     if (!shader.parse(GetDefaultResources(), 100, false, msgs)) {
+         put_log(log, log_size, "HLSL parse", shader.getInfoLog());
+         return -1;
+     }
++    const auto t1 = std::chrono::steady_clock::now();
+     glslang::TProgram program;
+     program.addShader(&shader);
+     if (!program.link(msgs)) {
+@@ -106,14 +150,54 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
+         return -1;
+     }
+ 
++    const auto t2 = std::chrono::steady_clock::now();
+     spv::SpvBuildLogger logger;
+     glslang::SpvOptions opts;
+-    opts.disableOptimizer = false;     /* run the HLSL legalization passes */
++    const int mode = pass_mode();
++    opts.disableOptimizer = mode != 2;
+     glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, &logger, &opts);
++#if defined(RSX_SPIRV_OWN_LEGALIZE)
++    if (mode == 1 && !spirv.empty()) {
++        /* Callers hold the cache lock, so one validator is enough. Its messages are dropped. */
++        static spvtools::SpirvTools s_val(SPV_ENV_VULKAN_1_0);
++        static unsigned s_fixed = 0, s_full = 0;
++        if (!s_val.Validate(spirv)) {
++            /* not legal as generated: SPIRV-Tools' legalization list, no validator inside it */
++            spvtools::Optimizer legal(SPV_ENV_VULKAN_1_0);
++            legal.RegisterLegalizationPasses();
++            spvtools::OptimizerOptions lopts;
++            lopts.set_run_validator(false);
++            std::vector<unsigned int> out;
++            if (legal.Run(spirv.data(), spirv.size(), &out, lopts) && !out.empty() && s_val.Validate(out)) {
++                spirv.swap(out);
++                if (s_fixed++ < 4) fprintf(stderr, "[spirv] a shader needed the legalization passes (%u so far)\n", s_fixed);
++            } else {
++                /* still not valid: glslang's own list, as before this mode existed */
++                if (s_full++ < 4) fprintf(stderr, "[spirv] legalization did not give valid SPIR-V; glslang's pass list for this shader\n");
++                spirv.clear();
++                opts.disableOptimizer = false;
++                glslang::GlslangToSpv(*program.getIntermediate(lang), spirv, &logger, &opts);
++            }
++        }
++    }
++#endif
+     if (spirv.empty()) {
+         put_log(log, log_size, "SPIR-V generation", logger.getAllMessages().c_str());
+         return -1;
+     }
++    if (s_time) {
++        static std::mutex s_tm; static double s_ms[3]; static unsigned s_n; static size_t s_src, s_words;
++        const auto t3 = std::chrono::steady_clock::now();
++        const auto ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
++            return std::chrono::duration<double, std::milli>(b - a).count(); };
++        std::lock_guard<std::mutex> g(s_tm);
++        s_ms[0] += ms(t0, t1); s_ms[1] += ms(t1, t2); s_ms[2] += ms(t2, t3);
++        s_src += strlen(hlsl); s_words += spirv.size();
++        if (++s_n % 50 == 0)
++            fprintf(stderr, "[spirv-time] %u translations: parse %.0f ms, link+io %.0f ms, generate %.0f ms; "
++                            "%.1f ms each, %zu source bytes and %zu SPIR-V words on average\n",
++                    s_n, s_ms[0], s_ms[1], s_ms[2], (s_ms[0] + s_ms[1] + s_ms[2]) / s_n, s_src / s_n, s_words / s_n);
++    }
+     return 0;
+ }
+ 
+@@ -121,10 +205,17 @@ int translate(const char* hlsl, int stage, std::vector<unsigned int>& spirv,
+ 
+ const u32 kCacheFormat = 1;
+ const u32 kCacheMagic = 0x56505352u;   /* "RSPV" */
+-/* This file's compile time stands for translate()'s options and the binding
+- * contract in rsx_shader_spirv.h: when either changes, this file is rebuilt,
+- * and the files an older build wrote become misses. */
+-const char kTranslatorBuild[24] = __DATE__ " " __TIME__;
++/* What a cached file was translated with: this revision and the pass mode.
++ * BUMP THE REVISION when translate()'s options or the binding contract in
++ * rsx_shader_spirv.h change, so that the files an older build wrote become
++ * misses. (It used to be this file's compile time, which also made every
++ * rebuild, and every second build directory, start from an empty cache.) */
++const char kTranslatorRev[] = "rsx-spirv rev 3";
++void translator_id(char id[24])
++{
++    memset(id, 0, 24);
++    snprintf(id, 24, "%s m%d", kTranslatorRev, pass_mode());
++}
+ 
+ struct Cache {
+     std::mutex lock;
+@@ -176,7 +267,9 @@ void cache_header(u32 hdr[kHeaderWords], const std::string& key, size_t nwords)
+     const glslang::Version v = glslang::GetVersion();
+     hdr[0] = kCacheMagic; hdr[1] = kCacheFormat;
+     hdr[2] = (u32)v.major; hdr[3] = (u32)v.minor; hdr[4] = (u32)v.patch;
+-    memcpy(&hdr[5], kTranslatorBuild, sizeof kTranslatorBuild);
++    char id[24];
++    translator_id(id);
++    memcpy(&hdr[5], id, sizeof id);
+     hdr[11] = (u32)key.size(); hdr[12] = (u32)nwords;
+ }
+ 
 diff --git a/libs/video/rsx_texture_layout.c b/libs/video/rsx_texture_layout.c
 index 131cc0d8..71c0b6cf 100644
 --- a/libs/video/rsx_texture_layout.c

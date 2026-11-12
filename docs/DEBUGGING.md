@@ -90,6 +90,13 @@ Lessons that cost days; keep them.
   is a pipeline being created, mostly the shader translation. The translations are kept on disk in
   `PS3RECOMP_SPIRV_CACHE` (port default `%LOCALAPPDATA%\gow-ascension-recomp\spirv_cache`); point it at a
   directory that does not exist to run without the disk cache, for example to measure a cold start.
+  `PS3RECOMP_SPIRV_TIME=1` prints, every 50 translations, the time in parse, link and io map, and SPIR-V
+  generation (`[spirv-time]`). `PS3RECOMP_SPIRV_OPT=full` runs glslang's whole pass list on each shader as
+  before 2026-11-12 (about 35 ms more per shader); the default generates without passes and validates, and a
+  line `[spirv] a shader needed the legalization passes` says when one did not validate; `=0` skips the check
+  too (measuring only). A cache file is used only by a build with the same translator revision and the same
+  mode. To time pass lists outside the game, point a small program at a cache directory written with `=0`: the
+  file is 13 header words, the key (word 11 gives its length in bytes), then the SPIR-V words (word 12).
 * **A scene that holds still, without a person**: `SAVE_SNAP=<save dir>` in the bench harness starts from another
   save, and a `PAD_PLAY` file of a few recorded stick lines walks to a spot. The save of the 2026-11-10 played
   session opens on a still view (no input needed) that is slower than the corridor scene; STATUS.md has its

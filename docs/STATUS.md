@@ -398,6 +398,42 @@ so far came from the menu, the first level and its corridor. The scenes after it
   derived from the game, so it is not something to ship); the slow draw ends that remain are texture work
   (0.6 s) and the backend (0.3 s); the driver's own pipeline cache is not kept between runs yet.
 
+### The first sight of a shader: 38 ms was the optimizer, not the translation (2026-11-12, t1, u1-u2)
+* Correction to the above: the cache only worked for the exe that filled it. Its files carried the compile time
+  of the translator's source file, so every rebuild, and the profile-guided exe next to the standard one, started
+  from an empty cache. The header now carries a revision string, bumped by hand when the translation changes.
+* `PS3RECOMP_SPIRV_TIME=1` splits a translation. Opening, cache empty, 400 shaders: parse 2.9 ms, link and io map
+  0.3 ms, SPIR-V generation 34.6 ms. Generation for HLSL input runs a whole SPIRV-Tools optimization list.
+* What those passes are for is making the SPIR-V legal. Offline on the same 400 modules as generated with no
+  pass (SPIRV-Tools validator, Vulkan 1.0):
+
+  | Passes after generation | ms per shader | valid |
+  |---|---|---|
+  | none | 0 | 400 of 400 |
+  | the validator alone | 4.1 | - |
+  | SPIRV-Tools' legalization list | 24.5 | 400 of 400 |
+  | SPIRV-Tools' performance list | 38-48 | 400 of 400 |
+
+* So the default is now: no passes, then the validator; a shader that fails gets the legalization list, and
+  glslang's own list if it is still not valid. `PS3RECOMP_SPIRV_OPT=full` is the old behaviour.
+
+  | | full list | validate only |
+  |---|---|---|
+  | translation, opening, cache empty | 37.8 ms | 9.3 ms |
+  | translation, corridor fight, cache empty | 42.3 ms | 10.4 ms |
+  | slow draw ends, corridor, cache empty | 5.5 s (pipeline 5.2) | 4.6 s (backend 2.7, pipeline 1.5) |
+  | slow draw ends, corridor, cache warm | 1.7 s | 1.8 s |
+  | flips/s 240-360 s, corridor, cache warm (val / full / full / val) | 16.94, 15.51 | 17.12, 15.81 |
+
+  750 translations, none failed validation, no shader module or pipeline failure.
+* Limits. The backend's 2.7 s in the cold validate-only run is the driver compiling SPIR-V it had never seen;
+  the full-list modules were already in the driver's own cache from earlier runs, so the two cold totals are not
+  a fair pair and the gain on a machine that has seen neither is not measured. Only this GPU and driver were
+  tried.
+* What is left when the cache is warm is texture work: draw ends of 40-80 ms at the first use of a texture
+  (0.8-0.9 s in the corridor run, in both modes). They were there before and sat behind the translations at
+  the same draw ends.
+
 ## A scripted way to the arena fight: not yet (2026-11-12, r1-r4)
 * The arena fight is the slowest scene a person has played and no script reaches it: the scripted corridor run
   never leaves the corridor (30 minutes, x412), and Continue from the checkpoint before the arena stops on the
