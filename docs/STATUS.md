@@ -327,6 +327,13 @@ so far came from the menu, the first level and its corridor. The scenes after it
   | SPU workload 8 +20% | 13.61 | 13.80 | -1.4% | -2.2% |
 
   Workload 3 is busy 97-101% of the time there now (82% before).
+* More lanes do not help there: six for the EDGE workloads +0.0%, six for workloads 3 and 7 -0.1% (in-run
+  `lanes` lever, h4a/h4b). A trace of the view (g6a, before the lift) shows why: each EDGE list runs its jobs
+  one after another for most of the frame (59 ms busy of 74.5 each), and never more than three EDGE lanes are
+  busy at once, one per list (three at once 42.7 ms of the frame, two 20.6, one 8.0, none 3.3). The main
+  thread's frame-start wait falls entirely inside that (14.4 of its 14.6 ms with an EDGE lane busy). So the
+  frame there is about one EDGE list's serial time, some 570-600 job runs, and what is left to gain on these
+  lists is the cost of a job run (88 us now), not their parallelism.
 * Whether the arena fight (6.6-9.5 frames/s when played) has the same cause is not known: nothing scripted reaches
   it. A played session with the capture on would say, and would give its placements.
 
