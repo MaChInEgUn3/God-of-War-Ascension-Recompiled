@@ -244,9 +244,23 @@ scripted corridor scene and the scene the played session's save opens on. Both f
     drains take 53 ms of a 72 ms frame (a `PS3_FTRACE` of the view, g6a). The GPU waits inside them are 5.5 ms a
     frame (3.4 for a batch slot, 2.1 in synchronous submits, of which 2.0 creating textures and 0.4 a readback).
     Each of the three EDGE workloads is busy 77-80% of the time here (55-69% in the corridor scene), about 570
-    job runs a frame each. The probes that spin also add host CPU, so -12.4% is a floor on a share that is
-    mostly theirs. The corridor scene was not probed again tonight; its last probes (2026-11-08) predate the
-    wider lanes.
+    job runs a frame each. The probes that spin also add host CPU, so part of each drop is contention, not
+    pacing.
+  * **The corridor scene, same probes** (g9a-g9f, one run each, 17 windows on and 17 off, 16.2-16.7 frames/s
+    off; its last probes, 2026-11-08, predated the wider lanes):
+
+    | probe | frames/s on | off | change |
+    |---|---|---|---|
+    | SPU workloads 15, 16, 17 (EDGE geometry) +20% | 14.51 | 16.39 | -11.5% |
+    | RSX walker passes +20% | 14.95 | 16.19 | -7.7% |
+    | SPU workload 13 (render jobs) +20% | 15.72 | 16.38 | -4.0% |
+    | main thread +10 ms at each flip request | 15.80 | 16.19 | -2.4% |
+    | SPU workload 8 +20% | 16.19 | 16.32 | -0.8% |
+    | SPU workload 3 +20% | 16.92 | 16.68 | +1.4% |
+
+    There the frame is shared: the EDGE lists carry about two thirds of a full pacing share, the walker a bit
+    under half, the render jobs a quarter. In both scenes the EDGE geometry lists are the largest single share,
+    and in the still view the only one.
   * A new texture costs about 3.4 ms on the walker (hash, create, upload and a synchronous submit). In this
     view they fall from about 4 a frame after the spawn to under 1; in the corridor scene to almost none.
     Recording the first upload in the draw batch, as the in-place re-upload already is, would remove the wait.
@@ -280,10 +294,10 @@ scripted corridor scene and the scene the played session's save opens on. Both f
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
 * The cutscene at the arena entrance that does not start after Continue (above).
-* The EDGE geometry workloads (15, 16, 17) pace the still view at the corridor end (probes above): what their
-  job runs cost there, and whether more of them can run side by side. The same probes on the corridor scene.
+* The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes and the only one
+  in the still view (probes above): what their job runs cost, and whether more of them can run side by side.
 * A second thread for the RSX walker was the plan until the probe showed the walker has slack in the still
-  view; it stays an option only where a probe says the walker binds.
+  view. In the corridor scene it carries a bit under half a share, so it comes after the EDGE lists.
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)
