@@ -718,7 +718,7 @@ of the corridor, the corridor is the bench fight.
 * **Not decided yet**: what the channel-write time is made of (copy or overhead), whether the two `1bdd`
   functions are worth native stages, and the corridor's walker figure by the same method.
 
-### The fight's frame by render pass, and its single-triangle draws (2026-11-14, x1a-a1b)
+### The fight's frame by render pass, and its single-triangle draws (2026-11-14, x1a-e1b)
 A pass dump of the corridor fight (`RSX_ENGINE_PASS_DUMP` with `_DRAWS=1`; 170 passes and 6,010 draws, about 2.6
 frames). One frame is about 76 passes and 2,340 draws:
 
@@ -741,12 +741,14 @@ from the targets and state, not something established; by that reading shadows a
   programs' constant buffers) says 76% of ALL draws equal the previous draw in all of that, are lists and have
   nothing else between them. The port already lets a draw whose registers repeat reuse the previous draw's
   resolved targets, textures and constant buffers (`RSX_DRAW_REPEAT=1`, M0.98); it does not join draws.
-* **What they cost** (a statistics line for draw ends with inline vertices; it does not pass through the
-  bookkeeping that inflated the fetch figure above): about 810 per frame, 11.7-12.6 us each in the fight on a
-  machine in use, which is about 9.5 ms of the walker's time per frame there (18% of the draw-end time). In the
-  still view 9.7-10.8 us each, with no phase holding most of it (d1a-d1c, six windows): backend 4.1-4.9,
-  textures 2.2-2.4, index build 1.2-1.3, fetch 1.0-1.1, pipeline 0.9-1.0. A bound computed beforehand from the
-  mean per-draw phases (8.4 us) was too low.
+* **What they cost: about 7 us each, about 6 ms of walker time per frame in the fight.** A first figure here,
+  9.5 ms per frame (about 810 draws at 11.7-12.6 us), was misattributed. Counted over whole windows (d1e,
+  corridor fight, a machine in use): 81% of these draws take the repeat path at 6.8-7.1 us each; the other 19%
+  averaged 51-53 us and held 63% of the time. That extra time is texture work that lands on them, not their
+  own: in all ten steady windows of two runs, their texture time beyond 1 us each tracks the windows' texture
+  re-upload plus content-hash time (-2% to +19%). In the still view a draw of this kind takes 7.4-8.6 us on
+  the repeat path. Per phase, averaged over both kinds (d1a-d1c, still view): backend 4.1-4.9, textures
+  2.2-2.4, index build 1.2-1.3, fetch 1.0-1.1, pipeline 0.9-1.0.
 * **The backend's cost per draw, any draw** (`VK_DRAW_PROF`, still view, 1.15 M draws per 30 s): 4.4 us =
   recording 1.6, flush 1.4 (the batch submit and the wait for a free in-flight slot, not split yet), descriptors
   0.6, vertex/index copies 0.6, cache lookups 0.2. At ~2,340 draws that is about 10 ms per frame.
@@ -759,15 +761,28 @@ from the targets and state, not something established; by that reading shadows a
   BEGIN, logged only inside a run of such lists; two gaps and one pass end were captured). Gap A: three writes of
   `0x1714` (invalidate vertex file, which the port's dispatcher treats as a no-op). Gap B: depth bounds minimum
   and maximum (`0x0384`, `0x0388`, a narrow range), the vertex array format and offset, then the three `0x1714`
-  writes. The pass end begins with `0x0380` = 0 (depth bounds test off). My inference from those three samples,
-  not counted yet: the test is on during these passes, the bounds change at every second triangle, and the 128
-  triangles are 64 screen tiles of two triangles, each tile drawn under its own depth bounds.
-* **What follows if that holds.** Draws under different depth bounds cannot be one draw, so a join could be
-  exact only within a pair (128 -> 64 draws per pass), with a ceiling of about half of the 9.5 ms: under the
-  5 ms line set before measuring. A count over whole windows decides it (the share of these draws preceded by
-  a change of bounds, and whether they take the repeat path: the reuse compares the bounds registers, so a
-  tile's first triangle decodes its state again although the bounds are applied per draw). The join code was
-  never published and is removed if the count confirms.
+  writes. The pass end begins with `0x0380` = 0 (depth bounds test off).
+* **Counted** (d1d still view, d1e fight; 30 s windows): the depth bounds test is on for 93-95% of these draws.
+  The bounds change before 28% of them in the still view and 14% in the fight. My reading of the three samples
+  as "64 tiles of two triangles, new bounds at every second triangle" was wrong as a count; that they are
+  screen tiles drawn under per-tile depth bounds remains an inference.
+* **Joining them into one draw: dropped.** Only draws with equal bounds can be joined, which is at most the
+  repeat-path ones: about 4.7 ms per frame if every one of them disappeared, under the 5 ms line set before
+  measuring. The code was never published and is removed.
+* **Tried, exact, no gain: leaving the bounds out of the repeat comparison.** The reuse compares the whole
+  register file, so a draw that only moves the depth bounds decodes its state again, although the bounds are
+  applied per draw as dynamic state and nothing reused reads them. With the two registers skipped the engine's
+  own check (`RSX_DRAW_REPEAT=2`, still view) compared 1.6 M reuses per 30 s without a difference, and in the
+  fight the repeat share of these draws went from 81% to 94%. But the total time of these draws did not fall
+  (4,520-4,610 against 4,600-4,990 ms per 30 s), the time per draw end over all draws went from 24.2 to 23.9 us,
+  and the remaining 6% averaged 125-144 us: the texture work had moved onto fewer draws. Removed. A figure I
+  expected beforehand, about 5 ms per frame, was wrong for the reason in the first bullet.
+* **Batch flushes** (`VK_DRAW_PROF`, fight, per 30 s): 7,700-8,500 flushes; ending and submitting the batch
+  1,030-1,300 ms, taking the next slot 520-620 ms with a wait for a busy slot in 77% of them. Together about
+  5 ms per frame, two thirds of it the submit itself.
+* **Where that leaves the texture phase** (fight, per 30 s, all draws): 3.3-5.4 s, of which re-uploads are
+  290-390 calls and 760-1,320 ms (about one per frame at about 3.3 ms) and full content hashes 7,500-8,800
+  calls, 470-630 ms and 4.2 GB hashed. Both are the pool of the texture-cache section above, not a new one.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -790,8 +805,8 @@ from the targets and state, not something established; by that reading shadows a
 * A second thread for the RSX walker was the plan until the probe showed the walker has slack in the still
   view. In the corridor fight the walker and the EDGE lists are co-limiting (probes above), and the walker alone
   caps the fight near 21 frames/s. Before any second thread: the backend's fixed cost per draw (~10 ms per
-  frame; how much of its "flush" is waiting, which a second thread would not remove), and the ~810
-  single-triangle draws per frame (section above).
+  frame, about 5 of it batch flushes, a third of that waiting for a slot, which a second thread would not
+  remove) and the texture re-uploads and content hashes (4-5 ms per frame).
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)

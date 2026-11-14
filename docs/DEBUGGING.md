@@ -248,6 +248,18 @@ Lessons that cost days; keep them.
   (`GetThreadTimes`), the A/B control metric that other processes' load does not inflate. Methods are only
   counted (`methods N 0 ms`): timing each of ~2.5M methods a second with two clock reads cost the walker a large
   share of its time. `ENG_PHASE_STATS_METHODS=1` brings the per-method clocks back.
+  Two lines count the draw ends whose vertices came inline (`draw ends with inline vertices: N (B inline bytes
+  each), T ms, U us each | us each: fetch pipe tex idxbuild be rest`, then `of those: depth bounds test on N,
+  bounds changed since the last draw N | repeat path N at U us each, not N at U us each`). The repeat / not
+  split is a count, not a cost attribution: shared work such as a texture re-upload lands on whichever draw
+  resolves its textures first, and moved with the draws when the split was changed (STATUS, 2026-11-14).
+* **What a title sends between draws**: `RSX_DRAW_SEQLOG=<s>[,<bytes>]` logs, from `<s>` seconds after the
+  first method, every method and argument from the END of a triangle list whose vertices all came inline to
+  the next BEGIN, for three such lists (`[draw-seq] k: 0xMMMM = 0xARG`, 400 lines at most). With `<bytes>` it
+  takes only lists of that many inline bytes that follow another such list within 96 methods, i.e. inside a run.
+  Without the time gate and the run condition the first lists of a run are boot and pass-end draws, and say
+  nothing about a scene (a wrong reading of GoW:A's shadow passes came from exactly that). The lines carry the
+  title's own program words when an upload falls in the gap: keep them out of anything published.
   Texture change detection: a sparse hash every frame, and a full hash when it differs, for a texture of 16 KB
   or less, or every `PS3RECOMP_ENG_TEXHASH_EVERY` frames (a power of two, default 8; STATUS x314 found 64 inside
   the noise). `PS3RECOMP_ENG_TEXHASH_FULL=1` hashes everything in full every frame.
@@ -265,6 +277,9 @@ Lessons that cost days; keep them.
   draw in cache lookups, descriptor work, vertex/index copies, command recording and the batch flush, and splits the
   descriptor work into set allocation, uniform copies, view/sampler resolve and `vkUpdateDescriptorSets`. This found
   the constants being read back out of write-combined memory (M0.62).
+  A second line (`batch flushes N: end and submit X ms, next slot Y ms (W waits for a busy slot)`) splits every
+  batch flush into ending and submitting the command buffer and taking the next in-flight slot, which waits on
+  that slot's fence when the GPU has not finished it.
 * **Repeat draws** (toolkit default off, GoW:A port default on): `RSX_DRAW_REPEAT=1` lets a draw that repeats the
   previous draw's state reuse its resolved targets, textures and constant buffers; `=2` resolves everything as
   before and prints `[draw-repeat-check] repeat differs: ...`. `VK_CB_REUSE=1` reuses the previous draw's uniform
