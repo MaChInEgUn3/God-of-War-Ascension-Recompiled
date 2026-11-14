@@ -86,18 +86,38 @@ for j in jobs:
 for j in jobs:
     j["own"] = frozenset(h for h in j["pages"] if 2 <= df[h] <= 4)
 MIN_SHARED = int(sys.argv[4]) if len(sys.argv) > 4 else 4
+# "strict" as a fifth argument: keep a pair only when the partner is the single best one and shares at least 90%
+# of the earlier job's blocks that come back a frame later at all (blocks also held by a capture within 200 jobs
+# are leftovers of a neighbour, not the job's own).
+STRICT = len(sys.argv) > 5 and sys.argv[5] == "strict"
+if STRICT:
+    holders = defaultdict(list)
+    for j in jobs:
+        for h in j["own"]:
+            holders[h].append(j["h"]["seq"])
+    for j in jobs:
+        s = j["h"]["seq"]
+        j["back"] = frozenset(h for h in j["own"]
+                              if not any(0 < abs(o - s) <= 200 for o in holders[h])
+                              and any(GAP_LO <= abs(o - s) <= GAP_HI for o in holders[h]))
 pairs, used, weak = [], set(), 0
 for sig, g in by_sig.items():
     for a in g:
-        best, bestn = None, 0
+        best, bestn, second = None, 0, 0
+        key = "back" if STRICT else "own"
         for b in g:
             gap = b["h"]["seq"] - a["h"]["seq"]
             if gap < GAP_LO or gap > GAP_HI or id(b) in used:
                 continue
-            n = len(a["own"] & b["own"])
+            n = len(a[key] & b[key])
             if n > bestn:
-                best, bestn = b, n
-        if best is not None and bestn >= MIN_SHARED:
+                best, bestn, second = b, n, bestn
+            elif n > second:
+                second = n
+        ok = best is not None and bestn >= MIN_SHARED
+        if ok and STRICT:
+            ok = second < bestn and bestn * 10 >= 9 * len(a["back"])
+        if ok:
             used.add(id(best))
             pairs.append((a, best, bestn))
         elif best is not None:

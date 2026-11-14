@@ -635,7 +635,12 @@ its whole code, in the still view (15.2 game frames/s) and the corridor fight (1
   20.5% of the PUT bytes differ; half of the differing 4-byte words are floats within 5% of each other. The
   16384-byte PUTs are never identical (29% of their bytes differ), the 12 KB ones never (16-19%); the PUTs of
   6432, 6528 and 6624 bytes are identical in every pair. No PUT goes to the same address in both frames.
-* **So**: fed the same streams one frame later, in a view that holds still, a job writes vertex data with
+  With the pairing made strict (a single best partner, sharing at least 90% of the earlier job's blocks that
+  come back a frame later at all): 737 pairs, 9 identical, 19.0% of the PUT bytes differ. Two limits of this
+  comparison: the capture slows the game, so the two frames were about 3 s apart, not 1/15 s, which makes the
+  numbers differ more than between two frames at speed; and what is shown equal is most of a job's own blocks,
+  not every input byte.
+* **So**: one frame later, in a view that holds still, a job with the same streams writes vertex data with
   slightly different numbers in a fifth to a third of its bytes. Its output follows what changes per frame, and
   a reuse that skips the run is not available. Keeping the part that does not change would mean splitting what a
   job computes from what it is given per frame, which is a redesign of this path, not a cache. Parked.
