@@ -650,6 +650,48 @@ its whole code, in the still view (15.2 game frames/s) and the corridor fight (1
 * For the texture-pool section above: the frames in which that texture loses its two bits do not differ from
   their neighbours in these counts (runs, GETs, GETs not seen).
 
+## What binds the frame now (2026-11-14, p1a-u1a)
+Measured on the play build (PGO) unless said otherwise; the still view is the scene held without input at the end
+of the corridor, the corridor is the bench fight.
+* **Bench check**: corridor flips/s over 240-360 s, four runs in a row: PGO build 14.4 (the first run of the
+  series: discarded, as first runs have been low before), the standard build of 11-12 16.4, today's standard build
+  17.2, PGO build 18.9. So the source of 11-14 is not slower than that of 11-12 and the PGO build is about 10%
+  above the standard one (one pair each). About 20 draw ends over 40 ms per run, the slowest ~80 ms. The still view
+  runs at about 20 frames/s.
+* **A periodic dip that is not the game's**: on the test machine the frame rate falls by 25-35% for about 10 s
+  every 28-34 s, with a stall of 0.3-0.75 s at the start, in both scenes. In a dip the title does the same work
+  (the same functions, the same job runs and draws per frame) but each EDGE job run takes 26-34% longer and each
+  draw end 62% longer. It coincides, second for second, with a burst of other processes and of kernel time on the
+  host (correlation -0.65 at lag 0, -0.82 one second later), which is there with no game running too. Ruled out on
+  the way: a port timer, the run scripts, anything in the title's code (`PPU_FRAME_FUNCS` statistics and per-frame
+  entry counts over the frames after a burst of releases), controller detection, the processor's frequency. An
+  earlier reading of mine, that the title's batch release of textures causes it, was wrong: the batches come about
+  10 s before. Measurements below are read apart for normal seconds and dip seconds (`analysis/abphase.py`, 1 s
+  windows), because a 5 s on/off pattern aliases with the dip (a first still-view figure of "80% binding" was
+  that alias).
+* **Causal probes, still view** (a stage slowed by 20% in alternating 1 s windows; fully binding = -16.7%):
+  EDGE workloads 15-17 -9.9% +- 1.5% (the same in dip seconds), so EDGE job time binds about 59% of the frame;
+  the RSX walker -2.4% +- 1.9% (about 14%); workload 3 about -3% (loaded host). Corridor, EDGE slowed by 50% in
+  5 s windows: -18.5% of a possible -33.3%, about 55% +- 15. The walker is busy 81-83% of the time, so EDGE alone
+  has about a fifth of frame time to give before the walker binds.
+* **Where an SPU thread's time goes, live** (host sampler, still view; the four threads that run EDGE are alike):
+  native stage code 38%; runtime 25-26% (channel writes 8-9%, dispatch between lifted functions about 8.7%,
+  channel reads 2%, coherency 2%); job module `1bdd` of workload 3 13%, two of its lifted functions about 4% each;
+  the EDGE module's lifted code 9.5%, no function above 2%; another module 3.7%; the policy module 1.5%. Those
+  threads are 87% busy; their idle time is about four pauses of ~1.4 ms per frame (the `Sleep(1)` after a kernel
+  pass that found no work). The main thread spends a third of its samples in the title's wait loop for its jobs.
+  The walker: vertex fetch 34%, draw end 11%, vertex remap 11%, FIFO and method dispatch 17%, texture decode 7%.
+* **Replay gate and split**: the 3,600 captured still-view jobs replay byte-identical on today's lift; a job
+  takes 62-65 us in the lab build. In replay (channels served by the harness, dispatch counted with the fast path
+  off) a job's time is native stages 52%, lifted module 28%, runtime 15%, overlays 2.4%, policy-module calls 1.4%:
+  JobApi calls are not a lever, and the live split above is the one to size dispatch and channels with.
+* **Tried and dropped**: a shorter idle pause (`GOW_AB=nap`, 200 us on a high-resolution timer against `Sleep(1)`):
+  +1.9% +- 2.4% over all seconds, -2.7% +- 2.4% in normal ones, same time per job run: no gain. A release guard
+  that refuses to release a texture marked wanted within the last 8 frames (`GOW_RELEASE_GUARD=3`, off by default)
+  stops the 640 KB texture's churn of the pool section above without errors, and shows no frame-rate gain.
+* **Not decided yet**: what the channel-write time is made of (copy or overhead), whether the two `1bdd`
+  functions are worth native stages, and the corridor's walker figure by the same method.
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)

@@ -37,6 +37,15 @@ Lessons that cost days; keep them.
   the marked frames and the frames one and two before them, the functions entered in at least 85% of those and
   in at most 30% of all frames since the first mark (`with it`), and the ones in at most 15% of those and at
   least 80% of all (`missing there`). A single diff is noise from the other threads; the statistics are what to read.
+  After 150 and 300 marks it prints the statistics again and adds `entries per frame, marked / other frames`: the
+  40 functions entered most often more per frame in marked frames than in the others (at least 1.5 times and 4):
+  the same code doing more work. The port's `GOW_DIP_MARK=1` marks the 100 frames after a burst of texture
+  releases (5 within 30 frames, from 150 s after the first release) as an example of a marker.
+* **Reading an in-run A/B on a host with periodic dips**: run `GOW_AB=<lever>,1,<start s>` (1 s windows) and
+  `python analysis/abphase.py <log>...`: on/off frames apart for normal seconds and for seconds inside a dip
+  (median of frames over +-4 windows below 16.5), each with its standard error. A 5 s on/off pattern can alias
+  with a dip that comes every ~30 s. `python analysis/ftbins.py <ftrace> [bin s]` bins a `PS3_FTRACE` file by time:
+  flips per bin, the (thread, kind) rows whose milliseconds per bin vary most, and the longest spans.
 * **Who calls through a table of handlers**: `PPU_ICALL_TABLE_LOG=<ea>,<lo>,<hi>` reads the struct pointer at
   guest address `<ea>` (with `PPU_ICALL_TABLE_DIRECT=1`, `<ea>` is the struct itself), prints the function
   addresses behind its descriptor slots from offset `<lo>` to `<hi>` once, and then every indirect call that
@@ -706,6 +715,8 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
 * **VRAM-cache release guard** (`port/gow_vram_guard.c`, inserted by `scripts/patch_lift.py`): skips a release of
   `0x370E48` whose descriptor has nothing resident (`desc+0x20 == 0`), marks its side entry not resident and drops it
   from the LRU; logs `[vram-guard]`. On by default, `GOW_RELEASE_GUARD=0` turns it off (a mitigation, see STATUS M0.46d).
+  `GOW_RELEASE_GUARD=3[,<frames>]` (experiment, not the default) also refuses the release of a texture that 0x3A7B3C
+  marked wanted within the last `<frames>` frames (default 8), leaving its entry untouched; logs `[vram-guard-want]`.
 * **What the title's texture pool is doing** (same file; hooks and label hooks in `scripts/patch_lift.py`):
   `GOW_RELEASE_STATS=<s>` prints every `<s>` seconds `[vram-release] N s: R releases, X MB of top mips, V refused
   by the guard | pool A + B of total = ratio | probes ... | pending ...` (the compactor at 0x372B70 releases

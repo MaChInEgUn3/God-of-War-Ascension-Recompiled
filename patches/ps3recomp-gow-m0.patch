@@ -12917,7 +12917,7 @@ index b44816b0..9b3c4a92 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index f54150d9..78e67647 100644
+index f54150d9..058af2a0 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -25,6 +25,7 @@
@@ -14055,7 +14055,7 @@ index f54150d9..78e67647 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4051,3 +4775,270 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4051,3 +4775,296 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -14180,24 +14180,50 @@ index f54150d9..78e67647 100644
 +                }
 +                /* Statistics from the first mark on: in how many frames each function was entered at all, and
 +                 * in how many marked frames (k = 0), frames before a marked one (1) and two before (2). After
-+                 * 15 and 30 marks: the functions that go with a marked frame and are rare otherwise, and those
++                 * 15, 30, 150 and 300 marks: the functions that go with a marked frame and are rare otherwise, and those
 +                 * that are common otherwise and missing there. */
 +                {   static uint16_t *allf, *hit[3]; static uint32_t frames, marks;
++                    static uint32_t *sum_all, *sum_mark;   /* entries per function: every frame, marked frames */
 +                    if (marked && !allf) {
 +                        allf = (uint16_t*)calloc(0x200000, 2);
 +                        for (int k = 0; k < 3; k++) hit[k] = (uint16_t*)calloc(0x200000, 2);
++                        sum_all = (uint32_t*)calloc(0x200000, 4);
++                        sum_mark = (uint32_t*)calloc(0x200000, 4);
 +                    }
 +                    if (allf) {
 +                        frames++;
 +                        const uint16_t* c0 = s_ff_cnt[0];
-+                        for (uint32_t i = 0; i < 0x200000; i++) if (c0[i]) allf[i]++;
++                        for (uint32_t i = 0; i < 0x200000; i++) if (c0[i]) { allf[i]++; sum_all[i] += c0[i]; }
 +                        if (marked) {
 +                            marks++;
++                            for (uint32_t i = 0; i < 0x200000; i++) if (c0[i]) sum_mark[i] += c0[i];
++                            /* The functions entered more often per frame in marked frames than in the others
++                             * (same code, more work): the 40 largest differences of the per-frame means. */
++                            if ((marks == 150 || marks == 300) && frames > marks) {
++                                fprintf(stderr, "[frame-funcs] after %u marks in %u frames: entries per frame, marked / "
++                                        "other frames, where marked is at least 1.5x and 4:", marks, frames);
++                                static uint32_t done[40];
++                                for (int pass = 0; pass < 40; pass++) {
++                                    uint32_t best = 0; double bd = 0.0, bm = 0.0, bu = 0.0;
++                                    for (uint32_t i = 0; i < 0x200000; i++) {
++                                        if (!sum_mark[i]) continue;
++                                        const double mm = sum_mark[i] / (double)marks;
++                                        const double mu = (sum_all[i] - sum_mark[i]) / (double)(frames - marks);
++                                        if (mm < 4.0 || mm < 1.5 * mu || mm - mu <= bd) continue;
++                                        int seen = 0; for (int k = 0; k < pass; k++) if (done[k] == i) seen = 1;
++                                        if (!seen) { bd = mm - mu; best = i; bm = mm; bu = mu; }
++                                    }
++                                    if (bd <= 0.0) break;
++                                    done[pass] = best;
++                                    fprintf(stderr, " %06X:%.1f/%.1f", best << 2, bm, bu);
++                                }
++                                fprintf(stderr, "\n");
++                            }
 +                            for (int k = 0; k < 3; k++) {
 +                                const uint16_t* ck = s_ff_cnt[k]; uint16_t* hk = hit[k];
 +                                for (uint32_t i = 0; i < 0x200000; i++) if (ck[i]) hk[i]++;
 +                            }
-+                            if (marks == 15 || marks == 30) {
++                            if (marks == 15 || marks == 30 || marks == 150 || marks == 300) {
 +                                for (int k = 0; k < 3; k++) {
 +                                    fprintf(stderr, "[frame-funcs] after %u marks in %u frames, %d frame(s) before the mark: "
 +                                            "with it (marked/all frames):", marks, frames, k);

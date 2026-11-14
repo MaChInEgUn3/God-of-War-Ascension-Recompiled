@@ -72,9 +72,18 @@ static void spec_poll(const char* where)
 /* Called where func_003A7B3C is about to write a texture's side flags 0x0200 and 0x4000 (label hooks in
  * patch_lift.py): want = the bit it will write, val / thr = the two floats it compared (want is 1 when
  * val > thr, else the entry's 0x0200 as it stands). Logged for the specimen only. */
+/* GOW_RELEASE_GUARD=3 (experiment): the last frame in which 0x3A7B3C wrote "wanted" for each side entry, so a
+ * release can be refused for a texture that was wanted a few frames ago (the bits drop for single frames). */
+static uint32_t s_lastwant[8192];
+static int s_guard_mode = -1;
 int gow_want_note(int site, uint32_t side, uint32_t want, double val, double thr)
 {
     static unsigned lines;
+    if (s_guard_mode < 0) { const char* e = getenv("GOW_RELEASE_GUARD"); s_guard_mode = e ? atoi(e) : 1; }
+    if (s_guard_mode == 3 && (want & 1u) && vm_base) {
+        const uint32_t st0 = rd32(SIDE_TABLE_PTR);
+        if (st0 && side >= st0 && ((side - st0) >> 4) < 8192u) s_lastwant[(side - st0) >> 4] = rd32(0x00975888u);
+    }
     if (!s_spec || !vm_base || lines > 3000) return 0;
     const uint32_t d = rd32(s_spec + 0x44), st = rd32(SIDE_TABLE_PTR), db = rd32(DESC_BASE_PTR);
     if (!d || !st || d < db || side != st + ((d - db) >> 7) * 16u) return 0;
@@ -95,10 +104,35 @@ int gow_want_note(int site, uint32_t side, uint32_t want, double val, double thr
             rd32(d + 0x20), 10);
     return 0;
 }
+/* GOW_DIP_MARK=1 (experiment): a burst of releases (5 within 30 frames) opens a window of 100 frames; every frame
+ * in it is marked for the runtime's PPU_FRAME_FUNCS statistics, to name what the title runs after a batch release. */
+static uint32_t s_dip_until, s_rel_frames[5]; static unsigned s_rel_n;
+static void dip_release_seen(void)
+{
+    static int on = -1;
+    if (on < 0) { const char* e = getenv("GOW_DIP_MARK"); on = (e && *e == '1'); }
+    if (!on || !vm_base) return;
+    {   /* not during the level load: bursts count from 150 s after the first release on */
+        static time_t first;
+        if (!first) first = time(NULL);
+        if (time(NULL) - first < 150) return;
+    }
+    const uint32_t fr = rd32(0x00975888u);
+    s_rel_frames[s_rel_n++ % 5u] = fr;
+    if (s_rel_n >= 5) {
+        uint32_t oldest = fr;
+        for (int k = 0; k < 5; k++) if (s_rel_frames[k] < oldest) oldest = s_rel_frames[k];
+        if (fr - oldest <= 30 && fr >= s_dip_until) {
+            s_dip_until = fr + 100;
+            fprintf(stderr, "[vram-dip] release burst at frame %u: marking 100 frames%c", fr, 10);
+        }
+    }
+}
 int gow_probe_count(int which, uint32_t r3)
 {
     static const char* const nm[8] = { "37BD48", "328AFC", "3CA8EC", "3C9644", "3C8F64", "p5", "p6", "p7" };
     if (which >= 0 && which < 8) { s_probe[which]++; spec_poll(nm[which]); }
+    if (s_dip_until && vm_base && rd32(0x00975888u) < s_dip_until) ppu_frame_funcs_mark();
     (void)r3;
     return 0;
 }
@@ -115,6 +149,7 @@ int gow_release_veto(uint32_t obj)
      * top mips those were, and how many releases the guard refused (the log lines above stop after 8). */
     static int stats = -1; static time_t st_t; static unsigned st_calls, st_veto; static unsigned long long st_bytes;
     if (stats < 0) { const char* e = getenv("GOW_RELEASE_STATS"); stats = e ? atoi(e) : 0; st_t = time(NULL); }
+    dip_release_seen();
     if (stats > 0 && vm_base && obj) {
         st_calls++; st_bytes += rd32(obj + 0x1C);
         {   /* choose the specimen: 100 s after the first release, the first object to be released 6 times */
@@ -177,6 +212,25 @@ int gow_release_veto(uint32_t obj)
     if (!enabled || !vm_base || !obj) return 0;
     uint32_t desc = rd32(obj + 0x44);
     if (!desc) return 0;
+    {   /* GOW_RELEASE_GUARD=3[,<frames>] (experiment): refuse the release of a texture that 0x3A7B3C marked
+         * wanted within the last <frames> frames (default 8). Nothing else is touched: the entry stays as it is. */
+        static int keep = -1; static unsigned kept;
+        if (keep < 0) { const char* e = getenv("GOW_RELEASE_GUARD"); const char* c = e ? strchr(e, ',') : NULL;
+                        keep = (e && atoi(e) == 3) ? (c ? atoi(c + 1) : 8) : 0; }
+        if (keep > 0) {
+            const uint32_t st0 = rd32(SIDE_TABLE_PTR), db0 = rd32(DESC_BASE_PTR);
+            if (st0 && desc >= db0 && ((desc - db0) >> 7) < 8192u) {
+                const uint32_t lw = s_lastwant[(desc - db0) >> 7], fr = rd32(0x00975888u);
+                if (lw && fr - lw <= (uint32_t)keep) {
+                    if (stats > 0) st_veto++;
+                    if (kept++ < 8)
+                        fprintf(stderr, "[vram-guard-want] release of obj 0x%08X refused: wanted %u frames ago%c",
+                                obj, fr - lw, 10);
+                    return 1;
+                }
+            }
+        }
+    }
     /* Also refuse any release that would drive the block size negative (size below
      * the object's evictable size), whatever path got there: a faster SPU
      * configuration produced 'invalid size' with no veto of the check below. */
