@@ -847,9 +847,11 @@ what the fight's re-uploads are:
   frames/s. The corridor bench on the same build and a machine in use gives 12.9-13.8, so the 11-18 frames/s
   of that session are in line with the standard build under load. What limits the prologue was probed on the
   replay below (q1a, q1b; a stage slowed by 20% in alternating 1 s windows, fully binding = -16.7%): the
-  walker -8.2% +- 4.5% over the windows with 1,800-2,800 draws per frame (-2.9% +- 4.6% over all), the EDGE
-  workloads -1.9% +- 2.6%. So the walker is a limiter there as in the corridor; EDGE is not resolved as one.
-  The two probes ran on two replays that did not land in the same scenes. (That session ran the standard
+  walker -2.9% +- 4.6% over all 154 windows, the EDGE workloads 15-17 -2.7% +- 3.1% over 159. Neither is
+  resolved. (A first version of this line gave -8.2% +- 4.5% for the walker over a subset of windows chosen by
+  draws per frame and called the walker a limiter there; that is 1.8 standard errors on a filter that left
+  out part of the fight, and no better resolved than the rest.) The two probes ran on two replays that did
+  not land in the same scenes. What limits the prologue is still not measured. (That session ran the standard
   build because the PGO build of that morning could not see the controller.) New there and not identified:
   a quarter of the main thread's samples at one call site that the corridor profiles do not show.
 * **New Game can be reached by script.** Replaying the player's pad recording (`PAD_PLAY`, from the save their
