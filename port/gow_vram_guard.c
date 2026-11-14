@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 extern uint8_t* vm_base;
@@ -52,10 +53,28 @@ int gow_release_veto(uint32_t obj)
     if (stats < 0) { const char* e = getenv("GOW_RELEASE_STATS"); stats = e ? atoi(e) : 0; st_t = time(NULL); }
     if (stats > 0 && vm_base && obj) {
         st_calls++; st_bytes += rd32(obj + 0x1C);
+        {   /* a sample of what a release looks like, once the scene has settled: releases 200 to 239 */
+            static unsigned seen;
+            if (++seen > 200 && seen <= 240) {
+                const uint32_t d = rd32(obj + 0x44), st = rd32(SIDE_TABLE_PTR), db = rd32(DESC_BASE_PTR);
+                const uint32_t side = (d && st && d >= db) ? st + ((d - db) >> 7) * 16u : 0;
+                uint32_t tb = d ? rd32(d + 0x28) : 0; float timer; memcpy(&timer, &tb, 4);
+                fprintf(stderr, "[vram-release-sample] obj %08X evictable %X total %X flags12 %04X | desc %08X size %X "
+                        "resident %X timer %.3f | side flags %04X stamp %u | g(96DDCC) %u g(96E15C) %08X%c",
+                        obj, rd32(obj + 0x1C), rd32(obj + 0x20), rd16(obj + 0x12), d, d ? rd32(d + 0xC) : 0,
+                        d ? rd32(d + 0x20) : 0, timer, side ? rd16(side + 2) : 0, side ? rd32(side + 8) : 0,
+                        rd32(0x0096DDCCu), rd32(0x0096E15Cu), 10);
+            }
+        }
         const time_t now = time(NULL);
         if (now - st_t >= stats) {
-            fprintf(stderr, "[vram-release] %lld s: %u releases, %.1f MB of top mips, %u refused by the guard%c",
-                    (long long)(now - st_t), st_calls, st_bytes / 1048576.0, st_veto, 10);
+            /* The compactor (0x372B70) releases while (A + B) / total > 0.75 (constant at 0x372B68), with
+             * A = *0x96DDDC, B = *0x96E164, total = *0x96DDE0 (mode word *0x96DDCC: 0 here). */
+            const uint32_t pa = rd32(0x0096DDDCu), pb = rd32(0x0096E164u), pt = rd32(0x0096DDE0u);
+            fprintf(stderr, "[vram-release] %lld s: %u releases, %.1f MB of top mips, %u refused by the guard | "
+                    "pool A %.1f MB + B %.1f MB of %.1f MB = %.3f (releases above 0.750)%c",
+                    (long long)(now - st_t), st_calls, st_bytes / 1048576.0, st_veto,
+                    pa / 1048576.0, pb / 1048576.0, pt / 1048576.0, pt ? (double)((unsigned long long)pa + pb) / pt : 0.0, 10);
             st_t = now; st_calls = st_veto = 0; st_bytes = 0;
         }
     }

@@ -507,6 +507,18 @@ so far came from the menu, the first level and its corridor. The scenes after it
     counts of "4 skips" were capped). So the guard is not what keeps the cache from settling: the title is
     evicting and re-streaming top mips all the time, as if it were short of VRAM. Next: how much VRAM and
     streaming budget the title believes it has in this port, against a console's. Checked: the port reports 256 MB of local memory to the title (a console reports 249 MB), so it is not the reported size. What the title's streaming measures itself against is not known yet.
+  * Found (v2-v4, 2026-11-14). Reporting the console's exact local size changes nothing (38-42 releases per
+    30 s). The title's per-frame compactor (0x372B70) sets a need-memory flag while (A + B) / total > 0.75, with
+    A = `*0x96DDDC`, B = `*0x96E164`, total = `*0x96DDE0` and the 0.75 a constant at 0x372B68; with the flag
+    set it releases every resident texture that is not marked in use (side-entry flags 0x8000 and 0x2000 set,
+    0x4000 clear). In the still view the pool reads A 119.3 MB + B 0 of 130.2 MB = 0.917, constantly, so the
+    flag is always set. A sample of 40 releases: one 640 KB texture is released and streamed back every 13
+    frames or so (27 of the 40, its countdown not expired), another of 1.25 MB every 93 frames; the rest are
+    ordinary expiries. The releases do not lower A: what is freed is streamed back.
+  * Open: whether 119 MB is what this scene holds on a console too (then the churn is the title's own design
+    at this fill and only its cost matters), or whether the port keeps textures marked in use that a console
+    would have let go (then A is inflated and the fix is there). Not decided; the threshold itself is not
+    something to patch.
 * On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
   into the open draw batch, a miss cost 1.96 and 1.93 ms against 2.50 and 2.15 ms, with no change in frame rate
   that the runs resolve. The earlier "did not shorten the stalls" above looked only at draw ends over 40 ms.
