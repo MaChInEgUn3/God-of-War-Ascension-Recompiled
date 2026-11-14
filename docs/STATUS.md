@@ -672,8 +672,16 @@ of the corridor, the corridor is the bench fight.
 * **Causal probes, still view** (a stage slowed by 20% in alternating 1 s windows; fully binding = -16.7%):
   EDGE workloads 15-17 -9.9% +- 1.5% (the same in dip seconds), so EDGE job time binds about 59% of the frame;
   the RSX walker -2.4% +- 1.9% (about 14%); workload 3 about -3% (loaded host). Corridor, EDGE slowed by 50% in
-  5 s windows: -18.5% of a possible -33.3%, about 55% +- 15. The walker is busy 81-83% of the time, so EDGE alone
-  has about a fifth of frame time to give before the walker binds.
+  5 s windows: -18.5% of a possible -33.3%, about 55% +- 15. The walker is busy 81-83% of the time in the still
+  view, so EDGE alone has about a fifth of frame time to give there before the walker binds.
+* **Causal probes, corridor fight** (same method, 1 s windows, the machine in use): EDGE -9.7% +- 1.6%, the
+  walker -8.2% +- 1.8%, with the walker busy 90% of the time. The two are co-limiting in the fight (they are not
+  shares: the spin's own CPU inflates EDGE's figure and 1 s windows understate a buffered stage), so a gain on
+  one side alone is soon capped by the other. A draw end there takes ~18.5 us (about 2,330 per frame): vertex
+  fetch 45-47%, backend 21-22%, textures 14-16%, pipeline 10%, index build 7%. Live split in the fight: the
+  walker's samples are vertex fetch 33%, draw end 13%, vertex remap 12%, FIFO and method dispatch 17%, texture
+  content hash 5%; an EDGE thread's are native stages 44%, runtime 28% (channel path about 10%), EDGE's lifted
+  code 8%, module `1bdd` 5.6%, nothing lifted above 2%; the main thread mostly waits for its jobs.
 * **Where an SPU thread's time goes, live** (host sampler, still view; the four threads that run EDGE are alike):
   native stage code 38%; runtime 25-26% (channel writes 8-9%, dispatch between lifted functions about 8.7%,
   channel reads 2%, coherency 2%); job module `1bdd` of workload 3 13%, two of its lifted functions about 4% each;
@@ -686,9 +694,14 @@ of the corridor, the corridor is the bench fight.
   off) a job's time is native stages 52%, lifted module 28%, runtime 15%, overlays 2.4%, policy-module calls 1.4%:
   JobApi calls are not a lever, and the live split above is the one to size dispatch and channels with.
 * **Tried and dropped**: a shorter idle pause (`GOW_AB=nap`, 200 us on a high-resolution timer against `Sleep(1)`):
-  +1.9% +- 2.4% over all seconds, -2.7% +- 2.4% in normal ones, same time per job run: no gain. A release guard
-  that refuses to release a texture marked wanted within the last 8 frames (`GOW_RELEASE_GUARD=3`, off by default)
-  stops the 640 KB texture's churn of the pool section above without errors, and shows no frame-rate gain.
+  +1.9% +- 2.4% over all seconds, -2.7% +- 2.4% in normal ones, same time per job run: no gain. Asking for a
+  draw's vertex source lines before decoding them (a prefetch over each attribute's range, toggled in 1 s windows
+  in the corridor): +0.2% +- 1.8% on the time per draw end, +0.3% +- 1.7% on frames: no gain, removed. With the
+  SIMD and GPU-decode rewrites of M0.94 that makes three attempts on the fetch that left its cost in place; the
+  explanation given then (cache lines last written on other cores) is not supported by this one. A release
+  guard that refuses to release a texture marked wanted within the last 8 frames (`GOW_RELEASE_GUARD=3`, off by
+  default) stops the 640 KB texture's churn of the pool section above without errors; its effect on the frame
+  rate has not been measured (no like-for-like pair).
 * **Not decided yet**: what the channel-write time is made of (copy or overhead), whether the two `1bdd`
   functions are worth native stages, and the corridor's walker figure by the same method.
 

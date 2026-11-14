@@ -2,9 +2,9 @@
 
 > **Status: research / early bring-up. Not playable.** The game boots, plays its intro movies, shows the main menu
 > with text and music, and runs the first level with the Vulkan backend at about 17-19 frames per second in the
-> corridor fight on a quiet host (about 14-16 with other programs busy; the game is very sensitive to CPU load) on a
+> corridor fight on a quiet host (15-18 with other programs in use; the game is very sensitive to CPU load) on a
 > 6-core CPU with an RTX 3080. The level has been played by hand from the opening to the arena after the corridor;
-> rendering still has visible glitches and one cutscene there does not start after a reload. Where the time
+> rendering still has visible glitches and one cutscene there stops on its first shot after a reload. Where the time
 > goes and what is being worked on is in [docs/STATUS.md](docs/STATUS.md). Generic fixes go upstream to ps3recomp
 > as small PRs. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
