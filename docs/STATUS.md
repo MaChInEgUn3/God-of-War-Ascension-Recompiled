@@ -677,8 +677,12 @@ of the corridor, the corridor is the bench fight.
 * **Causal probes, corridor fight** (same method, 1 s windows, the machine in use): EDGE -9.7% +- 1.6%, the
   walker -8.2% +- 1.8%, with the walker busy 90% of the time. The two are co-limiting in the fight (they are not
   shares: the spin's own CPU inflates EDGE's figure and 1 s windows understate a buffered stage), so a gain on
-  one side alone is soon capped by the other. A draw end there takes ~18.5 us (about 2,330 per frame): vertex
-  fetch 45-47%, backend 21-22%, textures 14-16%, pipeline 10%, index build 7%. Live split in the fight: the
+  one side alone is soon capped by the other. A draw end there takes about 15.4 us without the statistics
+  (about 2,330 per frame): vertex fetch 5.8 us or 38% (the decode itself 3.2 or 21%, remap 1.2, index decode
+  0.9, planning 0.4), backend 3.9, textures 2.7, pipeline 1.8, index build 1.3. (The figure first given here,
+  fetch 45-47% of ~18.5 us, counted 2.7 us per draw of the statistics' own bookkeeping as fetch.) At 0.90 busy
+  and about 19 frames/s the walker is in passes for about 47 ms per frame, so the walker alone caps the fight
+  near 21 frames/s whatever is gained on the EDGE side. Live split in the fight: the
   walker's samples are vertex fetch 33%, draw end 13%, vertex remap 12%, FIFO and method dispatch 17%, texture
   content hash 5%; an EDGE thread's are native stages 44%, runtime 28% (channel path about 10%), EDGE's lifted
   code 8%, module `1bdd` 5.6%, nothing lifted above 2%; the main thread mostly waits for its jobs.
@@ -697,13 +701,55 @@ of the corridor, the corridor is the bench fight.
   +1.9% +- 2.4% over all seconds, -2.7% +- 2.4% in normal ones, same time per job run: no gain. Asking for a
   draw's vertex source lines before decoding them (a prefetch over each attribute's range, toggled in 1 s windows
   in the corridor): +0.2% +- 1.8% on the time per draw end, +0.3% +- 1.7% on frames: no gain, removed. With the
-  SIMD and GPU-decode rewrites of M0.94 that makes three attempts on the fetch that left its cost in place; the
-  explanation given then (cache lines last written on other cores) is not supported by this one. A release
+  SIMD and GPU-decode rewrites of M0.94 that makes three attempts on the fetch that left its cost in place; this
+  one did not confirm the explanation given then (cache lines last written on other cores), and does not rule
+  it out either. A release
   guard that refuses to release a texture marked wanted within the last 8 frames (`GOW_RELEASE_GUARD=3`, off by
   default) stops the 640 KB texture's churn of the pool section above without errors; its effect on the frame
   rate has not been measured (no like-for-like pair).
 * **Not decided yet**: what the channel-write time is made of (copy or overhead), whether the two `1bdd`
   functions are worth native stages, and the corridor's walker figure by the same method.
+
+### The fight's frame by render pass, and its single-triangle draws (2026-11-14, x1a-a1b)
+A pass dump of the corridor fight (`RSX_ENGINE_PASS_DUMP` with `_DRAWS=1`; 170 passes and 6,010 draws, about 2.6
+frames). One frame is about 76 passes and 2,340 draws:
+
+| Passes | Target | Draws per frame | Notes |
+|---|---|---|---|
+| 2 | 1280x720 colour + depth | 427 + 510 = 937 (40%) | the scene's geometry; 75 and 6 pipelines, median 176 and 484 vertices per draw |
+| 6 | 1374x1406 | 1, 1, 3, 34, 91, 305 = 435 (19%) | median ~430 vertices per draw |
+| 6, one after each of the above | 1280x720, colour mask alpha only, blend on, stencil test on, depth test off, samples a texture | 128 x 5 + 132 = 772 (33%) | one pipeline; every draw is ONE triangle of 3 inline vertices (24 bytes), no index |
+| 1 | 640x360 | 76 | |
+| several | small targets | ~45 | 1-23 draws each |
+| ~30 | various | ~30 | single-draw passes |
+| 1 | final | 14 | |
+
+Reading the second and third rows as shadow maps and the resolve of each into a screen-sized mask is my inference
+from the targets and state, not something established; by that reading shadows are 52% of the frame's draws.
+* **The single triangles are identical draws.** In a dumped pass their lines are the same token for token
+  (pipeline, state, textures, viewport, constants); only the vertices differ. Over a 30 s fight window the
+  engine's own count ("merge vs previous draw" of `ENG_PHASE_STATS`) says 76% of ALL draws repeat the previous
+  draw's state, fragment program and vertex program, are lists, and have nothing else between them. The port
+  already lets such a draw reuse the previous draw's resolved targets, textures and constant buffers
+  (`RSX_DRAW_REPEAT=1`, M0.98); it does not join them into one draw.
+* **What they cost** (a statistics line for draw ends with inline vertices; it does not pass through the
+  bookkeeping that inflated the fetch figure above): about 810 per frame, 11.7-12.6 us each in the fight on a
+  machine in use, which is about 9.5 ms of the walker's time per frame there (18% of the draw-end time); 9.2-11 us
+  each in the still view. A bound computed beforehand from the mean per-draw phases (8.4 us) was too low.
+* **What the title sends per triangle**: END, a write of the vertex-program upload pointer (`0x1E9C` = 0), a
+  write of the program start (`0x1EA0` = 0, the value it already has), the vertex program again (`0x0B80`...,
+  the same words as stored, by the engine's "same vertex program" count), BEGIN(triangles), six inline words,
+  END. Whether transform constants are sent in between as well has not been logged yet.
+* **Tried, no gain**: an uploaded program word equal to the stored one no longer moves the engine's state
+  generation (one pair of still-view runs, old against new): 11.03 against 10.76 us per inline draw end, 456
+  against 467 frames per 30 s, inside run-to-run noise. So that marker is not what such a draw costs. Not
+  committed.
+* **Joining them into one draw: written, does not work yet, not published.** A first version holds the END of
+  an inline-only triangle list and drops END/BEGIN when the next method is the same BEGIN. It never fires,
+  because of the three writes above between every two triangles (found one run at a time). Whether a join can
+  be exact given the program upload in between, and where the ~11 us of such a draw go by phase, is the next
+  measurement; the line for going on is at least 5 ms less walker time per frame in the fight with frames not
+  lower and the picture inside the run-to-run noise floor.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -718,7 +764,9 @@ of the corridor, the corridor is the bench fight.
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
 * A second thread for the RSX walker was the plan until the probe showed the walker has slack in the still
-  view. In the corridor scene it carries a bit under half a share, so it comes after the EDGE lists.
+  view. In the corridor fight the walker and the EDGE lists are co-limiting (probes above), and the walker alone
+  caps the fight near 21 frames/s. Before any second thread: the ~810 single-triangle draws per frame (~9.5 ms of
+  walker time; section above).
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)
