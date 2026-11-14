@@ -26,5 +26,5 @@
     "SPURS and EDGE job timing",
     "Performance"
   ],
-  "notes": "Boots, plays the intro, reaches the main menu and runs the first level (about 16-18 game frames/s in the first corridor fight on a 6-core CPU, no hang in 25-minute runs). Nothing past that fight has been run yet; not playable."
+  "notes": "Boots, plays the intro, reaches the main menu and runs the first level (about 17-19 frames/s in the first corridor fight on a 6-core CPU). Played by hand from the opening to the arena after the corridor; rendering still has visible glitches; not playable."
 }
