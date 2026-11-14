@@ -286,6 +286,19 @@ Lessons that cost days; keep them.
   A second line (`batch flushes N: end and submit X ms, next slot Y ms (W waits for a busy slot)`) splits every
   batch flush into ending and submitting the command buffer and taking the next in-flight slot, which waits on
   that slot's fence when the GPU has not finished it.
+  Then up to six lines `image destroys at line L (kind 0xK, WxH): N, X ms waiting for batches in flight`: every
+  destroy of an image object by its calling line in `rsx_vulkan_backend.c` and what was destroyed (kind 1
+  colour, 2 depth, 3 texture, 4 view; `| 0x10` the object held only a view, `| 0x20` nothing; `0x50` a view of a
+  feedback snapshot, `0x90` a view of a target; line 0 kind `0xFFFF` is the rest when the table is full). A
+  destroy waits even when the object holds only a view.
+* **Is waiting for the GPU removed or moved?** The backend sums the time of every fence wait by where it is
+  waited (`g_vk_wait_us[4]`: a synchronous submit, a busy batch slot at a flush, the wait for every batch in
+  flight, the present). The port's `[ab]` line prints the four per window as `w_sync= w_slot= w_idle=
+  w_present=` (ms), and `analysis/abwait.py <log>` reads them per frame, on against off, with standard errors.
+  Judge a change that removes a wait by the sum, not by its own bucket: the idle wait taken out of the view
+  destroys came back at the present (STATUS, 2026-11-14). The `[vk-slow]` lines of `VK_SLOW_MS` are a
+  thresholded sample; their counts do not compare between runs. Batch size is `VK_DRAW_BATCH_MAX` (default
+  128 with `VK_ASYNC`, 512 without).
 * **Repeat draws** (toolkit default off, GoW:A port default on): `RSX_DRAW_REPEAT=1` lets a draw that repeats the
   previous draw's state reuse its resolved targets, textures and constant buffers; `=2` resolves everything as
   before and prints `[draw-repeat-check] repeat differs: ...`. `VK_CB_REUSE=1` reuses the previous draw's uniform

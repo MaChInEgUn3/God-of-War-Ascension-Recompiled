@@ -808,11 +808,13 @@ what the fight's re-uploads are:
   image and uploads it by the 2D path. The same image receives the same texels by the same upload as before.
   Measured in the fight on a machine in use:
   * the re-upload bucket fell from 1,150-1,300 ms to 14-24 ms per 30 s, with no re-upload making a new image;
-  * the net is smaller than that. Over the same span the waits in other image releases grew (lines over
-    2 ms: 274 and 878 ms before, 370 and 2,153 ms after, in about 90 s): the wait for the GPU's backlog is
-    paid by whoever releases an image next. In-run A/B, two runs, 258 one-second windows: frames +4.8% +- 2.9%
-    (+5.6% and +3.9%, each +- 4.0%), which is not resolved; median walker time per frame 53.9 ms on against
-    55.4 off.
+  * fence waits, counted in every wait on the GPU and read per frame in an in-run A/B (g1x, 128 one-second
+    windows): 3.87 ms per frame with it against 5.86 without, -1.99 +- 0.57. Most of that is the new image's
+    own submission (-1.28 +- 0.09); the wait for the batches in flight fell by 0.39 +- 0.15, and neither the
+    wait for a batch slot nor the wait at the present grew.
+  * frames: three in-run A/B runs gave +5.6%, +3.9% and -2.2%, each +- about 4%: not resolved.
+  * withdrawn: a sentence here said the wait "is paid by whoever releases an image next". It rested on log
+    lines of waits over 2 ms compared between runs, which is a thresholded sample, not a total.
   * picture: still-view frame dumps with and without it differ by 14.7-27.7 (mean absolute difference), two
     runs without it by 7.7-32.6: nothing gross, and no sharper than that, since the view is not still and
     dumps are matched by present index.
@@ -821,10 +823,19 @@ what the fight's re-uploads are:
 * **Read from the code, not measured**: on the Vulkan backend there are no 3D textures, and the 2D path
   uploads from the texture's base address with a 2D size, so a volume is sampled as its first slice only.
   What that does to the picture here is not known. It is a correctness item of its own.
-* **What it leaves**: something else releases an image about four times a second and waits the same way
-  (about 2 ms per frame by the lines above), and the driver's submit itself is sometimes slow (66 calls over
-  2 ms in about 90 s, 3.4 s in all, on the loaded machine). Next: count the releases by caller, then release
-  an image when the batch that last used it has completed instead of waiting.
+* **The other wait of every frame, and why it stays** (x2b, g2x). An earlier line here said "an image about
+  four times a second"; counted by caller it is something else. When a draw samples the colour target it is
+  writing, the engine takes a copy for it and releases the previous copy. The copy's image goes back to a pool,
+  but its crossbar view is destroyed, and a destroy waits for every batch in flight: 350-460 such views per
+  30 s, 1.2-1.5 ms of waiting per frame, which is all of the "idle" wait. Queuing those views and destroying
+  them when the backend is idle anyway (written behind a switch, in-run A/B over 126 windows) took that wait
+  to zero (-1.21 +- 0.05 ms per frame) and the wait at the present rose by as much (+1.07 +- 0.20; slot
+  +0.23 +- 0.17): all waits 3.77 against 3.65 ms per frame, +0.12 +- 0.39. The line set beforehand was 1 ms
+  less in total, so it is removed.
+* **What the two results say together.** A submission of its own is work, and removing it removes time. A wait
+  for the GPU to finish what the frame has already submitted is conserved: taken out of one place it returns
+  at the next wait, here the present. All fence waits together are about 3.7 ms of the walker's 50-60 ms per
+  frame on this loaded machine, so the walker's own CPU is where the time is.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -848,7 +859,8 @@ what the fight's re-uploads are:
   view. In the corridor fight the walker and the EDGE lists are co-limiting (probes above), and the walker alone
   caps the fight near 21 frames/s. Before any second thread: the backend's fixed cost per draw (~10 ms per
   frame, about 5 of it batch flushes, a third of that waiting for a slot, which a second thread would not
-  remove), the waits in image releases (section above) and the content hashes (1-2 ms per frame).
+  remove) and the content hashes (1-2 ms per frame). The waits in image releases turned out to be conserved
+  (section above).
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)
