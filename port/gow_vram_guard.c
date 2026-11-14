@@ -38,6 +38,7 @@ static void wr16(uint32_t ea, uint16_t v) { uint8_t* p = vm_base + ea; p[0] = (u
 #define SIDE_TABLE_PTR 0x0096E174u   /* -> 16-byte side entries */
 #define DESC_BASE_PTR  0x0096E178u   /* -> first descriptor */
 
+static struct { uint32_t obj, size, want, frame; uint16_t flags; } s_note[256];
 /* Called on entry to 0x370E48; nonzero = skip the release. */
 int gow_release_veto(uint32_t obj)
 {
@@ -59,6 +60,12 @@ int gow_release_veto(uint32_t obj)
                 const uint32_t d = rd32(obj + 0x44), st = rd32(SIDE_TABLE_PTR), db = rd32(DESC_BASE_PTR);
                 const uint32_t side = (d && st && d >= db) ? st + ((d - db) >> 7) * 16u : 0;
                 uint32_t tb = d ? rd32(d + 0x28) : 0; float timer; memcpy(&timer, &tb, 4);
+                {   const unsigned k = (obj >> 4) & 255u;
+                    if (s_note[k].obj == obj)
+                        fprintf(stderr, "[vram-release-note] obj %08X: its load reported r4 %X against desc+1C %X at frame %u "
+                                "(flags then %04X), now frame %u%c", obj, s_note[k].size, s_note[k].want, s_note[k].frame,
+                                s_note[k].flags, rd32(0x00975888u), 10);
+                    else fprintf(stderr, "[vram-release-note] obj %08X: no load report seen%c", obj, 10); }
                 fprintf(stderr, "[vram-release-sample] obj %08X evictable %X total %X flags12 %04X | desc %08X size %X "
                         "resident %X timer %.3f | side flags %04X stamp %u | g(96DDCC) %u g(96E15C) %08X%c",
                         obj, rd32(obj + 0x1C), rd32(obj + 0x20), rd16(obj + 0x12), d, d ? rd32(d + 0xC) : 0,
@@ -104,4 +111,22 @@ int gow_release_veto(uint32_t obj)
                 "evictable 0x%X (resident 0x%X)\n", obj, desc, rd32(desc + 0xC), rd32(obj + 0x1C),
                 rd32(desc + 0x20));
     return 1;
+}
+
+
+/* Called on entry to 0x370B48 (a load reporting in: r3 = side entry, r4 = bytes loaded, r5 = object). The title
+ * sets the side entry's 0x4000 there when r4 equals the descriptor's +0x1C. With GOW_RELEASE_STATS: the last
+ * report per object is kept, and gow_loaded_last() tells a release what the load had reported. */
+int gow_loaded_note(uint32_t side, uint32_t size, uint32_t obj)
+{
+    static unsigned calls;
+    if (!vm_base || !obj) return 0;
+    const uint32_t d = rd32(obj + 0x44);
+    unsigned k = (obj >> 4) & 255u;
+    s_note[k].obj = obj; s_note[k].size = size; s_note[k].want = d ? rd32(d + 0x1C) : 0;
+    s_note[k].frame = rd32(0x00975888u); s_note[k].flags = side ? rd16(side + 2) : 0;
+    if (getenv("GOW_RELEASE_STATS") && ++calls > 200 && calls <= 230)
+        fprintf(stderr, "[vram-loaded] obj %08X side %08X flags-before %04X r4 %X desc+1C %X desc+20 %X frame %u%c",
+                obj, side, s_note[k].flags, size, s_note[k].want, d ? rd32(d + 0x20) : 0, s_note[k].frame, 10);
+    return 0;
 }
