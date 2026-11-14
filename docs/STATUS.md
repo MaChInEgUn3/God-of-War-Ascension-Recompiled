@@ -305,8 +305,12 @@ scripted corridor scene and the scene the played session's save opens on. Both f
       session of 2026-11-10, on that day's build, with the corridor fought. Two leads, neither tested: (a) the
       cutscene needs the corridor fight to be over, which is one run against one, since the nine scripted
       stops load a save made after that fight and so do not support it; (b) something changed after
-      2026-11-10, since every stop is on a later build. Next: the executable of 2026-11-10 from the same save
-      (it is still on disk), which tells the two apart.
+      2026-11-10, since every stop was on a later build.
+    * **The executable of 2026-11-10 stops too** (c1a, the same save by Continue, the same walk to the trigger):
+      the close shot from the trigger to the end of the run, no later shot, no fight. So the stop after Continue
+      is not a regression. What made the cutscene play once (a session played from New Game with the corridor
+      fought) and not on 2026-11-14 (played from New Game, corridor skipped, a later build) is still open; for
+      that pair lead (a) and a regression on the New Game path both remain.
     * Looked at (g6a, a `PS3_FTRACE` of 90 s around the trigger): file reads go on for about 20 s after the
       trigger and then fall to a trickle, so nothing is stuck reading; no PPU thread that shows in the trace blocks
       for good; the two `snd_stream_parsing_thread`s never return from their wait in those 90 s, before or after
@@ -666,6 +670,10 @@ of the corridor, the corridor is the bench fight.
   17.2, PGO build 18.9. So the source of 11-14 is not slower than that of 11-12 and the PGO build is about 10%
   above the standard one (one pair each). About 20 draw ends over 40 ms per run, the slowest ~80 ms. The still view
   runs at about 20 frames/s.
+  Later the same day, with the machine in use by other programs (p3a-p3d, alternating, first run discarded):
+  PGO build 17.6, standard build 12.9 and 13.8. The PGO build of that morning read controllers through XInput
+  only (its build directory was older than the SDL option, BUILDING.md "Controllers"); it was rebuilt with the
+  SDL backend before this series.
 * **A periodic dip that is not the game's**: on the test machine the frame rate falls by 25-35% for about 10 s
   every 28-34 s, with a stall of 0.3-0.75 s at the start, in both scenes. In a dip the title does the same work
   (the same functions, the same job runs and draws per frame) but each EDGE job run takes 26-34% longer and each
