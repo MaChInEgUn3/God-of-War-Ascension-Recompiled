@@ -259,6 +259,11 @@ Lessons that cost days; keep them.
   bounds changed since the last draw N | repeat path N at U us each, not N at U us each`). The repeat / not
   split is a count, not a cost attribution: shared work such as a texture re-upload lands on whichever draw
   resolves its textures first, and moved with the draws when the split was changed (STATUS, 2026-11-14).
+  A further line, `fetch worker overlap bound: X ms = sum over draws of min(fetch, pipeline + textures)`, sizes
+  the idea of fetching on a second thread: it is the most that such a worker could hide per window (the
+  statistics' own ~3 us inside a non-inline fetch are taken off; the clock is in microseconds).
+  The `cpu:` line is the walker thread's CPU time, which includes what the thread does outside passes: use
+  `rsx_busy` in the `[ab]` line, not this, for how busy the walker is.
 * **What a title sends between draws**: `RSX_DRAW_SEQLOG=<s>[,<bytes>]` logs, from `<s>` seconds after the
   first method, every method and argument from the END of a triangle list whose vertices all came inline to
   the next BEGIN, for three such lists (`[draw-seq] k: 0xMMMM = 0xARG`, 400 lines at most). With `<bytes>` it

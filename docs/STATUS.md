@@ -835,16 +835,21 @@ what the fight's re-uploads are:
 * **What the two results say, each from one in-run A/B in one scene.** In g1x a submission of its own was
   removed and its time went with it. In g2x a wait for the GPU to finish what the frame had already submitted
   was taken out of one place and returned at the next wait, the present. All fence waits together are about
-  3.7 ms per frame there. The walker thread's own CPU time is 23.5-25 s of every 30 s in the fight
-  (`[eng-stats] cpu:`), and ending and submitting batches is 1.0-2.4 s of every 30 s of wall time on top of
-  the waits; the rest of the walker's frame is its own work.
+  3.7 ms per frame there, and ending and submitting batches is 1.0-2.4 s of every 30 s of wall time. (A
+  sentence here read the `[eng-stats] cpu:` line as how busy the walker is. It is not that: the thread also
+  uses CPU outside passes, and in the played log it reads 75-82% in seconds where the walker is in passes
+  51-69% of the time. How busy the walker is comes from `rsx_busy` and the slow-down probes.)
 
 ### The prologue, New Game by script, and the batch size (2026-11-14, n1a-b2x)
-* **The prologue is the corridor's regime.** Read from the played session's own log (standard build, the
+* **The prologue draws about as much as the corridor fight.** Read from the played session's own log (standard build, the
   player at the machine): in the prologue fight the engine ends 2,050-2,475 draws per frame, the walker's
   thread uses 24.9-26.2 s of CPU per 30 s and 20.6-22.7 s of wall time are inside draw ends, at 13.8-16.9
-  frames/s. The corridor bench on the same build and a machine in use gives 12.9-13.8. So the 11-18 frames/s
-  of that session are the standard build under load, not a second problem. (That session ran the standard
+  frames/s. The corridor bench on the same build and a machine in use gives 12.9-13.8, so the 11-18 frames/s
+  of that session are in line with the standard build under load. What limits the prologue was probed on the
+  replay below (q1a, q1b; a stage slowed by 20% in alternating 1 s windows, fully binding = -16.7%): the
+  walker -8.2% +- 4.5% over the windows with 1,800-2,800 draws per frame (-2.9% +- 4.6% over all), the EDGE
+  workloads -1.9% +- 2.6%. So the walker is a limiter there as in the corridor; EDGE is not resolved as one.
+  The two probes ran on two replays that did not land in the same scenes. (That session ran the standard
   build because the PGO build of that morning could not see the controller.) New there and not identified:
   a quarter of the main thread's samples at one call site that the corridor profiles do not show.
 * **New Game can be reached by script.** Replaying the player's pad recording (`PAD_PLAY`, from the save their
@@ -866,6 +871,17 @@ what the fight's re-uploads are:
 * **Those slow submits are the visible part.** Per frame the median time ending and submitting is 2.6 ms and
   the mean 4.3 ms: the difference is single `vkQueueSubmit` calls of 13-51 ms, 36-86 of them per 90-120 s in
   today's runs on a machine in use. Not looked into yet.
+
+* **A fetch worker beside pipeline and textures: closed by its bound.** The walker thread was parked as an idea
+  with one cheap variant: hand a draw's vertex fetch to a worker and do its pipeline and texture work
+  meanwhile. What that can overlap is, per draw, the smaller of the two. Summed over the draws of the fight
+  (o1a, a statistics line, microsecond clock) it is 5.3-5.5 ms per frame, 2.3 us per draw, because most draws
+  repeat the previous draw's state and have little pipeline and texture work to hide a fetch behind. The line
+  set beforehand was 7.4 ms (5 ms net of 1 us of hand-off per draw). What remains of a second thread is the
+  two-stage design, which is a different size of change.
+* **The cutscene by replay: no verdict.** The same recording replayed for 560 s on today's executable and on
+  the one of 2026-11-10 stayed in the first fight both times (the replay drifts; the 400 s runs reached the
+  corridor) and never came to the arena. Nothing can be read from that either way.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
