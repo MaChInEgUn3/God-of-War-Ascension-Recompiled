@@ -29,6 +29,19 @@ Lessons that cost days; keep them.
   `tid`, `r3..r7` and `lr`. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
   so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.
+* **Which functions go with a kind of frame** (needs the `all` lift): `PPU_FRAME_FUNCS=<hex ea of a guest frame
+  counter>` (GoW:A: `975888`) counts the entries of every guest function per value of that counter, all threads.
+  The port marks a frame it wants explained with `ppu_frame_funcs_mark()`. For the first marked frame the
+  tracer prints `[frame-funcs] frame F, ...: only here / only in the other / count changes` against the frame
+  before, and the same for the frame before against its predecessor. After 15 and after 30 marks it prints, for
+  the marked frames and the frames one and two before them, the functions entered in at least 85% of those and
+  in at most 30% of all frames since the first mark (`with it`), and the ones in at most 15% of those and at
+  least 80% of all (`missing there`). A single diff is noise from the other threads; the statistics are what to read.
+* **Who calls through a table of handlers**: `PPU_ICALL_TABLE_LOG=<ea>,<lo>,<hi>` reads the struct pointer at
+  guest address `<ea>` (with `PPU_ICALL_TABLE_DIRECT=1`, `<ea>` is the struct itself), prints the function
+  addresses behind its descriptor slots from offset `<lo>` to `<hi>` once, and then every indirect call that
+  lands on one of them, once per slot and return address: `[icall-table] slot +0xNN -> func 0x.. called with lr
+  0x.. r3 0x..`.
 * **Guest memory probes** (port): `GOW_PEEK=<ea>,<words>[;<ea>,<words>...]` logs every change (20 ms poll; up to 8
   regions of 32 words; in Bash write `GOW_PEEK="a,n;b,m"` so the `;` is not a command separator); `GOW_SCAN=<hex bytes>`
   logs where a byte pattern appears. Both are host threads; times are ms since start.
@@ -662,6 +675,18 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
 * **VRAM-cache release guard** (`port/gow_vram_guard.c`, inserted by `scripts/patch_lift.py`): skips a release of
   `0x370E48` whose descriptor has nothing resident (`desc+0x20 == 0`), marks its side entry not resident and drops it
   from the LRU; logs `[vram-guard]`. On by default, `GOW_RELEASE_GUARD=0` turns it off (a mitigation, see STATUS M0.46d).
+* **What the title's texture pool is doing** (same file; hooks and label hooks in `scripts/patch_lift.py`):
+  `GOW_RELEASE_STATS=<s>` prints every `<s>` seconds `[vram-release] N s: R releases, X MB of top mips, V refused
+  by the guard | pool A + B of total = ratio | probes ... | pending ...` (the compactor at 0x372B70 releases
+  while the ratio is over 0.75; the probes count entries of five guest functions, the last three belong to the
+  level loader and stay flat during play) and `[vram-census]`, the number of side entries carrying each flag.
+  It also follows one texture, the first object released six times once 100 s have passed since the first
+  release: `[vram-spec] frame F at <poll point>: ... side flags X (was Y) ...` on every change of its side flags,
+  descriptor, size or resident bytes, and `[vram-want] frame F site S tid T: want W value V threshold T | ...`
+  for each look 0x3A7B3C takes at it (the value it compares, the threshold, the flags and stamp before, the
+  stored metric). `[vram-loaded]` logs the entries of 0x370B48 (r3, r4 and the word at 0x0096DF44 it works on).
+  `GOW_WANT_MARK=<metric>` marks a frame whose first look at that texture has a metric below the given one, for
+  the runtime's `PPU_FRAME_FUNCS` (below).
 * **Following a pointer field in a trace**: `PPU_TRACE_DUMP=<fn>,<reg>+<off>,<len>,<hops>` starts at
   `gpr[reg]+off` before the hops, e.g. `370E48,4+0x44,30,1` dumps the descriptor the released object points at.
 * **Two runs at once**: `INST=b` in `work/ab_exe.sh` gives the run its own `/dev_hdd1` (`vfs/cache_b`) and save

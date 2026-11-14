@@ -526,19 +526,41 @@ so far came from the menu, the first level and its corridor. The scenes after it
     answering every occlusion query "visible". The title issues about 7,700 type-1 report queries a second,
     all to main memory, but never enables the pixel count and never clears a report: they are the
     synchronisation it uses reports for, not occlusion queries.
-  * **Correction (2026-11-14, n1a): this is a port bug, not the title's design.** The side-entry flag 0x4000 is
-    set in one place only (0x370B48, reached through a pointer, when a load has brought in all of a texture's
-    top mips): it means "load complete". The sampled releases are of textures whose load HAD finished
-    (descriptor +0x20 equal to the evictable size) and whose flag was still clear. With a hook at 0x370B48 the
-    still view shows that function ran fewer than 201 times in the run (the hook's log only starts there, and stayed empty): every one of 40 sampled releases had
-    no load report. So the finished loads of the textures that churn are not flagged, the compactor takes them for unfinished ones while the
-    pool is over its threshold, releases them, and they load again. An earlier version of this entry called
-    that "loads still in progress" and guessed it might be the title's own behaviour; the sample already
-    contradicted it.
-  * Second correction (n3d): an earlier wording here said that function is never called at all. It is: a log of the calls into the title's table of handlers (a static struct at 0x997770, where 0x370B48 sits in three slots) shows it reached from two call sites of a dispatcher around 0x3C9A80. What holds is narrower: it runs rarely, and not for the roughly 1,400 re-loads a run of the textures that churn.
-  * Next: what should call 0x370B48 for those. Its descriptor is at 0x813580 and no lifted function builds that address
-    directly, so it is registered through the TOC; find who registers it, with which interface, and why the
-    port never calls back. A guard variant (g2a) changed nothing and was removed.
+  * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
+    said the port never makes it for the textures that churn, and called the churn a port bug. All three came
+    from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).
+    A guard variant (g2a) changed nothing and was removed. What was measured instead:
+  * 0x370B48 (n4a, n6a): entered 34 times per run, all during level load, with r3 = 0x009976A0 (the level
+    loader's object; its handler table at +0xD0 holds 0x370B48 in three slots). The object it works on is the
+    word at 0x0096DF44, non-zero at all 34 entries: it clears that object's side flag 0x1000 and the word, and
+    when r4 equals the object's descriptor +0x1C it ORs 0x4000 into the 16-bit word at r3 + 2, which in these
+    calls lies in the loader object, not in a side entry.
+  * The level loader is idle during play (n5a): its pending count at 0x009976E0 reads 0 at every 30 s sample,
+    and its completion functions 0x3C9644 and 0x3C8F64 are not entered once the level is up.
+  * Side flags 0x0200 and 0x4000 are written by 0x3A7B3C: one bit, the result of a float comparison, goes into
+    both. A census of the side table at the end of n6a: 867 entries in use; 573 with 0x8000, 102-108 with
+    0x4000, 83-105 with 0x2000, 116 with 0x0200, none with 0x1000.
+  * Following the 640 KB texture (n6a, n7a; `GOW_RELEASE_STATS`, `[vram-spec]` and `[vram-want]` lines): 0x3A7B3C
+    looks at it six times per frame, on one thread. The first look of a frame clears both bits, looks two to
+    five leave them clear, the sixth sets them: its value is 8.08 (8.41 while the top mips are resident)
+    against a threshold of 8.0. The value is a constant minus log2 of a per-user metric; the six users'
+    metrics come out as about 70, 77, 125, 119, 50 and 26, with 0.1% of jitter from frame to frame.
+  * Every 13 to 15 frames (means of 13.3 to 14.5 over four runs at 12.4 to 15.0 frames/s, so 0.96 to 1.07 s;
+    whether it follows time or the frame count is not settled) there is one frame in which those metrics are
+    about 42, 55, 125, 119, 45 and 46: two users as before, three nearer, the nearest one farther. No look
+    passes 8.0, both bits stay clear for that frame, and with the pool over 0.75 the compactor releases the
+    texture in it (flags A400 to 8400). The next frame sets the bits again and the top mips are resident about
+    five frames later. While the texture is not resident the same one-frame drop happens, without a release.
+  * What moves four of the six metrics for one frame is not known. A count of guest function entries per
+    frame (n9a, `PPU_FRAME_FUNCS`; 30 such frames among 389) found no function entered in at least 85% of
+    those frames, or of the frames one or two before them, and in at most 30% of all frames, other than the
+    release itself and 0x36F2E0; and none that is common otherwise and missing there. The run's input is idle
+    in that phase (stick neutral, no buttons before 280 s).
+  * So the still view's churn is this one texture (and a 1.25 MB one at a longer period) losing its two bits
+    for one frame at a time while the pool is over the title's threshold. Nothing measured here shows a port
+    fault and nothing rules one out; whether a console does the same is open. Parked: the miss time it costs
+    is 7-9 s of a 390 s corridor run with `RSX_TEX_REUSE` on. A played session in which something pops about
+    once a second would be the lead to pick it up again.
 * On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
   into the open draw batch, a miss cost 1.96 and 1.93 ms against 2.50 and 2.15 ms, with no change in frame rate
   that the runs resolve. The earlier "did not shorten the stalls" above looked only at draw ends over 40 ms.
