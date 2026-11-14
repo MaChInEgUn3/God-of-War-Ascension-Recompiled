@@ -517,6 +517,13 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   Run it with `SPURS_WWS_LOAD=1`: the default mode's code-buffer reuse fetches only a buffer's tail, so the same
   job would hash differently by what ran before it. "First seen earlier in this frame" says another job had the
   same bytes, not what they are.
+* **Does the same job write the same output a frame later**: capture a little over two frames of consecutive
+  jobs (`SPU_JOB_CAPTURE_N=3600` in GoW:A, about 2 GB) and run `analysis/jobpair.py <capture dir> [min gap] [max
+  gap] [min shared blocks]`. It pairs captures with the same entry, overlay and PUT/GET sizes whose sequence
+  numbers are about one frame apart and that share 256-byte blocks of the start local store held by only 2 to 4
+  captures (a job's own streams; leftovers of earlier jobs make a position-by-position comparison useless), then
+  compares the PUT payloads: identical pairs, share of differing bytes, what the differing words look like, by
+  PUT size.
 * **Function boundary probe** (job lab): `analysis/spu_fnprobe_lift.py <lift.c> <out.c> <fn> [callees...]` wraps
   one lifted function in `spu_fn_probe` (toolkit `runtime/spu/spu_fn_probe.c`) and routes its and the listed
   callees' LS reads. Build it with `LAB_LIFT="<lift dir> <out.c>" sh work/buildlab.sh <dest>` (relative path for

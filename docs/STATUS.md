@@ -626,8 +626,19 @@ its whole code, in the still view (15.2 game frames/s) and the corridor fight (1
 * **Not known**: what the 272-byte block holds (it is new once per frame and most jobs of the frame load it; not
   decoded), what the unseen data is, and above all whether a run's output depends on the blocks that change.
   Equal inputs are necessary for reuse, not sufficient, and these counts do not say which part of the output
-  follows which input. The replay lab can: replay captured jobs with the frame-shared block of another frame
-  and compare what they PUT. That decides whether anything short of a redesign can reuse a run.
+  follows which input; the next item compares outputs.
+* **The output, compared directly** (c1a; `analysis/jobpair.py`): 3,600 consecutive jobs of the still view were
+  captured (`SPU_JOB_CAPTURE`), a little over two frames. Captures with the same entry, overlay and PUT and GET
+  sizes, 1,000 to 2,100 jobs apart, were paired when they shared rare 256-byte blocks of their start local store
+  (blocks that only 2 to 4 captures hold: a job's own streams): 1,284 pairs, sharing 41 such blocks on average.
+  A job PUTs 12.4 KB in 3.3 transfers. In 13 of the 1,284 pairs every PUT is byte-identical. Over all of them
+  20.5% of the PUT bytes differ; half of the differing 4-byte words are floats within 5% of each other. The
+  16384-byte PUTs are never identical (29% of their bytes differ), the 12 KB ones never (16-19%); the PUTs of
+  6432, 6528 and 6624 bytes are identical in every pair. No PUT goes to the same address in both frames.
+* **So**: fed the same streams one frame later, in a view that holds still, a job writes vertex data with
+  slightly different numbers in a fifth to a third of its bytes. Its output follows what changes per frame, and
+  a reuse that skips the run is not available. Keeping the part that does not change would mean splitting what a
+  job computes from what it is given per frame, which is a redesign of this path, not a cache. Parked.
 * Corrections on the way: a first per-buffer figure ("92% seen before") counted buffers seen earlier in the
   same frame as seen; a first set of run classes had the workload id in the buffer key and left the in-job
   GETs out, which made three quarters of the runs look unchanged. Neither was published.
