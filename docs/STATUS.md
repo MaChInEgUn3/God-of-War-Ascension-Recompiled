@@ -501,6 +501,12 @@ so far came from the menu, the first level and its corridor. The scenes after it
   input) there are still 808 misses in the last two minutes, 233 different contents, one of them 83 times. The
   title's own VRAM cache does not settle in this port. That cause is worth more than the fix above, and the same
   save is the one whose cutscene does not start. Not looked at yet.
+  * First count (v1a, `GOW_RELEASE_STATS=30`, a counter at the entry of the title's release function): in the
+    still view the title releases 31-46 objects every 30 s, 20-27 MB of top mips, with nothing moving, and the
+    port's release guard refuses almost none of them (4 in five minutes; its log lines stop after 8, so earlier
+    counts of "4 skips" were capped). So the guard is not what keeps the cache from settling: the title is
+    evicting and re-streaming top mips all the time, as if it were short of VRAM. Next: how much VRAM and
+    streaming budget the title believes it has in this port, against a console's.
 * On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
   into the open draw batch, a miss cost 1.96 and 1.93 ms against 2.50 and 2.15 ms, with no change in frame rate
   that the runs resolve. The earlier "did not shorten the stalls" above looked only at draw ends over 40 ms.

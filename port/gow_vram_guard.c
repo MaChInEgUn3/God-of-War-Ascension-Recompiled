@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 extern uint8_t* vm_base;
 
@@ -45,6 +46,19 @@ int gow_release_veto(uint32_t obj)
      * either the 0x2xxxxxxx or the 0x8xxxxxxx range from run to run (descriptors
      * at 0x2154B4C0 or 0x8154B4C0): a range check here silently disabled the
      * guard in the runs that used the high one. */
+    /* GOW_RELEASE_STATS=<s>: every <s> seconds, how often the title released an object, how many bytes of
+     * top mips those were, and how many releases the guard refused (the log lines above stop after 8). */
+    static int stats = -1; static time_t st_t; static unsigned st_calls, st_veto; static unsigned long long st_bytes;
+    if (stats < 0) { const char* e = getenv("GOW_RELEASE_STATS"); stats = e ? atoi(e) : 0; st_t = time(NULL); }
+    if (stats > 0 && vm_base && obj) {
+        st_calls++; st_bytes += rd32(obj + 0x1C);
+        const time_t now = time(NULL);
+        if (now - st_t >= stats) {
+            fprintf(stderr, "[vram-release] %lld s: %u releases, %.1f MB of top mips, %u refused by the guard%c",
+                    (long long)(now - st_t), st_calls, st_bytes / 1048576.0, st_veto, 10);
+            st_t = now; st_calls = st_veto = 0; st_bytes = 0;
+        }
+    }
     if (!enabled || !vm_base || !obj) return 0;
     uint32_t desc = rd32(obj + 0x44);
     if (!desc) return 0;
@@ -61,6 +75,7 @@ int gow_release_veto(uint32_t obj)
         wr32(side + 8, 0);                                       /* out of the LRU */
     }
     static int n = 0, nu = 0;
+    if (stats > 0) st_veto++;
     if (!underflow || rd32(desc + 0x20) == 0) {
         if (n++ < 8)
             fprintf(stderr, "[vram-guard] release of obj 0x%08X skipped: desc 0x%08X (size 0x%X) has nothing "
