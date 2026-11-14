@@ -526,6 +526,15 @@ so far came from the menu, the first level and its corridor. The scenes after it
     answering every occlusion query "visible". The title issues about 7,700 type-1 report queries a second,
     all to main memory, but never enables the pixel count and never clears a report: they are the
     synchronisation it uses reports for, not occlusion queries.
+  * The side-entry flag 0x4000 is set in one place only (0x370B48, reached through a pointer, when a load has
+    brought in all of a texture's top mips), so it reads as "load complete", not "in use": what the compactor
+    releases under pressure are loads still in progress, and the 640 KB texture above is one that is cancelled
+    and restarted. With a refused release kept in the title's list instead of taken out of it (a variant of
+    the port's guard, g2a) nothing changes; the guard refused nothing in a whole corridor run.
+  * Where this stands: the title asks for about 150 MB of textures in a 130 MB pool in the corridor and leaves
+    some top mips waiting. Nothing found so far says the port inflates that; it may be how the title runs on a
+    console too. The cost on the port's side is mostly gone with the content reuse. Left open, not pursued
+    further for now.
 * On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
   into the open draw batch, a miss cost 1.96 and 1.93 ms against 2.50 and 2.15 ms, with no change in frame rate
   that the runs resolve. The earlier "did not shorten the stalls" above looked only at draw ends over 40 ms.
