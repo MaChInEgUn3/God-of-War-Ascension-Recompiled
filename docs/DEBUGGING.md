@@ -299,6 +299,13 @@ Lessons that cost days; keep them.
   destroys came back at the present (STATUS, 2026-11-14). The `[vk-slow]` lines of `VK_SLOW_MS` are a
   thresholded sample; their counts do not compare between runs. Batch size is `VK_DRAW_BATCH_MAX` (default
   128 with `VK_ASYNC`, 512 without).
+  The `[ab]` line also carries `flushes=` and `fl_ms=` (batch flushes in the window and the ms spent ending and
+  submitting them), and the lever `bmax` changes the draws per batch while the game runs (`GOW_AB_BMAX`,
+  default 256, against the configured size). Read medians beside means: single slow submits dominate a mean.
+* **Reaching New Game without a person**: a played session writes what the pad gave the title
+  (`PAD_RECORD=<file>`, with anchor lines at scene loads). `PAD_PLAY=<file>` replays it; start from the save
+  the recording started with, so the menus are the same. On the default seconds clock the replay drifts by
+  scene (it met 1-2 of 5 anchors here), which is fine for reaching a scene and not for comparing builds.
 * **Repeat draws** (toolkit default off, GoW:A port default on): `RSX_DRAW_REPEAT=1` lets a draw that repeats the
   previous draw's state reuse its resolved targets, textures and constant buffers; `=2` resolves everything as
   before and prints `[draw-repeat-check] repeat differs: ...`. `VK_CB_REUSE=1` reuses the previous draw's uniform

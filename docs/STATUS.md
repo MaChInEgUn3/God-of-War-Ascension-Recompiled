@@ -832,10 +832,40 @@ what the fight's re-uploads are:
   to zero (-1.21 +- 0.05 ms per frame) and the wait at the present rose by as much (+1.07 +- 0.20; slot
   +0.23 +- 0.17): all waits 3.77 against 3.65 ms per frame, +0.12 +- 0.39. The line set beforehand was 1 ms
   less in total, so it is removed.
-* **What the two results say together.** A submission of its own is work, and removing it removes time. A wait
-  for the GPU to finish what the frame has already submitted is conserved: taken out of one place it returns
-  at the next wait, here the present. All fence waits together are about 3.7 ms of the walker's 50-60 ms per
-  frame on this loaded machine, so the walker's own CPU is where the time is.
+* **What the two results say, each from one in-run A/B in one scene.** In g1x a submission of its own was
+  removed and its time went with it. In g2x a wait for the GPU to finish what the frame had already submitted
+  was taken out of one place and returned at the next wait, the present. All fence waits together are about
+  3.7 ms per frame there. The walker thread's own CPU time is 23.5-25 s of every 30 s in the fight
+  (`[eng-stats] cpu:`), and ending and submitting batches is 1.0-2.4 s of every 30 s of wall time on top of
+  the waits; the rest of the walker's frame is its own work.
+
+### The prologue, New Game by script, and the batch size (2026-11-14, n1a-b2x)
+* **The prologue is the corridor's regime.** Read from the played session's own log (standard build, the
+  player at the machine): in the prologue fight the engine ends 2,050-2,475 draws per frame, the walker's
+  thread uses 24.9-26.2 s of CPU per 30 s and 20.6-22.7 s of wall time are inside draw ends, at 13.8-16.9
+  frames/s. The corridor bench on the same build and a machine in use gives 12.9-13.8. So the 11-18 frames/s
+  of that session are the standard build under load, not a second problem. (That session ran the standard
+  build because the PGO build of that morning could not see the controller.) New there and not identified:
+  a quarter of the main thread's samples at one call site that the corridor profiles do not show.
+* **New Game can be reached by script.** Replaying the player's pad recording (`PAD_PLAY`, from the save their
+  session started with) goes through the warning, the logos, the load, the opening shots, the first fight and
+  into the corridor in 400 s, without a person. It is a way to reach those scenes for profiles and captures.
+  It is not a bench between builds: on a seconds clock the replay lands in different scenes from run to run
+  (two runs of one build: 16.2 and 11.0 frames/s over the same window; anchors met: 1 or 2 of 5), and the
+  machine's load changed during the series. PGO against the standard build on this route is therefore not
+  measured (16.9 and 16.4 against 16.2 and 11.0 says nothing); walker CPU per draw end was 22.6 and 23.2 us
+  against 23.3 and 27.8.
+* **Twice the draws per batch: closed.** In-run A/B in the fight, 256 against 128 draws per submission, 124
+  one-second windows. Flushes per frame 11.1 against 20.1; a flush costs about the same either way (median
+  151 against 131 us), so ending and submitting falls by about 1 ms per frame at the median (1.68 against
+  2.64). The line set beforehand was at least 1 ms with the waits not taking it back: the waits did not (slot
+  -1.16, idle +0.52, present +0.60, total -0.03 +- 0.57 ms per frame), but the mean went the other way
+  (15.8 against 4.3 ms per frame, +- 10) because a few submits take tens to hundreds of milliseconds on this
+  machine and they fell in the windows with the larger batches. Frames -0.24 +- 0.53 per window. Not adopted;
+  the lever stays as a diagnostic.
+* **Those slow submits are the visible part.** Per frame the median time ending and submitting is 2.6 ms and
+  the mean 4.3 ms: the difference is single `vkQueueSubmit` calls of 13-51 ms, 36-86 of them per 90-120 s in
+  today's runs on a machine in use. Not looked into yet.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -850,8 +880,9 @@ what the fight's re-uploads are:
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
   fragments are not lifted: the played session of 2026-11-14 ran at 11-18 frames/s there. Up to 3.3 s of SPU
   time per 30 s was interpreted in the slowest window (workloads 7, 8, 12 and the EDGE ones), which explains
-  little of that rate (in the arena, 31 s of interpreted time per 20 s cost 2-5 frames/s): why the prologue is
-  slow is not known yet. That session's pad recording is a route to replay for a profile and the capture.
+  little of that rate. What does is in "The prologue, New Game by script" above: it is the corridor's regime
+  on the standard build. The replay of that session's pad recording reaches it; next there, the fragment
+  capture and a comparison of builds on a quiet machine.
 * The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes (probes above).
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.

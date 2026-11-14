@@ -8339,7 +8339,7 @@ index ad213615..6f123dbe 100644
      const rsx_vertex_remap* remap, u32 occurrence);
  
 diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
-index b22e08f6..c8a1ab9c 100644
+index b22e08f6..5833e916 100644
 --- a/libs/video/rsx_vulkan_backend.c
 +++ b/libs/video/rsx_vulkan_backend.c
 @@ -38,8 +38,6 @@
@@ -9962,7 +9962,7 @@ index b22e08f6..c8a1ab9c 100644
  
  /* Vulkan wants the bounds inside [0, 1] without VK_EXT_depth_range_unrestricted;
   * a NaN clamps to the open end so a garbage register cannot reject a draw. */
-@@ -3296,21 +4204,305 @@ static VkImageView vk_eng_dummy_cube_view(void)
+@@ -3296,21 +4204,322 @@ static VkImageView vk_eng_dummy_cube_view(void)
      return s_eobj[s_e2.dummy_cube].im.view;
  }
  
@@ -10137,8 +10137,17 @@ index b22e08f6..c8a1ab9c 100644
 +}
 +
 +static int vk_eb_active(void) { return s_eb.on == 1; }
-+static u32 vk_eb_max(void) { return s_eb.max_draws; }
-+static void vk_eb_recorded(void) { if (++s_eb_pending >= s_eb.max_draws) vk_eng_flush(); }
++/* A port's in-run A/B: > 0 overrides the draws per submission (VK_DRAW_BATCH_MAX) while the game runs. The
++ * rings and the set pool are sized by constants, and a ring that fills flushes by itself. */
++int g_vk_batch_max = 0;
++/* Batch flushes so far, and the microseconds spent ending and submitting them (not the wait for a slot). */
++unsigned long long g_vk_flush_stat[2];
++static u32 vk_eb_max(void)
++{
++    const u32 n = g_vk_batch_max > 0 ? (u32)g_vk_batch_max : s_eb.max_draws;
++    return n > VK_EB_MAX_SETS ? VK_EB_MAX_SETS : n;
++}
++static void vk_eb_recorded(void) { if (++s_eb_pending >= vk_eb_max()) vk_eng_flush(); }
 +
 +static VkDeviceSize vk_eb_take(VkDeviceSize* head, VkDeviceSize cap, VkDeviceSize bytes, VkDeviceSize align);
 +
@@ -10166,7 +10175,7 @@ index b22e08f6..c8a1ab9c 100644
 +    region->bufferOffset = off;
 +    pvkCmdCopyBufferToImage(s_vk.cmd, s_eb.sb.buf, img, VK_IMAGE_LAYOUT_GENERAL, 1, region);
 +    vk_barrier_image(img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
-+    if (++s_eb_pending >= s_eb.max_draws) vk_eng_flush();
++    if (++s_eb_pending >= vk_eb_max()) vk_eng_flush();
 +    return 0;
 +}
 +
@@ -10178,6 +10187,8 @@ index b22e08f6..c8a1ab9c 100644
 +{
 +    if (!s_eb_pending) return;
 +    const unsigned long long f0 = vk_dp_now();
++    struct timespec fs_;
++    timespec_get(&fs_, TIME_UTC);
 +    vk_pass_end();
 +    s_eb_pending = 0;               /* first: the submit below must not re-enter */
 +    s_eb.slot[s_eb.cur].sets = s_eb.sets;
@@ -10203,6 +10214,12 @@ index b22e08f6..c8a1ab9c 100644
 +                                .commandBufferCount = ncb, .pCommandBuffers = cbs };
 +            if (vk_queue_submit(&si, s_vk.fence) == VK_SUCCESS) s_eb.slot[s_eb.cur].busy = 1;
 +            else VK_LOG("draw batching: vkQueueSubmit failed\n");
++        }
++        {   struct timespec fe_;
++            timespec_get(&fe_, TIME_UTC);
++            const long long us_ = (long long)(fe_.tv_sec - fs_.tv_sec) * 1000000ll + (fe_.tv_nsec - fs_.tv_nsec) / 1000ll;
++            g_vk_flush_stat[0]++;
++            if (us_ > 0) g_vk_flush_stat[1] += (unsigned long long)us_;
 +        }
 +        const unsigned long long f1 = f0 ? vk_dp_now() : 0;
 +        vk_eb_use_slot((s_eb.cur + 1u) % VK_EB_SLOTS);
@@ -10271,7 +10288,7 @@ index b22e08f6..c8a1ab9c 100644
      for (u32 u = 0; u < RSX_MAX_TEXTURES; u++) {
          const int cube = (P->cube_mask >> u) & 1u;
          VkImageView v = ((s_e2.tex_mask >> u) & 1u) ? vk_eng_sample_view(s_e2.tex[u], cube)
-@@ -3325,10 +4517,10 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
+@@ -3325,10 +4534,10 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
      u32 n = 0;
      w[n++] = (VkWriteDescriptorSet){ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set,
            .dstBinding = RSX_SPIRV_VPCONST_BINDING, .descriptorCount = 1,
@@ -10284,7 +10301,7 @@ index b22e08f6..c8a1ab9c 100644
      w[n++] = (VkWriteDescriptorSet){ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set,
            .dstBinding = RSX_SPIRV_SAMPLER_BINDING, .descriptorCount = RSX_MAX_TEXTURES,
            .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER, .pImageInfo = si };
-@@ -3342,64 +4534,428 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
+@@ -3342,64 +4551,428 @@ static VkDescriptorSet vk_eng_write_descriptors(const vk_eng_pipe* P)
                .dstBinding = RSX_SPIRV_TEXTURE_BINDING, .descriptorCount = RSX_MAX_TEXTURES,
                .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .pImageInfo = ii };
      }
@@ -10743,7 +10760,7 @@ index b22e08f6..c8a1ab9c 100644
      VkViewport vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
      if (s_e2.have_vp && s_e2.vp[2] > 0.0f && s_e2.vp[3] > 0.0f) {
          vp.x = s_e2.vp[0]; vp.y = s_e2.vp[1]; vp.width = s_e2.vp[2]; vp.height = s_e2.vp[3];
-@@ -3413,24 +4969,75 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
+@@ -3413,24 +4986,75 @@ static void vk_eng_draw(void* user, rsx_topology topology, const void* vertices,
          sc.offset.x = (int32_t)x0; sc.offset.y = (int32_t)y0;
          sc.extent.width = x1 > x0 ? x1 - x0 : 0; sc.extent.height = y1 > y0 ? y1 - y0 : 0;
      }
@@ -10784,7 +10801,7 @@ index b22e08f6..c8a1ab9c 100644
 +        vk_submit_and_wait();
 +    } else {
 +        s_eb.draws++;
-+        if (++s_eb_pending >= s_eb.max_draws) vk_eng_flush();
++        if (++s_eb_pending >= vk_eb_max()) vk_eng_flush();
 +    }
 +    if (dp[0]) { dp[5] = vk_dp_now(); vk_dp_end(dp); }
 +    if (job && check) {
@@ -10830,7 +10847,7 @@ index b22e08f6..c8a1ab9c 100644
  }
  
  static const rsx_draw_backend s_vk_engine_backend = {
-@@ -3448,6 +5055,7 @@ static const rsx_draw_backend s_vk_engine_backend = {
+@@ -3448,6 +5072,7 @@ static const rsx_draw_backend s_vk_engine_backend = {
      .depth_target_release = vk_eng_release,
      .depth_snapshot       = vk_eng_depth_snapshot,
      .color_snapshot       = vk_eng_color_snapshot,
@@ -10838,7 +10855,7 @@ index b22e08f6..c8a1ab9c 100644
      .pipeline_create      = vk_eng_pipeline_create,
      .pipeline_release     = vk_eng_pipeline_release,
      .bind_targets         = vk_eng_bind_targets,
-@@ -3460,13 +5068,22 @@ static const rsx_draw_backend s_vk_engine_backend = {
+@@ -3460,13 +5085,22 @@ static const rsx_draw_backend s_vk_engine_backend = {
      .set_scissor          = vk_eng_set_scissor,
      .set_stencil_ref      = vk_eng_set_stencil_ref,
      .set_depth_bounds     = vk_eng_set_depth_bounds,
@@ -10861,7 +10878,7 @@ index b22e08f6..c8a1ab9c 100644
  };
  
  static rsx_backend s_vulkan_backend = {
-@@ -3685,6 +5302,18 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3685,6 +5319,18 @@ void rsx_vulkan_backend_shutdown(void)
          vk_destroy_image(&s_vk.color);
          vk_destroy_buffer(&s_vk.vertices);
          vk_destroy_buffer(&s_vk.readback);
@@ -10880,7 +10897,7 @@ index b22e08f6..c8a1ab9c 100644
          if (s_vk.fence) pvkDestroyFence(s_vk.device, s_vk.fence, NULL);
          if (s_vk.pool)  pvkDestroyCommandPool(s_vk.device, s_vk.pool, NULL);
          if (s_vk.present_fence) pvkDestroyFence(s_vk.device, s_vk.present_fence, NULL);
-@@ -3693,7 +5322,7 @@ void rsx_vulkan_backend_shutdown(void)
+@@ -3693,7 +5339,7 @@ void rsx_vulkan_backend_shutdown(void)
          pvkDestroyDevice(s_vk.device, NULL);
      }
      if (s_vk.instance && pvkDestroyInstance) pvkDestroyInstance(s_vk.instance, NULL);
@@ -10889,7 +10906,7 @@ index b22e08f6..c8a1ab9c 100644
      free(s_vk.cpu_verts);
      pthread_mutex_destroy(&s_vk.queue_mu);
      pthread_mutex_destroy(&s_vk.present_mu);
-@@ -3757,5 +5386,3 @@ int rsx_vulkan_backend_depth_bounds(void)
+@@ -3757,5 +5403,3 @@ int rsx_vulkan_backend_depth_bounds(void)
  {
      return s_vk.eng_active && s_vk.depth_bounds_ok;
  }

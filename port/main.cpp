@@ -314,6 +314,8 @@ extern "C" int ppu_spin_pause, g_spurs_nap_us, g_spurs_lane_ovr[32];
 extern "C" int g_spu_slow_pct;
 extern "C" int g_rsx_slow_pct, g_gcm_main_slow_us;
 extern "C" unsigned long long g_vk_wait_us[4];   /* toolkit libs/video/rsx_vulkan_backend.c: fence waits */
+extern "C" int g_vk_batch_max;   /* toolkit libs/video/rsx_vulkan_backend.c: draws per submission, in-run */
+extern "C" unsigned long long g_vk_flush_stat[2];   /* batch flushes, us ending and submitting them */
 extern "C" int g_eng_volume_inplace;   /* toolkit libs/video/rsx_draw_engine.c */
 extern "C" void spu_ibc_set_size(unsigned n);
 static int s_idle_wait = -1;   /* GOW_IDLE_WAIT */
@@ -347,6 +349,7 @@ static void ab_set(const char* lever, int on)
     else if (!strcmp(lever, "slow")) { const char* e = getenv("GOW_AB_SLOW"); g_spu_slow_pct = on ? (e ? atoi(e) : 20) : 0; }   /* the wids from SPU_SLOW_WIDS */
     else if (!strcmp(lever, "idle")) { const char* e = getenv("GOW_AB_IDLE"); s_idle_wait = on ? (e ? atoi(e) : 2) : 0; }
     else if (!strcmp(lever, "parkcap")) s_park_cap = on;
+    else if (!strcmp(lever, "bmax")) { const char* e = getenv("GOW_AB_BMAX"); g_vk_batch_max = on ? (e ? atoi(e) : 256) : 0; }   /* draws per batch */
     else if (!strcmp(lever, "vol")) g_eng_volume_inplace = on;   /* RSX_VOLUME_INPLACE: a changed volume is rewritten in place */
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
@@ -386,19 +389,21 @@ static DWORD WINAPI ab_gate(LPVOID arg)
         const long long gt0 = g_gcm_ab_ticks, gd0 = g_gcm_ab_draws, gp0 = g_gcm_ab_passes, gw0 = g_gcm_ab_words;
         unsigned long long vw0[4];
         for (int k = 0; k < 4; k++) vw0[k] = g_vk_wait_us[k];
+        const unsigned long long fl0 = g_vk_flush_stat[0], flu0 = g_vk_flush_stat[1];
         Sleep(a.window_ms);
         const unsigned f1 = ab_frame();
         const long long gt = g_gcm_ab_ticks - gt0, gd = g_gcm_ab_draws - gd0;
         QueryPerformanceCounter(&t1);
         const long long runs = g_spurs_ab_runs - rn0;
-        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f passes=%lld words=%lld w_sync=%.1f w_slot=%.1f w_idle=%.1f w_present=%.1f\n",
+        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f passes=%lld words=%lld w_sync=%.1f w_slot=%.1f w_idle=%.1f w_present=%.1f flushes=%llu fl_ms=%.1f\n",
                 a.lever, w, on, f1 - f0, (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart, runs,
                 g_spurs_ab_native - nt0,
                 runs ? 1e6 * (double)(g_spurs_ab_ticks - tk0) / (double)f.QuadPart / (double)runs : 0.0,
                 gd, gd ? 1e6 * (double)gt / (double)f.QuadPart / (double)gd : 0.0,
                 (double)gt / (double)(t1.QuadPart - t0.QuadPart), g_gcm_ab_passes - gp0, g_gcm_ab_words - gw0,
                 (g_vk_wait_us[0] - vw0[0]) / 1000.0, (g_vk_wait_us[1] - vw0[1]) / 1000.0,
-                (g_vk_wait_us[2] - vw0[2]) / 1000.0, (g_vk_wait_us[3] - vw0[3]) / 1000.0);   /* ms of fence waits */
+                (g_vk_wait_us[2] - vw0[2]) / 1000.0, (g_vk_wait_us[3] - vw0[3]) / 1000.0,   /* ms of fence waits */
+                g_vk_flush_stat[0] - fl0, (g_vk_flush_stat[1] - flu0) / 1000.0);   /* batch flushes, ms ending + submitting */
         fflush(stderr);
     }
     return 0;
