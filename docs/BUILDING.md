@@ -83,6 +83,23 @@ against `https://api.anaconda.org/package/conda-forge/<name>/files`.
 4. Run with `PS3RECOMP_VK_GUEST_PROGRAMS=1`. `PS3RECOMP_VK_DUMP=<file.ppm>` with `PS3RECOMP_VK_DUMP_EVERY=<n>`
    writes every n-th presented frame to that file.
 
+## Controllers
+
+Which host controllers the game sees is decided when the build is configured:
+
+* `-DPS3RECOMP_PAD_SDL2=ON` (what `scripts\cfg.bat` and `scripts\pgo.bat` pass): SDL2 game controllers. A DualSense
+  over Bluetooth works this way (played sessions of 2026-11-10 and 2026-11-14).
+* Without it the runtime reads XInput only. A DualSense or DualShock is not an XInput device, so in such a build
+  the pad does nothing and nothing in the log says so.
+
+A build directory keeps the options it was first configured with. One made before the option was on the command
+line stays on XInput however often it is rebuilt (this cost two played sessions on 2026-11-14: the PGO directory
+was older than the option). To check a build: `PS3RECOMP_PAD_SDL2:BOOL=ON` in its `CMakeCache.txt`, or the string
+`SDL_GameControllerOpen` inside `MyGameRecomp.exe`. To fix one: run the configure step again with the option.
+
+`PAD_RECORD=<file>` writes what the title is given on port 0 (time, buttons, sticks), which is also the quickest
+way to see whether a controller reaches the game at all.
+
 ## Optional: profile-guided build (PGO)
 
 A last build step that lets the compiler lay out and inline the lifted PPU, the lifted SPU and the runtime from a

@@ -299,6 +299,12 @@ scripted corridor scene and the scene the played session's save opens on. Both f
     framings cycle, the stick and the attack buttons do nothing, START still opens and closes the items menu, no
     other button has an effect. In the played session, reached by playing rather than by Continue, the same
     cutscene ran about 40 s through its other shots and the fight began.
+    * **It is not only Continue (2026-11-14, a played session from New Game).** The player ran through the
+      corridor without fighting, reached the arena entrance, and the cutscene stopped on the same first shot
+      (5 minutes, 24-27 frames/s, no error line). So it has now stopped in 10 runs and run in one, and the one
+      is the only run in which the corridor's enemies were fought. That the cutscene needs the corridor fight
+      to be over is a lead from that count, not a finding; the scripted runs also walk to the trigger without
+      finishing the fight. Next: fight the corridor out from the bench save by script, then walk to the trigger.
     * Looked at (g6a, a `PS3_FTRACE` of 90 s around the trigger): file reads go on for about 20 s after the
       trigger and then fall to a trickle, so nothing is stuck reading; no PPU thread that shows in the trace blocks
       for good; the two `snd_stream_parsing_thread`s never return from their wait in those 90 s, before or after
@@ -759,7 +765,12 @@ from the targets and state, not something established; by that reading shadows a
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
-* The cutscene at the arena entrance that does not start after Continue (above).
+* The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
+  New Game when the corridor fight is skipped (above).
+* New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
+  fragments are not lifted: the played session of 2026-11-14 ran at 11-18 frames/s there, with up to 3.3 s of
+  interpreted SPU time per 30 s in the slowest window (workloads 7, 8, 12 and the EDGE ones). That session's pad
+  recording is a route to replay for the fragment capture.
 * The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes (probes above).
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
