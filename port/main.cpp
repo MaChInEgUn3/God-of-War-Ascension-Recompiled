@@ -313,6 +313,7 @@ extern "C" int g_gcm_ab_on, g_gcm_fast_args;
 extern "C" int ppu_spin_pause, g_spurs_nap_us, g_spurs_lane_ovr[32];
 extern "C" int g_spu_slow_pct;
 extern "C" int g_rsx_slow_pct, g_gcm_main_slow_us;
+extern "C" int g_eng_volume_inplace;   /* toolkit libs/video/rsx_draw_engine.c */
 extern "C" void spu_ibc_set_size(unsigned n);
 static int s_idle_wait = -1;   /* GOW_IDLE_WAIT */
 static int s_park_cap = -1;    /* GCM_PARK_TICK_CAP */
@@ -345,6 +346,7 @@ static void ab_set(const char* lever, int on)
     else if (!strcmp(lever, "slow")) { const char* e = getenv("GOW_AB_SLOW"); g_spu_slow_pct = on ? (e ? atoi(e) : 20) : 0; }   /* the wids from SPU_SLOW_WIDS */
     else if (!strcmp(lever, "idle")) { const char* e = getenv("GOW_AB_IDLE"); s_idle_wait = on ? (e ? atoi(e) : 2) : 0; }
     else if (!strcmp(lever, "parkcap")) s_park_cap = on;
+    else if (!strcmp(lever, "vol")) g_eng_volume_inplace = on;   /* RSX_VOLUME_INPLACE: a changed volume is rewritten in place */
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
     else if (!strcmp(lever, "wwsload")) g_spurs_wws_load = on ? 2 : 0;

@@ -792,6 +792,40 @@ from the targets and state, not something established; by that reading shadows a
   290-390 calls and 760-1,320 ms (about one per frame at about 3.3 ms) and full content hashes 7,500-8,800
   calls, 470-630 ms and 4.2 GB hashed. Both are the pool of the texture-cache section above, not a new one.
 
+### The texture re-uploaded every frame is a small volume (2026-11-14, t1a-s1e)
+A line per texture in `[eng-stats]` (re-uploads and full hashes by address and size, per 30 s window) names
+what the fight's re-uploads are:
+* **All of them are one thing**: a 64x32x16 volume of 16-bit float RGBA that the title rewrites every frame,
+  in three buffers used in rotation (three addresses 256 KB apart, 85-136 re-uploads each per 30 s, none of
+  them after a store by the engine). About 19 draws of the main geometry pass sample it. What it holds is not
+  known.
+* **Each re-upload made a new image.** A changed 2D texture is rewritten in place, with the copy recorded in
+  the open draw batch. A texture with depth above 1 was excluded from that, so it got a new image (its own
+  submission) and its old one was released, and a release waits for every batch in flight. About 3 ms each,
+  for 16 KB of texels.
+* **Now rewritten in place** (`RSX_VOLUME_INPLACE`, on by default, `=0` restores the old path; in-run lever
+  `GOW_AB=vol`), on a backend without 3D textures, where the engine keeps such a texture as an ordinary 2D
+  image and uploads it by the 2D path. The same image receives the same texels by the same upload as before.
+  Measured in the fight on a machine in use:
+  * the re-upload bucket fell from 1,150-1,300 ms to 14-24 ms per 30 s, with no re-upload making a new image;
+  * the net is smaller than that. Over the same span the waits in other image releases grew (lines over
+    2 ms: 274 and 878 ms before, 370 and 2,153 ms after, in about 90 s): the wait for the GPU's backlog is
+    paid by whoever releases an image next. In-run A/B, two runs, 258 one-second windows: frames +4.8% +- 2.9%
+    (+5.6% and +3.9%, each +- 4.0%), which is not resolved; median walker time per frame 53.9 ms on against
+    55.4 off.
+  * picture: still-view frame dumps with and without it differ by 14.7-27.7 (mean absolute difference), two
+    runs without it by 7.7-32.6: nothing gross, and no sharper than that, since the view is not still and
+    dumps are matched by present index.
+  * not verified: any other title or scene; the engine's unit test (its mock backend has no ordered uploads,
+    so it does not reach this path, and it was not run).
+* **Read from the code, not measured**: on the Vulkan backend there are no 3D textures, and the 2D path
+  uploads from the texture's base address with a 2D size, so a volume is sampled as its first slice only.
+  What that does to the picture here is not known. It is a correctness item of its own.
+* **What it leaves**: something else releases an image about four times a second and waits the same way
+  (about 2 ms per frame by the lines above), and the driver's submit itself is sometimes slow (66 calls over
+  2 ms in about 90 s, 3.4 s in all, on the loaded machine). Next: count the releases by caller, then release
+  an image when the batch that last used it has completed instead of waiting.
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)
@@ -814,7 +848,7 @@ from the targets and state, not something established; by that reading shadows a
   view. In the corridor fight the walker and the EDGE lists are co-limiting (probes above), and the walker alone
   caps the fight near 21 frames/s. Before any second thread: the backend's fixed cost per draw (~10 ms per
   frame, about 5 of it batch flushes, a third of that waiting for a slot, which a second thread would not
-  remove) and the texture re-uploads and content hashes (4-5 ms per frame).
+  remove), the waits in image releases (section above) and the content hashes (1-2 ms per frame).
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)
