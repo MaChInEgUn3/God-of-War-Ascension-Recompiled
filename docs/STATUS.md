@@ -491,6 +491,12 @@ so far came from the menu, the first level and its corridor. The scenes after it
   a given present for the comparison to be sharp, so this says "nothing gross", not "identical"). The engine's
   unit test was not run with it. Scenes no script reaches (the arena) have not been seen with it. Not built: the same lookup where an address's content has changed (about 4,000 re-uploads and 8-9 s a
   run, now as large as what is left of the miss bucket).
+  * Counted since (c1a, a line `texture re-uploads:` in `[eng-stats]`): of 2,993 re-uploads in a corridor run,
+    238 (8%) brought content another cached texture held. A changed address mostly gets content the cache has
+    not seen, so that lookup is not worth building.
+  * The batched texture create, measured again with the reuse on (b1): time in the miss bucket 6.6 s with the
+    create as its own submission against 7.4 s and 9.6 s batched (the fourth run was cut short). No gain shown;
+    it stays off.
 * Open: why the title re-places textures at all. With nothing moving (the still view at the corridor's end, no
   input) there are still 808 misses in the last two minutes, 233 different contents, one of them 83 times. The
   title's own VRAM cache does not settle in this port. That cause is worth more than the fix above, and the same
