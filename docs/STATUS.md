@@ -598,6 +598,42 @@ so far came from the menu, the first level and its corridor. The scenes after it
 * What is left is spread: the native stages are already 8-wide with a checked fast path, and no runtime item
   is above 5%. In this scene the next percent comes from several small things, not one.
 
+## Do EDGE job runs read the same data from frame to frame? (2026-11-14, h1a-h6c)
+The question before building anything that keeps a job's result: how often does a run get the input an earlier
+run had. Counted with `SPU_JOB_HASH` (DEBUGGING.md) on a lab build, with `SPURS_WWS_LOAD=1` so every run fetches
+its whole code, in the still view (15.2 game frames/s) and the corridor fight (12.6 frames/s with the counter on).
+* **How many**: workloads 15, 16 and 17 run about 1,540 jobs per frame in the still view and 1,560 in the
+  corridor, in equal thirds. All workloads together: about 2,500 runs per frame.
+* **A whole run's input**: equal to that of a run in one of the 8 frames before in 0.1-0.2% of the runs, in
+  both scenes, and never equal to one of the same frame. So a memo keyed on everything a run reads is ruled out.
+* **Why**: every run loads a 176-byte buffer that is new in 98% of the runs. Compared word by word for the
+  runs whose other buffers came back (h3a, about 1,700 pairs per 30 s), it differs in six 4-byte words, all of
+  them guest addresses: a per-run descriptor whose pointers move every frame.
+* **GET by GET** (corridor, h6b; in-job GETs included; the same on all three workloads): 18.9 GETs and 63.9 KB
+  per run, of which 57.2 KB in GETs of 4096 bytes or more (code chunks mostly), so about 6.7 KB of data. Seen in
+  one of the 8 frames before: 81% of the GETs, 98.3% of the bytes. First seen earlier in the same frame (another
+  job loaded the same bytes): 10.4%, 1.0% of the bytes. Not seen: 8.6%, 0.6% of the bytes. About 48% of the runs
+  fetch data themselves after their entry (1.16 GETs per run over all runs, some 350 bytes): of those GETs 24%
+  were seen before, 44% earlier in the frame, 31% not at all.
+* **Run by run**, the 176-byte descriptor apart (h6b): nothing new 1.2%; only a 272-byte block shared within
+  the frame 12.8%; other buffers shared within the frame too 33.4%; data not seen before 52.4%, about 470 bytes
+  of it per such run, most of it 16-byte reads made inside the job. By size (count / shared within the frame /
+  not seen per 30 s on one workload): 272: 203k / 182k / 1.4k; 16: 550k / 83k / 67k; 64: 243k / 14k / 7k;
+  48: 116k / 20k / 2k; 192: 133k / 3.5k / 3.8k; 832 and 736: about a third to a half shared; the code chunks
+  and the sizes 2368, 1552, 1248, 2144, 960, 336, 160, 80 and 32 were always seen before.
+* **In the default load mode** (h6c) a run moves 16.4 KB instead of 63.6 KB (16.7 KB with its in-job GETs, 9.3 KB
+  of it in GETs of 4096 or more): the code-buffer reuse already skips most of the code.
+* **Not known**: what the 272-byte block holds (it is new once per frame and most jobs of the frame load it; not
+  decoded), what the unseen data is, and above all whether a run's output depends on the blocks that change.
+  Equal inputs are necessary for reuse, not sufficient, and these counts do not say which part of the output
+  follows which input. The replay lab can: replay captured jobs with the frame-shared block of another frame
+  and compare what they PUT. That decides whether anything short of a redesign can reuse a run.
+* Corrections on the way: a first per-buffer figure ("92% seen before") counted buffers seen earlier in the
+  same frame as seen; a first set of run classes had the workload id in the buffer key and left the in-job
+  GETs out, which made three quarters of the runs look unchanged. Neither was published.
+* For the texture-pool section above: the frames in which that texture loses its two bits do not differ from
+  their neighbours in these counts (runs, GETs, GETs not seen).
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)

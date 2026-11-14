@@ -14725,7 +14725,7 @@ index 2cd75e07..627376d5 100644
  BOOL CloseHandle(HANDLE) { std::abort(); }
  DWORD GetFileAttributesA(const char*) { std::abort(); }
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
-index 59f5e4b8..92e17d8c 100644
+index 59f5e4b8..ba5ff1da 100644
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
 @@ -1,76 +1,124 @@
@@ -14921,7 +14921,7 @@ index 59f5e4b8..92e17d8c 100644
  /* spu_workload.c: wakes tasks parked in WAIT_SIGNAL on that line's taskset. */
  void spu_taskset_line_committed(uint32_t line);
  /* SPU_LS_WATCH=0x1BE80[,0x927D80...]: watch up to 4 16-byte LS lines (reads
-@@ -109,2736 +157,4585 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
+@@ -109,2736 +157,4902 @@ void spu_ls_watch_slow(uint32_t lsa, int is_write, const uint8_t* p, uint32_t pc
      }
  }
  
@@ -16309,6 +16309,322 @@ index 59f5e4b8..92e17d8c 100644
 + * compare-and-swap under one global lock across all SPU host threads.
 + * ===========================================================================*/
 +extern uint8_t* vm_base;
++
++/* ---------------------------------------------------------------------------
++ * SPU_JOB_HASH=<s> (lab builds, PS3RECOMP_SPU_JOBLAB): do a workload's job runs
++ * read the same data from one frame to the next?
++ *
++ * For every policy-module run that enters a job, three hashes of what the run
++ * GETs from main memory, sizes and bytes in order, addresses left out:
++ *   buffers  GETs before the job's entry that land at LS 0x4000 or above (the
++ *            job's code and the data its load commands name),
++ *   control  GETs before the entry that land below 0x4000 (the module's own
++ *            records and command block),
++ *   in-job   GETs after the entry (data the job fetches itself).
++ * A run is a repeat when a run of the same workload had the same hash in one of
++ * the 8 frames before this one (SPU_JOB_HASH_FRAME=<hex ea of a guest frame
++ * counter>, required); a run that matches one of the same frame is counted
++ * apart. Every <s> seconds, per workload: runs, the share that repeats on the
++ * buffers alone, on buffers and in-job GETs, and with the control data too, and
++ * how many runs fetch data themselves; then the buffer GETs taken one by one:
++ * seen in one of the 8 frames before, first seen earlier in this frame (a
++ * block the jobs of a frame share), or not seen, the in-job GETs included and
++ * with no workload id in the key; the runs by what is new in them, the
++ * descriptor buffer apart (SPU_JOB_HASH_DESC=<size>[,<size of one frame-shared
++ * block>]): nothing, only that block, other frame-shared buffers, or data not
++ * seen before; the same by buffer size; then the runs per overlay. With
++ * SPU_JOB_HASH_FRAMES=<n>[,<t0 s>] also one line per frame for n frames from t0
++ * seconds after the first job: runs, and runs not seen in the last 8 frames.
++ * Run it with SPURS_WWS_LOAD=1: the code-buffer reuse of mode 2 fetches only a
++ * buffer's tail, so the same job would hash differently by what ran before it.
++ * -------------------------------------------------------------------------*/
++int g_spu_jobhash_on_v = -1;       /* -1 env not read yet, 0 off, 1 on */
++typedef struct {
++    uint64_t h_buf, h_ctl, h_job;
++    uint32_t bytes_buf, bytes_job, n_job;
++    int phase;                     /* 0 outside a run, 1 before the job's entry, 2 in the job */
++    int ovl;
++    unsigned nb;                   /* the buffer GETs one by one: hash and size of each */
++    struct { uint64_t h; uint32_t size; uint32_t injob; } b[64];
++    unsigned nblk;                 /* SPU_JOB_HASH_DIFF: buffers of the chosen size in this run, the first kept */
++    uint8_t blk[256];
++} spu_jobhash_tls;
++/* SPU_JOB_HASH_DIFF=<size>: the buffer of this size is taken out of a run's identity (the hashes of its other
++ * buffers; a second size after a comma is left out of the identity too), kept per identity, and compared word by word when the identity comes back 1-8 frames later: which
++ * 4-byte words of that buffer change from frame to frame for what is otherwise the same job. */
++typedef struct { uint64_t key; uint32_t frame; uint32_t used; uint8_t blk[256]; } spu_jobhash_dslot;
++#define JH_DSLOTS (1u << 16)
++static struct {
++    uint32_t size, size2;          /* size2: a second size left out of the identity (SPU_JOB_HASH_DIFF=<size>,<size2>) */
++    spu_jobhash_dslot* tab;
++    unsigned long long pairs, identical, dup, multi, wdiff[64];
++    unsigned examples;
++} s_jd;
++static SPU_THREAD_LOCAL spu_jobhash_tls t_jh;
++typedef struct { uint64_t key; uint32_t frame; uint32_t used; uint32_t prev; uint32_t has_prev; } spu_jobhash_slot;
++#define JH_SLOTS (1u << 21)
++typedef struct {
++    unsigned long long runs, rep[3], same[3], d1, d2, bytes_buf, bytes_job, with_job;
++    unsigned long long gets, gets_rep, gbytes, gbytes_rep;      /* buffer GETs one by one */
++    unsigned long long gets_shared, gbytes_shared;              /* first seen in this frame, by an earlier job */
++    unsigned long long run_static, run_ctx, run_shared, run_dyn, dyn_bytes; /* runs by what is new in them, the descriptor apart */
++    unsigned long long gbytes_big;                              /* bytes in GETs of 4096 bytes or more (code chunks mostly) */
++    unsigned long long ij_gets, ij_rep, ij_shared;              /* the in-job GETs among them */
++    struct { uint32_t size; unsigned long long n, n_new, n_shared; } sz[64];   /* by size */
++} spu_jobhash_stat;
++static struct {
++    char lock;
++    spu_jobhash_slot* tab;
++    uint32_t frame_ea, frame, period, desc_size, ctx_size;
++    time_t t_report, t_first;
++    spu_jobhash_stat st[32];
++    struct { int wid, ovl; unsigned long long runs, rep1, rep2; } mod[64];
++    unsigned nmod;
++    unsigned f_runs, f_new, f_gets, f_gets_new, f_lines, f_max, f_t0;
++} s_jh;
++
++static inline uint64_t jh_mix(uint64_t h, const uint8_t* p, uint32_t n)
++{
++    h = (h ^ n) * 0x9E3779B97F4A7C15ull;
++    while (n >= 8) { uint64_t v; memcpy(&v, p, 8); h = (h ^ v) * 0xFF51AFD7ED558CCDull; h ^= h >> 32; p += 8; n -= 8; }
++    if (n) { uint64_t v = 0; memcpy(&v, p, n); h = (h ^ v) * 0xFF51AFD7ED558CCDull; h ^= h >> 32; }
++    return h;
++}
++static inline uint64_t jh_mix64(uint64_t h, uint64_t v) { h = (h ^ v) * 0xFF51AFD7ED558CCDull; return h ^ (h >> 32); }
++
++void spu_jobhash_get(uint32_t lsa, uint32_t size, const void* bytes)
++{
++    spu_jobhash_tls* t = &t_jh;
++    if (!t->phase) return;
++    if (t->phase == 2) {
++        t->h_job = jh_mix(t->h_job, (const uint8_t*)bytes, size); t->n_job++; t->bytes_job += size;
++        if (t->nb < 64) { t->b[t->nb].h = jh_mix(0x4444, (const uint8_t*)bytes, size); t->b[t->nb].size = size; t->b[t->nb].injob = 1; t->nb++; }
++    }
++    else if (lsa >= 0x4000u) {
++        t->h_buf = jh_mix(t->h_buf, (const uint8_t*)bytes, size); t->bytes_buf += size;
++        if (t->nb < 64) { t->b[t->nb].h = jh_mix(0x4444, (const uint8_t*)bytes, size); t->b[t->nb].size = size; t->b[t->nb].injob = 0; t->nb++; }
++        if (s_jd.size && size == s_jd.size) { if (!t->nblk) memcpy(t->blk, bytes, size); t->nblk++; }
++    }
++    else t->h_ctl = jh_mix(t->h_ctl, (const uint8_t*)bytes, size);
++}
++void spu_jobhash_jobstart(spu_context* ctx)
++{
++    if (t_jh.phase == 1) { t_jh.phase = 2; t_jh.ovl = (int)ctx->resident_ovl; }
++}
++void spu_jobhash_runbegin(void)
++{
++    if (g_spu_jobhash_on_v < 0) {
++        const char* e = getenv("SPU_JOB_HASH");
++        const char* f = getenv("SPU_JOB_HASH_FRAME");
++        int on = 0;
++        while (__atomic_test_and_set(&s_jh.lock, __ATOMIC_ACQUIRE)) { }
++        if (g_spu_jobhash_on_v < 0) {
++            if (e && atoi(e) > 0 && f && strtoul(f, NULL, 16)) {
++                s_jh.period = (uint32_t)atoi(e);
++                s_jh.frame_ea = (uint32_t)strtoul(f, NULL, 16);
++                s_jh.tab = (spu_jobhash_slot*)calloc(JH_SLOTS, sizeof(spu_jobhash_slot));
++                const char* n = getenv("SPU_JOB_HASH_FRAMES");
++                if (n) { char* p; s_jh.f_max = (unsigned)strtoul(n, &p, 10); if (*p == ',') s_jh.f_t0 = (unsigned)atoi(p + 1); }
++                const char* ds = getenv("SPU_JOB_HASH_DESC");   /* the size of a per-run descriptor buffer to set apart */
++                if (ds) { s_jh.desc_size = (uint32_t)atoi(ds); const char* c = strchr(ds, ','); if (c) s_jh.ctx_size = (uint32_t)atoi(c + 1); }
++                const char* d = getenv("SPU_JOB_HASH_DIFF");
++                if (d && atoi(d) >= 8 && atoi(d) <= 256) {
++                    s_jd.tab = (spu_jobhash_dslot*)calloc(JH_DSLOTS, sizeof(spu_jobhash_dslot));
++                    if (s_jd.tab) { s_jd.size = (uint32_t)atoi(d); const char* c = strchr(d, ','); if (c) s_jd.size2 = (uint32_t)atoi(c + 1); }
++                }
++                on = s_jh.tab != NULL;
++            }
++            g_spu_jobhash_on_v = on;
++        }
++        __atomic_clear(&s_jh.lock, __ATOMIC_RELEASE);
++    }
++    if (g_spu_jobhash_on_v > 0) { memset(&t_jh, 0, sizeof t_jh); t_jh.phase = 1; }
++}
++/* 0 = not seen in the last 8 frames, 1..8 = that many frames back, 9 = this frame and also one of the 8 before,
++ * 10 = this frame only (something the jobs of one frame share). Records the key at this frame. */
++static unsigned jh_seen(uint64_t key, uint32_t frame)
++{
++    if (!key) key = 1;
++    uint32_t i = (uint32_t)(key >> 20) & (JH_SLOTS - 1u), victim = i, oldest = 0;
++    for (unsigned k = 0; k < 16; k++, i = (i + 1) & (JH_SLOTS - 1u)) {
++        spu_jobhash_slot* s = &s_jh.tab[i];
++        if (s->used && s->key == key) {
++            const uint32_t back = frame - s->frame;
++            if (back == 0) return (s->has_prev && frame - s->prev <= 8) ? 9u : 10u;
++            s->prev = s->frame; s->has_prev = 1; s->frame = frame;
++            return back <= 8 ? back : 0u;
++        }
++        const uint32_t age = s->used ? frame - s->frame : 0xFFFFFFFFu;
++        if (age > oldest) { oldest = age; victim = i; }
++    }
++    s_jh.tab[victim].key = key; s_jh.tab[victim].frame = frame; s_jh.tab[victim].used = 1; s_jh.tab[victim].has_prev = 0;
++    return 0;
++}
++void spu_jobhash_runend(unsigned wid)
++{
++    spu_jobhash_tls* t = &t_jh;
++    const int had = t->phase == 2;
++    t->phase = 0;
++    if (!had || wid >= 32) return;
++    const uint8_t* fp = vm_base + s_jh.frame_ea;
++    const uint32_t frame = (uint32_t)fp[0] << 24 | (uint32_t)fp[1] << 16 | (uint32_t)fp[2] << 8 | fp[3];
++    const uint64_t k1 = jh_mix64(jh_mix64(0x1111, wid), t->h_buf);
++    const uint64_t k2 = jh_mix64(jh_mix64(k1 ^ 0x2222, t->h_job), t->n_job);
++    const uint64_t k3 = jh_mix64(k2 ^ 0x3333, t->h_ctl);
++    while (__atomic_test_and_set(&s_jh.lock, __ATOMIC_ACQUIRE)) { }
++    const time_t now = time(NULL);
++    if (!s_jh.t_first) { s_jh.t_first = now; s_jh.t_report = now; s_jh.frame = frame; }
++    if (frame != s_jh.frame) {
++        if (s_jh.f_lines < s_jh.f_max && now - s_jh.t_first >= (time_t)s_jh.f_t0) {
++            s_jh.f_lines++;
++            fprintf(stderr, "[job-hash-frame] frame %u: runs %u, not seen in the last 8 frames %u | buffer GETs %u, "
++                    "not seen %u\n", s_jh.frame, s_jh.f_runs, s_jh.f_new, s_jh.f_gets, s_jh.f_gets_new);
++        }
++        s_jh.frame = frame; s_jh.f_runs = 0; s_jh.f_new = 0; s_jh.f_gets = 0; s_jh.f_gets_new = 0;
++    }
++    const unsigned r1 = jh_seen(k1, frame), r2 = jh_seen(k2, frame), r3 = jh_seen(k3, frame);
++    spu_jobhash_stat* st = &s_jh.st[wid];
++    st->runs++; st->bytes_buf += t->bytes_buf; st->bytes_job += t->bytes_job; if (t->n_job) st->with_job++;
++    const unsigned r[3] = { r1, r2, r3 };
++    for (int k = 0; k < 3; k++) { if (r[k] >= 1 && r[k] <= 8) st->rep[k]++; else if (r[k] >= 9) st->same[k]++; }
++    if (r2 == 1) st->d1++; else if (r2 == 2) st->d2++;
++    s_jh.f_runs++; if (r2 == 0) s_jh.f_new++;
++    {   unsigned n_new = 0, n_shared = 0, n_ctx = 0, new_bytes = 0;
++        for (unsigned k = 0; k < t->nb; k++) {
++            /* No workload id in this key: a job may run on any of a list's workloads from frame to frame. */
++            const unsigned rb = jh_seen(t->b[k].h ^ 0x5555555555555555ull, frame);
++            const int seen = rb >= 1 && rb <= 9;      /* in one of the 8 frames before this one */
++            const int shared = rb == 10;              /* only earlier in this frame */
++            st->gets++; st->gbytes += t->b[k].size;
++            if (t->b[k].size >= 4096) st->gbytes_big += t->b[k].size;
++            if (seen) { st->gets_rep++; st->gbytes_rep += t->b[k].size; }
++            if (shared) { st->gets_shared++; st->gbytes_shared += t->b[k].size; }
++            if (t->b[k].injob) { st->ij_gets++; if (seen) st->ij_rep++; else if (shared) st->ij_shared++; }
++            s_jh.f_gets++; if (!seen && !shared) s_jh.f_gets_new++;
++            if (t->b[k].size != s_jh.desc_size) {
++                if (shared) { if (t->b[k].size == s_jh.ctx_size) n_ctx++; else n_shared++; }
++                else if (!seen) { n_new++; new_bytes += t->b[k].size; }
++            }
++            unsigned z = 0;
++            for (; z < 64 && st->sz[z].n; z++) if (st->sz[z].size == t->b[k].size) break;
++            if (z < 64) {
++                st->sz[z].size = t->b[k].size; st->sz[z].n++;
++                if (shared) st->sz[z].n_shared++; else if (!seen) st->sz[z].n_new++;
++            }
++        }
++        if (n_new) { st->run_dyn++; st->dyn_bytes += new_bytes; }
++        else if (n_shared) st->run_shared++;
++        else if (n_ctx) st->run_ctx++;
++        else st->run_static++;
++    }
++    if (s_jd.size && t->nblk && wid >= 15 && wid <= 17) {
++        if (t->nblk > 1) s_jd.multi++;
++        uint64_t id = jh_mix64(0x6666, wid);
++        for (unsigned k = 0; k < t->nb; k++) if (t->b[k].size != s_jd.size && t->b[k].size != s_jd.size2) id = jh_mix64(id, t->b[k].h);
++        if (!id) id = 1;
++        uint32_t i = (uint32_t)(id >> 24) & (JH_DSLOTS - 1u), victim = i, oldest = 0; int found = 0;
++        for (unsigned k = 0; k < 8; k++, i = (i + 1) & (JH_DSLOTS - 1u)) {
++            spu_jobhash_dslot* s = &s_jd.tab[i];
++            if (s->used && s->key == id) {
++                const uint32_t back = frame - s->frame;
++                if (back == 0) s_jd.dup++;
++                else if (back <= 8) {
++                    s_jd.pairs++;
++                    if (!memcmp(s->blk, t->blk, s_jd.size)) s_jd.identical++;
++                    else {
++                        for (unsigned w = 0; w < s_jd.size / 4 && w < 64; w++)
++                            if (memcmp(s->blk + 4 * w, t->blk + 4 * w, 4)) s_jd.wdiff[w]++;
++                        if (s_jd.examples < 6 && s_jd.pairs > 20000) {
++                            s_jd.examples++;
++                            for (int which = 0; which < 2; which++) {
++                                const uint8_t* p = which ? t->blk : s->blk;
++                                fprintf(stderr, "[job-hash-diff] example %u %s (frame %u):", s_jd.examples,
++                                        which ? "now" : "before", which ? frame : s->frame);
++                                for (unsigned w = 0; w < s_jd.size / 4; w++)
++                                    fprintf(stderr, " %02X%02X%02X%02X", p[4 * w], p[4 * w + 1], p[4 * w + 2], p[4 * w + 3]);
++                                fprintf(stderr, "\n");
++                            }
++                        }
++                    }
++                }
++                memcpy(s->blk, t->blk, s_jd.size); s->frame = frame; found = 1;
++                break;
++            }
++            const uint32_t age = s->used ? frame - s->frame : 0xFFFFFFFFu;
++            if (age > oldest) { oldest = age; victim = i; }
++        }
++        if (!found) {
++            spu_jobhash_dslot* s = &s_jd.tab[victim];
++            s->key = id; s->frame = frame; s->used = 1; memcpy(s->blk, t->blk, s_jd.size);
++        }
++    }
++    {   unsigned m = 0;
++        for (; m < s_jh.nmod; m++) if (s_jh.mod[m].wid == (int)wid && s_jh.mod[m].ovl == t->ovl) break;
++        if (m == s_jh.nmod && s_jh.nmod < 64) { s_jh.mod[m].wid = (int)wid; s_jh.mod[m].ovl = t->ovl; s_jh.nmod++; }
++        if (m < s_jh.nmod) {
++            s_jh.mod[m].runs++;
++            if (r1 >= 1 && r1 <= 8) s_jh.mod[m].rep1++;
++            if (r2 >= 1 && r2 <= 8) s_jh.mod[m].rep2++;
++        } }
++    if (now - s_jh.t_report >= (time_t)s_jh.period) {
++        for (unsigned w = 0; w < 32; w++) {
++            const spu_jobhash_stat* s = &s_jh.st[w];
++            if (!s->runs) continue;
++            const double n = (double)s->runs;
++            fprintf(stderr, "[job-hash] %lld s wid %u: runs %llu | repeat a run 1-8 frames back: buffers %.1f%% "
++                    "(same frame %.1f%%), buffers and in-job GETs %.1f%% (previous frame %.1f%%, two back %.1f%%, "
++                    "same frame %.1f%%), with control data %.1f%% | buffers %.1f KB/run | runs with in-job GETs "
++                    "%.1f%% (%.0f bytes/run)\n", (long long)(now - s_jh.t_report), w, s->runs,
++                    100.0 * s->rep[0] / n, 100.0 * s->same[0] / n, 100.0 * s->rep[1] / n, 100.0 * s->d1 / n,
++                    100.0 * s->d2 / n, 100.0 * s->same[1] / n, 100.0 * s->rep[2] / n, s->bytes_buf / n / 1024.0,
++                    100.0 * s->with_job / n, s->bytes_job / n);
++            if (s->gets) {
++                const double g = (double)s->gets, gb = (double)(s->gbytes ? s->gbytes : 1);
++                fprintf(stderr, "[job-hash]   wid %u GETs one by one, in-job ones included: %.1f per run, %.1f KB, of "
++                        "which %.1f KB in GETs of 4096 bytes or more; seen in one of the 8 frames before %.1f%% (%.1f%% "
++                        "of the bytes), first seen earlier in this frame %.1f%% (%.1f%%), not seen %.1f%% (%.1f%%) | "
++                        "in-job GETs %.2f per run: seen before %.1f%%, earlier in this frame %.1f%%\n",
++                        w, s->gets / n, s->gbytes / n / 1024.0, s->gbytes_big / n / 1024.0,
++                        100.0 * s->gets_rep / g, 100.0 * s->gbytes_rep / gb,
++                        100.0 * s->gets_shared / g, 100.0 * s->gbytes_shared / gb,
++                        100.0 * (s->gets - s->gets_rep - s->gets_shared) / g,
++                        100.0 * (s->gbytes - s->gbytes_rep - s->gbytes_shared) / gb,
++                        s->ij_gets / n, s->ij_gets ? 100.0 * s->ij_rep / (double)s->ij_gets : 0.0,
++                        s->ij_gets ? 100.0 * s->ij_shared / (double)s->ij_gets : 0.0);
++                fprintf(stderr, "[job-hash]   wid %u runs by what is new in them, the %u-byte descriptor apart: nothing "
++                        "%.1f%%, only the %u-byte block shared within the frame %.1f%%, other buffers shared within the "
++                        "frame %.1f%%, data not seen before %.1f%% (%.0f bytes/run)\n", w, s_jh.desc_size,
++                        100.0 * s->run_static / n, s_jh.ctx_size, 100.0 * s->run_ctx / n, 100.0 * s->run_shared / n,
++                        100.0 * s->run_dyn / n, s->run_dyn ? s->dyn_bytes / (double)s->run_dyn : 0.0);
++                fprintf(stderr, "[job-hash]   wid %u by size (count / shared within the frame / not seen):", w);
++                for (unsigned z = 0; z < 64 && s->sz[z].n; z++)
++                    if (s->sz[z].n * 200 >= s->gets || s->sz[z].n_new * 50 >= s->runs || s->sz[z].n_shared * 50 >= s->runs)
++                        fprintf(stderr, " %u:%llu/%llu/%llu", s->sz[z].size, s->sz[z].n, s->sz[z].n_shared, s->sz[z].n_new);
++                fprintf(stderr, "\n");
++            }
++        }
++        for (unsigned m = 0; m < s_jh.nmod; m++) {
++            if (!s_jh.mod[m].runs) continue;
++            fprintf(stderr, "[job-hash]   wid %d overlay %d: runs %llu, buffers repeat %.1f%%, with in-job GETs %.1f%%\n",
++                    s_jh.mod[m].wid, s_jh.mod[m].ovl, s_jh.mod[m].runs,
++                    100.0 * s_jh.mod[m].rep1 / (double)s_jh.mod[m].runs, 100.0 * s_jh.mod[m].rep2 / (double)s_jh.mod[m].runs);
++            s_jh.mod[m].runs = s_jh.mod[m].rep1 = s_jh.mod[m].rep2 = 0;
++        }
++        if (s_jd.size && s_jd.pairs) {
++            fprintf(stderr, "[job-hash-diff] wids 15-17, the %u-byte buffer of a run whose other buffers came back 1-8 frames "
++                    "later: %llu pairs, %llu identical, %llu more with the same other buffers in the same frame, %llu runs "
++                    "with more than one such buffer | 4-byte words that differ (index:%% of pairs):", s_jd.size, s_jd.pairs,
++                    s_jd.identical, s_jd.dup, s_jd.multi);
++            for (unsigned w = 0; w < s_jd.size / 4 && w < 64; w++)
++                if (s_jd.wdiff[w]) fprintf(stderr, " %u:%.1f", w, 100.0 * s_jd.wdiff[w] / (double)s_jd.pairs);
++            fprintf(stderr, "\n");
++            s_jd.pairs = s_jd.identical = s_jd.dup = s_jd.multi = 0; memset(s_jd.wdiff, 0, sizeof s_jd.wdiff);
++        }
++        memset(s_jh.st, 0, sizeof s_jh.st);
++        s_jh.t_report = now;
++    }
++    __atomic_clear(&s_jh.lock, __ATOMIC_RELEASE);
++}
 +
 +/* The spinlock guarding all atomic line ops now lives in spu_coherency.c as
 + * spu_lockline_lock/unlock. It used to be a file-static here, which serialized
@@ -21619,6 +21935,7 @@ index 59f5e4b8..92e17d8c 100644
 +#endif
 +          if (g_spu_jobcap_on > 0) jc_link = jl;
 +          if (g_spu_jobrep_on > 0) spu_jobrep_jobstart(ctx);
++          if (g_spu_jobhash_on > 0) spu_jobhash_jobstart(ctx);
 +      } }
 +    /* The job returned through the link register we planted: it is finished.
 +     * Its outermost frame ends in `bi $r0`, and r0 was 0 -- so without this the
@@ -23414,7 +23731,7 @@ index f46d415f..aefc62c5 100644
   * brsl/bisl frame is live (host_depth>0); at 0 the frame was destroyed (task
   * resume / restack unwind) so dispatch to the link register instead -- faithful
 diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
-index 7b0debec..9820ff10 100644
+index 7b0debec..36e9c9d8 100644
 --- a/runtime/spu/spu_dma.h
 +++ b/runtime/spu/spu_dma.h
 @@ -18,12 +18,14 @@
@@ -23620,12 +23937,13 @@ index 7b0debec..9820ff10 100644
            if (s_ovl) {
                /* overlay-load map: image-6 GET of a code-sized chunk into the
                 * high LS overlay region, with its (now-correct) plugin source.
-@@ -597,9 +651,11 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -597,9 +651,12 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
            } }
          /* GET: main memory -> local store */
          memcpy(ls_ptr, ea_ptr, size);
 +        /* From ls_ptr: the bytes as this transfer read them. */
 +        if (g_spu_jobcap_on > 0) spu_jobcap_xfer(spu, cmd, ea, lsa, size, ls_ptr);
++        if (g_spu_jobhash_on > 0) spu_jobhash_get(lsa, size, ls_ptr);
          /* SPU_STACKEA_WATCH (b): scan the just-loaded payload for a 0xD00Cxxxx
           * dword = the completion-word EA arriving in a job buffer. */
 -        { static int s_se = -1; if (s_se < 0) s_se = getenv("SPU_STACKEA_WATCH") ? 1 : 0;
@@ -23633,7 +23951,7 @@ index 7b0debec..9820ff10 100644
            if (s_se && size >= 4) { static int _n = 0;
              for (uint32_t o = 0; o + 4 <= size && _n < 60; o += 4) {
                  uint32_t w = (ls_ptr[o]<<24)|(ls_ptr[o+1]<<16)|(ls_ptr[o+2]<<8)|ls_ptr[o+3];
-@@ -611,7 +667,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -611,7 +668,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                      fflush(stderr); } } } }
          /* SPU_SMC_WATCH: a DMA GET that lands inside the image's own code
           * segment is a code overlay = self-modification. */
@@ -23642,7 +23960,7 @@ index 7b0debec..9820ff10 100644
            if (s == -2) { const char* e = getenv("SPU_SMC_WATCH");
              s = e ? atoi(e) : -1; img = (uint32_t)s;
              const char* l = getenv("SPU_SMC_LO"); lo = l ? (uint32_t)strtoul(l,0,0) : 0xA00;
-@@ -668,10 +724,14 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -668,10 +725,14 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
              extern int  spu_coh_is_reserved(uint32_t);
              extern void spu_coh_notify_write(uint32_t);
              extern void spu_coh_notify_write_except(uint32_t, const void*);
@@ -23659,7 +23977,7 @@ index 7b0debec..9820ff10 100644
              uint32_t a0 = (uint32_t)ea & ~127u;
              uint32_t a1 = ((uint32_t)ea + size - 1u) & ~127u;
              int span_reserved = 0;
-@@ -679,26 +739,42 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -679,26 +740,42 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                  if (spu_coh_is_reserved(a)) { span_reserved = 1; break; }
                  if (a == a1) break;
              }
@@ -23708,7 +24026,7 @@ index 7b0debec..9820ff10 100644
          /* Tell whoever is listening where this PUT landed.
           *
           * A title whose SPUs build the RSX command stream never tells libgcm
-@@ -728,10 +804,19 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
+@@ -728,10 +805,19 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
          /* POISON-DMA detector: does an SPU PUT write the singleton object region
           * (0x40003000-0x40005000) or carry the 0xC708C708 poison? This host-side
           * memcpy bypasses vm_write32/AWATCH, so it's the prime suspect for the
@@ -23729,7 +24047,7 @@ index 7b0debec..9820ff10 100644
            for (uint32_t o = 0; o + 4 <= size; o += 4) {
                uint32_t w; memcpy(&w, (const char*)ls_ptr + o, 4);
                if (w == 0x08C708C7u) { haspoison = 1; break; } /* 0xC708C708 BE in LS bytes */
-@@ -776,6 +861,27 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+@@ -776,6 +862,27 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
  
          uint64_t ea = (ea_base & 0xFFFFFFFF00000000ull) | eal;
  
@@ -23757,7 +24075,7 @@ index 7b0debec..9820ff10 100644
          if (xfer_size) {
              /* Each list element occupies whole LS quadwords, even for
               * 1/2/4/8-byte transfers. The EA supplies its byte offset within
-@@ -795,7 +901,8 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+@@ -795,7 +902,8 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
              spu->list_stall_cmd[t]       = base_cmd;
              spu->list_stall_mask |= (1u << t);  /* this tag now has a parked list */
              spu->list_stall_stat |= (1u << t);  /* accumulate into the notify mask */
@@ -23767,7 +24085,7 @@ index 7b0debec..9820ff10 100644
              /* Real MFC runs a queued list asynchronously, so the notify lands
               * AFTER the arming code finishes. We run it inline here, so hold the
               * resulting interrupt off for a few drain ticks -- otherwise the WWS
-@@ -846,6 +953,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -846,6 +954,8 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
       * about to land. If the handler was supposed to fill in the claimed job's
       * EA and did not, the elements read back empty and the transfer is a no-op
       * -- which looks identical to "the pipeline never ran" from the PPU side. */
@@ -23776,7 +24094,7 @@ index 7b0debec..9820ff10 100644
      { /* First 16 dumps per header call site, shared safely by its workers.
         * Saturate instead of wrapping the counter back into logging. */
        static volatile LONG _n = 0;
-@@ -866,11 +975,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
+@@ -866,11 +976,18 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
          fprintf(stderr, "\n");
        }
      }
@@ -23795,7 +24113,7 @@ index 7b0debec..9820ff10 100644
      return rc;
  }
  
-@@ -916,7 +1032,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -916,7 +1033,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* SPU_CMDHIST=1: every MFC command that reaches the engine, by opcode and
       * SPU image. Catches list DMAs (putl/getl) that never reach
       * mfc_do_transfer's per-element path. */
@@ -23804,7 +24122,7 @@ index 7b0debec..9820ff10 100644
        if (s_ch) { static unsigned long long h[256][8]; static unsigned long long n;
            h[cmd & 0xFF][spu->image_id & 7]++;
            if ((++n % 300) == 0) {
-@@ -945,7 +1061,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -945,7 +1062,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * Nothing in that module's code stores +0x88, so the consumer count is
       * written from outside -- an SPU DMA is the obvious candidate, and this
       * says outright whether that is true. Watch 0x002DF008. */
@@ -23813,7 +24131,7 @@ index 7b0debec..9820ff10 100644
        if (s_we == -2) { const char* e = getenv("SPU_WATCHEA");
                          s_we = e ? 1 : 0;
                          s_wa = e ? (uint32_t)strtoul(e, 0, 16) : 0u; }
-@@ -981,7 +1097,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -981,7 +1098,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * writes that mirror back to a stale value AFTER the GETLLAR, and a DMA is
       * the only thing that can do it without going through spu_ls_write128.
       * Watch LS 0x10800. */
@@ -23822,7 +24140,7 @@ index 7b0debec..9820ff10 100644
        if (s_wl == -2) { const char* e7 = getenv("SPU_WATCHLSA");
                          s_wl = e7 ? 1 : 0;
                          s_wlsa = e7 ? (uint32_t)strtoul(e7, 0, 16) : 0u; }
-@@ -1008,7 +1124,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1008,7 +1125,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * covering it. Those cannot both be true as stated. Coverage per block over
       * a whole row says whether the row is fully written with wrong DATA, or
       * partly written, and those are completely different bugs. */
@@ -23831,7 +24149,7 @@ index 7b0debec..9820ff10 100644
        if (s_rc == -2) { const char* e8 = getenv("SPU_ROWCOV");
                          s_rc = e8 ? 1 : 0;
                          s_rcb = e8 ? (uint32_t)strtoul(e8, 0, 16) : 0u; }
-@@ -1052,7 +1168,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1052,7 +1169,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * 0x004DC/0x00598 (Host2Local_Body) and none from the DrawRect/DrawEdge
       * range, which would mean no geometry is rasterised at all -- the missing
       * 3D. That was noticed from three sampled addresses, so count them all. */
@@ -23840,7 +24158,7 @@ index 7b0debec..9820ff10 100644
        if (s_vp < 0) s_vp = getenv("SPU_VRAMPC") ? 1 : 0;
        if (s_vp && mfc_is_put(cmd) &&
            (uint32_t)ea >= 0x40600000u && (uint32_t)ea < 0x40700000u) {
-@@ -1109,7 +1225,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1109,7 +1226,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       *   LS holds real pixels   -> the destination comparison was wrong
       *
       * Host2Local_Body is LS 0x00350..0x00757 (from the firmware .symtab). */
@@ -23849,7 +24167,7 @@ index 7b0debec..9820ff10 100644
        if (s_hs < 0) s_hs = getenv("SPU_H2LSRC") ? 1 : 0;
        if (s_hs && vm_base && mfc_is_put(cmd) && size >= 16u &&
            (uint32_t)ea >= 0x40600000u && (uint32_t)ea < 0x40700000u) {
-@@ -1138,7 +1254,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1138,7 +1255,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * (RSX local + 0x400000). Buckets keep only 4 address bits, so that may be
       * an artifact of where RSX local memory actually sits; the full EA settles
       * it. */
@@ -23858,7 +24176,7 @@ index 7b0debec..9820ff10 100644
        if (s_pe && (cmd & 0xFF) >= 0x20u && (cmd & 0xFF) <= 0x2Fu) {
            static int shown[8];
            const unsigned sp2 = spu->spu_id & 7u;
-@@ -1156,7 +1272,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1156,7 +1273,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * of VRAM decodes to correct game art -- so the rasteriser runs and the
       * asset upload works, and the question is what geometry these transfers
       * actually have. */
@@ -23867,7 +24185,7 @@ index 7b0debec..9820ff10 100644
        if (s_ph && (cmd & 0xFF) >= 0x20u && (cmd & 0xFF) <= 0x2Fu) {
            static unsigned long long n[8][16], byt[8][16], nsz[8][8], tot;
            const unsigned sp = spu->spu_id & 7u;
-@@ -1250,7 +1366,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1250,7 +1367,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                        (uint32_t)ea);
                fflush(stderr);
                spu_halt(spu);
@@ -23884,7 +24202,7 @@ index 7b0debec..9820ff10 100644
        } else { s_last_ea = (uint32_t)ea; s_last_lsa = lsa; s_rep = 0; s_since = 0; } }
  
      /* Mark tag as in-progress */
-@@ -1419,7 +1543,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1419,7 +1544,104 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      /* Policy-module observation trace: every SPURS PM run's first transfers,
       * always on (policy runs are rare and their DMA pattern is the primary
       * bring-up signal: joblist fetch, job-module loads, output stores). */
@@ -23989,7 +24307,7 @@ index 7b0debec..9820ff10 100644
          static int _pn = 0;
          /* Cap the boot-time flood, but reopen the trace once the PPU is at the
           * job barrier (g_barrier_sync_watch armed): the post-ticket DMA
-@@ -1441,6 +1662,21 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1441,6 +1663,21 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
       * carried in MFC_EAL (the PM writes EAL=list, LSA=dest) and each element
       * supplies the low-32 EA; only EAH carries through. Passing `lsa` as the
       * list address read list elements from the transfer DESTINATION. */
@@ -24011,7 +24329,7 @@ index 7b0debec..9820ff10 100644
      if (mfc_is_list(cmd)) {
          /* List DMAs are rare, and they skip the per-element trace above, so
           * they are easy to miss entirely while diagnosing a pipeline that
-@@ -1451,11 +1687,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1451,11 +1688,41 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
                      "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
                      spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
                      size, size / 8, tag); }
@@ -24053,7 +24371,7 @@ index 7b0debec..9820ff10 100644
  
      /* wwsjob batch-fetch probe: the claim path GETs the batch's command data
       * to LS 0xC00; if this arrives empty/garbage the interrupt handler has
-@@ -1479,7 +1745,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
+@@ -1479,7 +1746,7 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
           * shareableWriteIfDiscarded=(f>>12)&1, logBufSet=(f>>5)&0xF, logBuf=f&0x1F.
           * Answers lifter-vs-builder: are shareable-output UseBuffer + kRunJob +
           * store commands PRESENT in the list the PPU built? */
@@ -24062,7 +24380,7 @@ index 7b0debec..9820ff10 100644
            if (s_cd) { static int _c = 0; if (PS3_LOG_FIRST(_c, 6)) {
              static const char* NM[8] = {"kNop","kReserveBufSet","kUseBuffer",
                  "kUnreserveBufSets","kReqDepDec","kRunJob","kEndCommand","kInvalid"};
-@@ -1600,13 +1866,20 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
+@@ -1600,13 +1867,20 @@ static inline void mfc_channel_write(mfc_engine* mfc, spu_context* spu,
           * RdTagStat must equal the mask EXACTLY (mask 2 = tag 1 =
           * kLoadJob_readBuffers). Log the inputs so we can see whether the tag
           * really is reported complete. Env SPU_TAGPROBE=1. */
@@ -27273,10 +27591,10 @@ index 00000000..230ac188
 +#endif
 diff --git a/runtime/spu/spu_jobcap.h b/runtime/spu/spu_jobcap.h
 new file mode 100644
-index 00000000..3a884ba7
+index 00000000..78d252dd
 --- /dev/null
 +++ b/runtime/spu/spu_jobcap.h
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,146 @@
 +/*
 + * SPU job capture (SPU_JOB_CAPTURE, spu_channels.c) and replay
 + * (SPU_JOB_REPLAY, spu_job_replay.c): the file layout both sides share and the
@@ -27380,6 +27698,18 @@ index 00000000..3a884ba7
 + * stay so the cold code still builds. */
 +#ifndef SPU_JOBLAB
 +#define SPU_JOBLAB 0
++#endif
++/* SPU_JOB_HASH (spu_channels.c): hashes of what each job run GETs, to count runs that repeat
++ * their inputs from frame to frame. Nonzero (-1 before the env is read) only in lab builds. */
++extern int g_spu_jobhash_on_v;
++void spu_jobhash_get(uint32_t lsa, uint32_t size, const void* bytes);
++void spu_jobhash_jobstart(spu_context* ctx);
++void spu_jobhash_runbegin(void);
++void spu_jobhash_runend(unsigned wid);
++#if SPU_JOBLAB
++#define g_spu_jobhash_on g_spu_jobhash_on_v
++#else
++#define g_spu_jobhash_on 0
 +#endif
 +#if SPU_JOBLAB
 +#define g_spu_jobcap_on g_spu_jobcap_on_v
@@ -27890,7 +28220,7 @@ index 20089610..36e97069 100644
      CloseHandle(th);   /* detached */
  #else
 diff --git a/runtime/spu/spurs_policy.c b/runtime/spu/spurs_policy.c
-index 905b3517..30c852d9 100644
+index 905b3517..2bd3f207 100644
 --- a/runtime/spu/spurs_policy.c
 +++ b/runtime/spu/spurs_policy.c
 @@ -26,6 +26,9 @@
@@ -28200,7 +28530,7 @@ index 905b3517..30c852d9 100644
      if (log_this) {
          fprintf(stderr, "[spurs-pm] RUN#%lu wid=%u data=0x%llX spurs=0x%08X image=%d entry=0xA00 size=%u\n",
                  runno, wid, (unsigned long long)wkl_data, spurs_ea, image_id, pm_size);
-@@ -391,7 +589,206 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -391,7 +589,208 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
      unsigned batch_before = g_wws_batch_gets;
      unsigned claim_before = g_spu_putllc_sync_hit;
  
@@ -28246,8 +28576,10 @@ index 905b3517..30c852d9 100644
 +    LARGE_INTEGER ab_t0 = {0};
 +    if (__builtin_expect(ab_timed, 0)) QueryPerformanceCounter(&ab_t0);
 +#endif
++    if (g_spu_jobhash_on) spu_jobhash_runbegin();
 +    const int pm_halted = spu_run_with_halt(run_entry, ctx);
 +    if (run_entry != entry) spurs_wws_run_end(ctx);
++    if (g_spu_jobhash_on > 0) spu_jobhash_runend((unsigned)wid);
 +#ifdef _WIN32
 +    if (__builtin_expect(ab_timed, 0)) {
 +        LARGE_INTEGER ab_t1;
@@ -28408,7 +28740,7 @@ index 905b3517..30c852d9 100644
      /* A lane's run should only end through exitToKernel. Anything else strands
       * the jobs it had claimed (GH3's once-per-~10-songs freeze): say how. */
      if (((uint32_t)ctx->pc & SPU_LS_MASK) != SPURS_PM_EXIT_TO_KERNEL_LS) {
-@@ -429,12 +826,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
+@@ -429,12 +828,19 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
          /* PER-WID cap: a shared cap gets exhausted by idle wid=0/1 before the
           * jobmanager (wid=12) ever runs in a long/good run. Give each wid its
           * own budget so wid=12's pipeline is always captured. */

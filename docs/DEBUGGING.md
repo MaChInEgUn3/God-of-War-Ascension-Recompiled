@@ -493,6 +493,30 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   run-time checks cost 1.1% level fps with the env unset), `SPU_JOB_CAPTURE` is ignored and `SPU_JOB_REPLAY` says
   so and exits. Lab exes are staged as `build_runLab`; production builds stay off. `work/buildlab.sh <dest>` builds one into `build_<dest>` (copying `build_runLab` for the DLLs when the directory is new) and rebuilds production afterwards; `LAB_LIFT="<lift dir> <file>"` swaps in another lift for the lab exe only (the pilot in LIFTER_CODEGEN.md used it). Toggle with
   `cmake -S work/port -B work/port/build_v017 -DPS3RECOMP_SPU_JOBLAB=ON|OFF` (only runtime files rebuild).
+* **Do job runs read the same data from frame to frame** (lab build): `SPU_JOB_HASH=<s>` with
+  `SPU_JOB_HASH_FRAME=<hex ea of a guest frame counter>` (required; GoW:A `975888`). For every policy-module run
+  that enters a job it hashes what the run GETs from main memory (sizes and bytes, no addresses): the GETs before
+  the job's entry that land at LS 0x4000 or above (code and the data the load commands name), those below (the
+  module's own records), and the GETs the job makes itself. Every `<s>` seconds, per workload:
+  * `[job-hash] N s wid W: runs R | repeat a run 1-8 frames back: buffers P% ..., buffers and in-job GETs P% ...,
+    with control data P% | buffers X KB/run | runs with in-job GETs G%`: runs whose whole input equals that of a
+    run of the same workload in one of the 8 frames before.
+  * `[job-hash]   wid W GETs one by one, in-job ones included: ...`: each GET looked up by itself (no workload
+    id in the key): seen in one of the 8 frames before, first seen earlier in this frame (another job of the
+    frame loaded the same bytes), or not seen; by count and by bytes, with the bytes of GETs of 4096 or more
+    (code chunks mostly) apart.
+  * `[job-hash]   wid W runs by what is new in them ...`: with `SPU_JOB_HASH_DESC=<size>[,<size2>]`, where
+    `<size>` is a per-run descriptor buffer to leave out and `<size2>` one block the jobs of a frame share:
+    runs with nothing new, with only that block shared within the frame, with other frame-shared buffers, with
+    data not seen before. `[job-hash]   wid W by size (count / shared within the frame / not seen)` lists the
+    frequent sizes.
+  * `SPU_JOB_HASH_FRAMES=<n>[,<t0 s>]` adds one `[job-hash-frame]` line per frame; `SPU_JOB_HASH_DIFF=<size>[,<size2>]`
+    keeps the buffer of that size per job identity (the hashes of the run's other buffers, `<size2>` left out
+    too) and, when the identity comes back 1-8 frames later, counts which 4-byte words differ and prints six
+    example pairs (game bytes: for the private log only).
+  Run it with `SPURS_WWS_LOAD=1`: the default mode's code-buffer reuse fetches only a buffer's tail, so the same
+  job would hash differently by what ran before it. "First seen earlier in this frame" says another job had the
+  same bytes, not what they are.
 * **Function boundary probe** (job lab): `analysis/spu_fnprobe_lift.py <lift.c> <out.c> <fn> [callees...]` wraps
   one lifted function in `spu_fn_probe` (toolkit `runtime/spu/spu_fn_probe.c`) and routes its and the listed
   callees' LS reads. Build it with `LAB_LIFT="<lift dir> <out.c>" sh work/buildlab.sh <dest>` (relative path for
