@@ -301,10 +301,12 @@ scripted corridor scene and the scene the played session's save opens on. Both f
     cutscene ran about 40 s through its other shots and the fight began.
     * **It is not only Continue (2026-11-14, a played session from New Game).** The player ran through the
       corridor without fighting, reached the arena entrance, and the cutscene stopped on the same first shot
-      (5 minutes, 24-27 frames/s, no error line). So it has now stopped in 10 runs and run in one, and the one
-      is the only run in which the corridor's enemies were fought. That the cutscene needs the corridor fight
-      to be over is a lead from that count, not a finding; the scripted runs also walk to the trigger without
-      finishing the fight. Next: fight the corridor out from the bench save by script, then walk to the trigger.
+      (5 minutes, 24-27 frames/s, no error line). The one run in which the cutscene played is the played
+      session of 2026-11-10, on that day's build, with the corridor fought. Two leads, neither tested: (a) the
+      cutscene needs the corridor fight to be over, which is one run against one, since the nine scripted
+      stops load a save made after that fight and so do not support it; (b) something changed after
+      2026-11-10, since every stop is on a later build. Next: the executable of 2026-11-10 from the same save
+      (it is still on disk), which tells the two apart.
     * Looked at (g6a, a `PS3_FTRACE` of 90 s around the trigger): file reads go on for about 20 s after the
       trigger and then fall to a trickle, so nothing is stuck reading; no PPU thread that shows in the trace blocks
       for good; the two `snd_stream_parsing_thread`s never return from their wait in those 90 s, before or after
@@ -732,30 +734,40 @@ frames). One frame is about 76 passes and 2,340 draws:
 
 Reading the second and third rows as shadow maps and the resolve of each into a screen-sized mask is my inference
 from the targets and state, not something established; by that reading shadows are 52% of the frame's draws.
-* **The single triangles are identical draws.** In a dumped pass their lines are the same token for token
-  (pipeline, state, textures, viewport, constants); only the vertices differ. Over a 30 s fight window the
-  engine's own count ("merge vs previous draw" of `ENG_PHASE_STATS`) says 76% of ALL draws repeat the previous
-  draw's state, fragment program and vertex program, are lists, and have nothing else between them. The port
-  already lets such a draw reuse the previous draw's resolved targets, textures and constant buffers
-  (`RSX_DRAW_REPEAT=1`, M0.98); it does not join them into one draw.
+* **The single triangles.** In a dumped pass their draw lines are the same token for token (pipeline, state,
+  textures, viewport, constants). The dump does not print depth bounds, so that says less than I first wrote
+  (below). Over a 30 s fight window the engine's own count ("merge vs previous draw" of `ENG_PHASE_STATS`; it
+  compares targets, pipeline, textures and samplers, scissor, stencil reference, depth bounds, topology and both
+  programs' constant buffers) says 76% of ALL draws equal the previous draw in all of that, are lists and have
+  nothing else between them. The port already lets a draw whose registers repeat reuse the previous draw's
+  resolved targets, textures and constant buffers (`RSX_DRAW_REPEAT=1`, M0.98); it does not join draws.
 * **What they cost** (a statistics line for draw ends with inline vertices; it does not pass through the
   bookkeeping that inflated the fetch figure above): about 810 per frame, 11.7-12.6 us each in the fight on a
-  machine in use, which is about 9.5 ms of the walker's time per frame there (18% of the draw-end time); 9.2-11 us
-  each in the still view. A bound computed beforehand from the mean per-draw phases (8.4 us) was too low.
-* **What the title sends per triangle**: END, a write of the vertex-program upload pointer (`0x1E9C` = 0), a
-  write of the program start (`0x1EA0` = 0, the value it already has), the vertex program again (`0x0B80`...,
-  the same words as stored, by the engine's "same vertex program" count), BEGIN(triangles), six inline words,
-  END. Whether transform constants are sent in between as well has not been logged yet.
-* **Tried, no gain**: an uploaded program word equal to the stored one no longer moves the engine's state
-  generation (one pair of still-view runs, old against new): 11.03 against 10.76 us per inline draw end, 456
-  against 467 frames per 30 s, inside run-to-run noise. So that marker is not what such a draw costs. Not
-  committed.
-* **Joining them into one draw: written, does not work yet, not published.** A first version holds the END of
-  an inline-only triangle list and drops END/BEGIN when the next method is the same BEGIN. It never fires,
-  because of the three writes above between every two triangles (found one run at a time). Whether a join can
-  be exact given the program upload in between, and where the ~11 us of such a draw go by phase, is the next
-  measurement; the line for going on is at least 5 ms less walker time per frame in the fight with frames not
-  lower and the picture inside the run-to-run noise floor.
+  machine in use, which is about 9.5 ms of the walker's time per frame there (18% of the draw-end time). In the
+  still view 9.7-10.8 us each, with no phase holding most of it (d1a-d1c, six windows): backend 4.1-4.9,
+  textures 2.2-2.4, index build 1.2-1.3, fetch 1.0-1.1, pipeline 0.9-1.0. A bound computed beforehand from the
+  mean per-draw phases (8.4 us) was too low.
+* **The backend's cost per draw, any draw** (`VK_DRAW_PROF`, still view, 1.15 M draws per 30 s): 4.4 us =
+  recording 1.6, flush 1.4 (the batch submit and the wait for a free in-flight slot, not split yet), descriptors
+  0.6, vertex/index copies 0.6, cache lookups 0.2. At ~2,340 draws that is about 10 ms per frame.
+* **Withdrawn: "what the title sends per triangle"** (published here earlier on 2026-11-14). The sequence END,
+  `0x1E9C`, `0x1EA0`, vertex program upload, BEGIN came from a diagnostic that printed the first 16 such ENDs of
+  a run. Those are boot, menu and pass-end draws, not the triangles of these passes. With it go the reason given
+  for the join never firing, and the conclusion drawn from the state-generation change: these passes have no
+  upload between triangles, so that change was never exercised there and its null result says nothing about them.
+* **What is between the triangles** (d1c: every method from the END of a 24-byte inline triangle list to the next
+  BEGIN, logged only inside a run of such lists; two gaps and one pass end were captured). Gap A: three writes of
+  `0x1714` (invalidate vertex file, which the port's dispatcher treats as a no-op). Gap B: depth bounds minimum
+  and maximum (`0x0384`, `0x0388`, a narrow range), the vertex array format and offset, then the three `0x1714`
+  writes. The pass end begins with `0x0380` = 0 (depth bounds test off). My inference from those three samples,
+  not counted yet: the test is on during these passes, the bounds change at every second triangle, and the 128
+  triangles are 64 screen tiles of two triangles, each tile drawn under its own depth bounds.
+* **What follows if that holds.** Draws under different depth bounds cannot be one draw, so a join could be
+  exact only within a pair (128 -> 64 draws per pass), with a ceiling of about half of the 9.5 ms: under the
+  5 ms line set before measuring. A count over whole windows decides it (the share of these draws preceded by
+  a change of bounds, and whether they take the repeat path: the reuse compares the bounds registers, so a
+  tile's first triangle decodes its state again although the bounds are applied per draw). The join code was
+  never published and is removed if the count confirms.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -768,16 +780,18 @@ from the targets and state, not something established; by that reading shadows a
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
-  fragments are not lifted: the played session of 2026-11-14 ran at 11-18 frames/s there, with up to 3.3 s of
-  interpreted SPU time per 30 s in the slowest window (workloads 7, 8, 12 and the EDGE ones). That session's pad
-  recording is a route to replay for the fragment capture.
+  fragments are not lifted: the played session of 2026-11-14 ran at 11-18 frames/s there. Up to 3.3 s of SPU
+  time per 30 s was interpreted in the slowest window (workloads 7, 8, 12 and the EDGE ones), which explains
+  little of that rate (in the arena, 31 s of interpreted time per 20 s cost 2-5 frames/s): why the prologue is
+  slow is not known yet. That session's pad recording is a route to replay for a profile and the capture.
 * The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes (probes above).
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
 * A second thread for the RSX walker was the plan until the probe showed the walker has slack in the still
   view. In the corridor fight the walker and the EDGE lists are co-limiting (probes above), and the walker alone
-  caps the fight near 21 frames/s. Before any second thread: the ~810 single-triangle draws per frame (~9.5 ms of
-  walker time; section above).
+  caps the fight near 21 frames/s. Before any second thread: the backend's fixed cost per draw (~10 ms per
+  frame; how much of its "flush" is waiting, which a second thread would not remove), and the ~810
+  single-triangle draws per frame (section above).
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)
