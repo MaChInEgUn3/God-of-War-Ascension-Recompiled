@@ -444,7 +444,7 @@ so far came from the menu, the first level and its corridor. The scenes after it
   | the same + dead code elimination | 7.7 s (19.2 ms each) | 688, 29.5 s | 8.6 s | 10.1 s | 10.8 s |
 
   Without passes the pipeline phase is 9.3 s shorter and the texture and backend phases, where the driver's
-  work shows, 4.1 s longer. The two short lists land in between and are no better in total. One run per mode;
+  work shows, 4.1 s longer. The two short lists land in between and are no better in total. A second scene (corridor fight, m3): 46.9 s with the full list against 31.5 s validate-only in draw ends over 10 ms, but the host had 5.0 cores of other load during the first and 2.2 during the second, so only the direction counts. One run per mode;
   only this GPU and driver.
 * Whether a run meets a shader for the first time matters less than this table suggests once the directory is
   filled: the translation cache now survives rebuilds and is shared by the standard and the profile-guided exe.
@@ -519,6 +519,13 @@ so far came from the menu, the first level and its corridor. The scenes after it
     at this fill and only its cost matters), or whether the port keeps textures marked in use that a console
     would have let go (then A is inflated and the fix is there). Not decided; the threshold itself is not
     something to patch.
+  * The corridor fight is fuller still (v5a): A 130.2 MB of 130.2 MB, with 19.5-20.6 MB more waiting (B), a
+    ratio of 1.15, and only 2-11 releases per 30 s because nothing is releasable. In both scenes the title has
+    more in use than its pool holds.
+  * Ruled out (q1b, `GCM_REPORT_STATS=30`): that the port makes the title draw more than a console by
+    answering every occlusion query "visible". The title issues about 7,700 type-1 report queries a second,
+    all to main memory, but never enables the pixel count and never clears a report: they are the
+    synchronisation it uses reports for, not occlusion queries.
 * On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
   into the open draw batch, a miss cost 1.96 and 1.93 ms against 2.50 and 2.15 ms, with no change in frame rate
   that the runs resolve. The earlier "did not shorten the stalls" above looked only at draw ends over 40 ms.

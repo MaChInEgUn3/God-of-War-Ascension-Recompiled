@@ -2786,7 +2786,7 @@ index 286bf478..d2697985 100644
          return CELL_SAVEDATA_ERROR_PARAM;
  
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index efad9b92..75d2d35b 100644
+index efad9b92..82387956 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -22,6 +22,7 @@
@@ -3659,7 +3659,7 @@ index efad9b92..75d2d35b 100644
                  u32 dea = gcm_io2ea(s_fifo_getoff + 4 + i * 4);
                  if (!dea) break;
                  u32 m = (type == 0) ? method + i * 4 : method;
-@@ -2287,31 +2859,86 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2287,31 +2859,108 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  } else if (mfull == 0xE920u || mfull == 0xE924u) {
                      cellGcmSetFlipCommand(vm_read32(dea) & 7u);
                  } else if (subch == 0 || (subch == 1 && !s1_2d)) {
@@ -3713,6 +3713,28 @@ index efad9b92..75d2d35b 100644
 +                     * hardware kick of the flag receiver. */
 +                    if (m == 0x1A8) { s_report_dma = vm_read32(dea);
 +                        static int rc = 0; if (rc++ < 6) printf("[CTX_REPORT] 0x%08X%c", s_report_dma, 10); }
++                    /* GCM_REPORT_STATS=<s>: every <s> seconds, how many report queries the title issued:
++                     * GET_REPORT by type (1 = ZPASS pixel count, the occlusion query) and by where the
++                     * answer goes, CLEAR_REPORT_VALUE (0x17C8) and SET_ZPASS_PIXEL_COUNT_ENABLE (0x17CC).
++                     * A title that culls with occlusion queries gets "visible" for all of them here. */
++                    if (m == 0x1800 || m == 0x17C8 || m == 0x17CC) {
++                        static int rs = -1; static u64 rs_t; static unsigned rs_get[4][2], rs_clr, rs_en[2];
++                        if (rs < 0) { const char* e = getenv("GCM_REPORT_STATS"); rs = e ? atoi(e) : 0; rs_t = gcm_report_timestamp(); }
++                        if (rs > 0) {
++                            const u32 a = vm_read32(dea);
++                            if (m == 0x1800) rs_get[(a >> 24) & 3u][s_report_dma == 0xFEED0001u || s_report_dma == 0xBAD68000u]++;
++                            else if (m == 0x17C8) rs_clr++;
++                            else rs_en[a & 1u]++;
++                            const u64 now = gcm_report_timestamp();
++                            if (now - rs_t >= (u64)rs * 1000000000ull) {
++                                printf("[report-stats] %lld s: GET_REPORT type0 %u/%u type1 %u/%u type2 %u/%u type3 %u/%u (local/main), "
++                                       "CLEAR_REPORT_VALUE %u, ZPASS_PIXEL_COUNT_ENABLE off %u on %u%c", (long long)((now - rs_t) / 1000000000ull),
++                                       rs_get[0][0], rs_get[0][1], rs_get[1][0], rs_get[1][1], rs_get[2][0], rs_get[2][1],
++                                       rs_get[3][0], rs_get[3][1], rs_clr, rs_en[0], rs_en[1], 10);
++                                memset(rs_get, 0, sizeof rs_get); rs_clr = 0; rs_en[0] = rs_en[1] = 0; rs_t = now;
++                            }
++                        }
++                    }
                      if (m == 0x1800) {
                          const u32 v = vm_read32(dea), off = v & 0xFFFFFFu, idx = off / 16u;
 -                        const u32 val = (v >> 24) == 1u ? 0xFFFFu : 0u;
@@ -3752,7 +3774,7 @@ index efad9b92..75d2d35b 100644
                          } else if (idx < CELL_GCM_MAX_REPORT_COUNT) {
                              s_report_data[idx].timestamp = ts;
                              s_report_data[idx].value = val;
-@@ -2392,12 +3019,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2392,12 +3041,29 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * for good that way in about one New Marais run in five ("stuck-get" at a
       * self-jump with no "jump-park" before it). */
      { static u32 last = 0xFFFFFFFFu; static int stuck = 0;
@@ -3783,7 +3805,7 @@ index efad9b92..75d2d35b 100644
  
      /* Publish progress: get chases put; ref advances at most ONE queued fence
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
-@@ -2741,6 +3385,11 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
+@@ -2741,6 +3407,11 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
      s_last_flip_time = get_timestamp_ns();
      if (PS3_FT_ON()) { const uint64_t t = ps3_ft_now();
                         ps3_ft_span(PS3_FT_FLIP_REQ, 0, bufferId, (uint32_t)in_fifo, t, t); }
@@ -3795,7 +3817,7 @@ index efad9b92..75d2d35b 100644
  
      /* Invoke via OPD resolution, not a raw call into guest code.
       *
-@@ -2794,8 +3443,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2794,8 +3465,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * Rewinding it to `begin` in mid-frame cut the frame short, dropping the
       * fence release in its tail, and the title then waited for it forever. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -3812,7 +3834,7 @@ index efad9b92..75d2d35b 100644
      if (runtime_ring && end - (cur + 4) < GCM_FLIP_WRAP_BYTES && io_begin != 0xFFFFFFFFu &&
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
-@@ -3094,9 +3750,75 @@ static u32 gcm_io_alloc(u32 size)
+@@ -3094,9 +3772,75 @@ static u32 gcm_io_alloc(u32 size)
      return 0xFFFFFFFFu;
  }
  
@@ -3888,7 +3910,7 @@ index efad9b92..75d2d35b 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -3151,6 +3873,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3151,6 +3895,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -3896,7 +3918,7 @@ index efad9b92..75d2d35b 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -3159,6 +3882,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3159,6 +3904,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -3904,7 +3926,7 @@ index efad9b92..75d2d35b 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -3194,7 +3918,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -3194,7 +3940,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -3917,7 +3939,7 @@ index efad9b92..75d2d35b 100644
  s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
  {
      /* RPCS3 cellGcmSys.cpp accepts exactly STRICT_ORDERING (not an arbitrary
-@@ -3202,8 +3930,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
+@@ -3202,8 +3952,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
       * order after its acquire fence; there is no relaxed DMA mapping path to
       * select here. Preserve that path rather than pretending to enable a new
       * ordering mode by storing an unused flag. */
@@ -3930,7 +3952,7 @@ index efad9b92..75d2d35b 100644
      if ((ea | io | size) & 0xFFFFFu || !size)
          return CELL_GCM_ERROR_INVALID_ALIGNMENT;
      const u64 ea_end = (u64)ea + size;
-@@ -3242,8 +3973,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -3242,8 +3995,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -3961,7 +3983,7 @@ index efad9b92..75d2d35b 100644
      IoMapping* mapping = find_mapping_by_io(io);
      if (!mapping)
          return CELL_GCM_ERROR_FAILURE;
-@@ -3688,6 +4441,7 @@ void cellGcmTerminate(void)
+@@ -3688,6 +4463,7 @@ void cellGcmTerminate(void)
      memset(&s_config, 0, sizeof(s_config));
      memset(&s_control, 0, sizeof(s_control));
      memset(s_io_mappings, 0, sizeof(s_io_mappings));
