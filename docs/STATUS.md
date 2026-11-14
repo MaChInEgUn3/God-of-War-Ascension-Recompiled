@@ -530,12 +530,13 @@ so far came from the menu, the first level and its corridor. The scenes after it
     set in one place only (0x370B48, reached through a pointer, when a load has brought in all of a texture's
     top mips): it means "load complete". The sampled releases are of textures whose load HAD finished
     (descriptor +0x20 equal to the evictable size) and whose flag was still clear. With a hook at 0x370B48 the
-    still view shows that function is never called, not once in the run: every one of 40 sampled releases had
-    no load report. So finished loads are never flagged, the compactor takes them for unfinished ones while the
+    still view shows that function ran fewer than 201 times in the run (the hook's log only starts there, and stayed empty): every one of 40 sampled releases had
+    no load report. So the finished loads of the textures that churn are not flagged, the compactor takes them for unfinished ones while the
     pool is over its threshold, releases them, and they load again. An earlier version of this entry called
     that "loads still in progress" and guessed it might be the title's own behaviour; the sample already
     contradicted it.
-  * Next: what should call 0x370B48. Its descriptor is at 0x813580 and no lifted function builds that address
+  * Second correction (n3d): an earlier wording here said that function is never called at all. It is: a log of the calls into the title's table of handlers (a static struct at 0x997770, where 0x370B48 sits in three slots) shows it reached from two call sites of a dispatcher around 0x3C9A80. What holds is narrower: it runs rarely, and not for the roughly 1,400 re-loads a run of the textures that churn.
+  * Next: what should call 0x370B48 for those. Its descriptor is at 0x813580 and no lifted function builds that address
     directly, so it is registered through the TOC; find who registers it, with which interface, and why the
     port never calls back. A guard variant (g2a) changed nothing and was removed.
 * On the side (`VK_TEX_CREATE_BATCHED=1`, off by default): with a new texture's layout transition recorded
