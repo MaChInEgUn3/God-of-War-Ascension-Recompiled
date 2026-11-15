@@ -1045,8 +1045,13 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   8 ms, 8.9 against 4.5 a second), while the kernel threads nap more (1.47 against 0.93 threads idle) and the
   time from a kick of that workload to its next run is unchanged (median 0.4 ms). What those batches wait
   for is not known.
+* **The dip belongs to the tick, not to the long frame.** Frames per second folded around the events of 20
+  corridor runs, relative to each run's median: after a large stall (40 events) 0.87-0.91 from 2 to 8 s
+  later and back to 1.0 at 10 s; after a mild tick (24 events, the tick's own second at 0.74) 0.89-0.91 over
+  the same seconds and back to 1.0 at 12 s. The same dip follows a 70 ms event and a 1.4 s one, so it is not
+  the game recovering from a long frame; it is parked with the trigger.
 * **The trigger is the machine's, and it comes in regimes.** With no game running, the machine's counters
-  show the same tick: every 27-29 s several desktop programs re-create GPU surfaces within three seconds
+  show a tick of the same period (not yet matched event by event with the slow submits of a run): every 27-29 s several desktop programs re-create GPU surfaces within three seconds
   and the adapter frees and re-allocates 55-70 MB. Stalls of 0.9 s or more per run, by half-day, in the logs
   since 2026-11-04: between 0.0 (21 runs on the morning of 2026-11-12, a day the machine was restarted) and 4.0; they switch
   on and off within a day and do not follow the port's commits. On the morning of 2026-11-15 the first four
@@ -1080,11 +1085,12 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes (probes above).
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
-* The corridor fight on the play build is finished at this resolution: the walker's draw path, the width of
-  the EDGE lists and the width of General6 / RenJobSet each gave nothing or under 10% (above). Next: the same
-  timeline fingerprint (the main thread's sleeps per frame, kernel threads busy, the walker's share in passes,
-  time with no EDGE run) on the other scripted scenes, to find one where a single wait holds a quarter of the
-  frame; and the arena fight, with a trace window, when a person plays it.
+* The scripted scenes on the play build (corridor fight, still view, the parked prologue fight) are finished
+  at this resolution: one-sided speed-ups gave nothing or under 10%, and no single wait holds a quarter of
+  the frame in any of them. The periodic stall and its dip are the machine's. Next: the arena fight (6-10
+  frames/s in the played session of 2026-11-10, against 15-18 in the corridor), which no script reaches: a
+  played session with per-second statistics, the slow-call lines and a timeline window, to see whether its
+  gap is one pool or the same balance.
 * (Answered 2026-11-15: the sleep at `0x3E8388` waits for an older frame's EDGE list; the lists clear the
   count themselves. Above.)
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
