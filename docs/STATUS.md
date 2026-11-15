@@ -1029,9 +1029,9 @@ under +3%). Timelines are 5 s windows of `PS3_FTRACE` with every module run reco
 
 ### The periodic stall and the dip after it (2026-11-15, f1s-f1p)
 On the test machine, play build, every scene (menu, loading, corridor fight, still view, the prologue).
-* **What a player sees.** About every 28-29 s no frame is shown for 1.0-1.9 s, and for about 15 s after that
-  the frame rate is 3-14% lower (median about 9% in eight corridor runs). Counted from the flip lines of the
-  logs (`analysis/stalls.py`): one stall of 0.9 s or more per 73 s of play on 2026-11-15 (56 runs).
+* **What it looks like.** About every 28-29 s no frame is shown for 1.0-1.9 s, and for about 8 s after
+  that the frame rate is about 10% lower. Counted from the flip lines of the logs (`analysis/stalls.py`): one
+  stall of 0.9 s or more per 73 s of running on 2026-11-15 (56 unattended runs).
 * **The stall is one call.** With `VK_SLOW_MS=20` the port prints every slow Vulkan call: one `vkQueueSubmit`
   is slow every 28-31 s from the first seconds of a run on, either 60-95 ms or 0.9-1.5 s (20 slow submits,
   8.6 s in all, in a 300 s run). The sampler has the walker thread in that call for the whole stall, inside
@@ -1050,13 +1050,17 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   later and back to 1.0 at 10 s; after a mild tick (24 events, the tick's own second at 0.74) 0.89-0.91 over
   the same seconds and back to 1.0 at 12 s. The same dip follows a 70 ms event and a 1.4 s one, so it is not
   the game recovering from a long frame; it is parked with the trigger.
-* **The trigger is the machine's, and it comes in regimes.** With no game running, the machine's counters
-  show the same tick (matched event by event in one run: each of its 12 slow-submit moments falls within 1.5 s
-  of a step of the machine's counter, logged once a second): every 27-29 s several desktop programs re-create GPU surfaces within three seconds
-  and the adapter frees and re-allocates 55-70 MB. Stalls of 0.9 s or more per run, by half-day, in the logs
-  since 2026-11-04: between 0.0 (21 runs on the morning of 2026-11-12, a day the machine was restarted) and 4.0; they switch
-  on and off within a day and do not follow the port's commits. On the morning of 2026-11-15 the first four
-  runs after a restart had at most one each, every later run three to ten.
+* **The trigger is the machine's: a display that drops off and is re-detected.** The system's device log
+  has one "display removed, reported absent on the bus" event every 28-30 s, for hours on end, and the desktop
+  re-creates its GPU surfaces each time (several programs at once, the adapter frees and re-allocates 55-70
+  MB; seen with no game running). In a run with `VK_SLOW_MS`, each of the 12 slow-submit moments falls within
+  1.5 s of a step of the machine's GPU memory counter logged once a second. On 2026-11-15 those events began
+  at 02:13 and the large stalls with them (the four runs before had at most one, every run after three to
+  ten). The periods with such events in the log since 2026-11-10 are the hours nobody was at the machine
+  (nights, absences); in the hours a person played there are none. So this is a property of unattended runs
+  on this machine, and a source of noise in every measurement taken in them, more than of play.
+* **Not explained**: why one such event costs 60-95 ms and another 0.9-1.5 s. On 2026-11-12 the events ran
+  all day and the runs had almost no large stall (none in 21 runs, then 5 in 41).
 * **What the port can do is open.** The game cannot show frames while the GPU queue takes no work, whichever
   thread submits. Open: whether the submit can be kept off the frame's critical path for the short events,
   and the dip's waits.
