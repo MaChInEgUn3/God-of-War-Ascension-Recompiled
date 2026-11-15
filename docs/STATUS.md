@@ -1051,7 +1051,8 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   the same seconds and back to 1.0 at 12 s. The same dip follows a 70 ms event and a 1.4 s one, so it is not
   the game recovering from a long frame; it is parked with the trigger.
 * **The trigger is the machine's, and it comes in regimes.** With no game running, the machine's counters
-  show a tick of the same period (not yet matched event by event with the slow submits of a run): every 27-29 s several desktop programs re-create GPU surfaces within three seconds
+  show the same tick (matched event by event in one run: each of its 12 slow-submit moments falls within 1.5 s
+  of a step of the machine's counter, logged once a second): every 27-29 s several desktop programs re-create GPU surfaces within three seconds
   and the adapter frees and re-allocates 55-70 MB. Stalls of 0.9 s or more per run, by half-day, in the logs
   since 2026-11-04: between 0.0 (21 runs on the morning of 2026-11-12, a day the machine was restarted) and 4.0; they switch
   on and off within a day and do not follow the port's commits. On the morning of 2026-11-15 the first four
