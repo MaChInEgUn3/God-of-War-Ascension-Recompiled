@@ -1137,16 +1137,30 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   prints them). The toolkit evaluates that as "reference >= stored depth". With the operands the other
   way round (`RSX_SHADOW_CMP_FLIP=1`, a diagnostic, off by default) the same view on the same build is
   sunlit with shadows attached to their objects, and they fall where the plain picture has its lit
-  patches: beside the vases, under the enemy, a rectangle on the floor, at the character's feet (matched
-  camera, three frame pairs; judged by eye, the character moves between the frames). So in this scene the
-  current order shows lit and shadowed swapped. Not verified: that "stored depth against reference" is
-  the hardware's rule (it is what this title's choice of function 6 on a far-cleared map implies, and
-  what I recall being documented elsewhere); any other title. A second route agrees (sc2: the replay of
+  patches: beside the vases, under the enemy, at the character's feet (matched camera, three frame pairs;
+  judged by eye, the character moves between the frames). One blocky patch mid-floor with hard vertical
+  edges shows in one frame of each run and is gone six seconds later; it is not on the mask's tile grid
+  (the 128 draws of a mask pass share all state and differ only in position) and is not attributed to an
+  object: unexplained, not shown to be a bug. So in this scene the
+  current order shows lit and shadowed swapped. The toolkit's upstream has since changed
+  exactly this (its pull request 424, merged after the v0.17.0 this port builds on): "the function is depth
+  FUNC reference, not reference FUNC depth", from two other titles on two backends, one of them sampling
+  far-cleared sun shadow maps with the same function. This title is a third case. Not verified here beyond
+  these two routes. A second route agrees (sc2: the replay of
   the played session through the opening, the first fight and into the first level, flipped, against the
   same replay plain): the only set-up it logs is again function 6 on that format (another map size), the
   fight's platform, the first level's courtyard and the weapon in the menu come out lit, and nothing looks
   worse on a sheet of 24 frames per run (the two runs are not frame-matched). The default is unchanged
-  until a person has looked at the pair.
+  until a person has looked at the pair; the change is then upstream's commit, cherry-picked.
+* **What else the caster passes ask for** (`RSX_REG_CENSUS`, 5.4 million pipeline look-ups in the corridor).
+  The look-ups with the shadow casters' front-face setting (10% of all; in the pass dump every caster draw
+  has it and no mask draw does) also have polygon offset for filled polygons switched on and the depth
+  control word `0x110` where every other draw has `0x1`. This port's renderer honours neither. Upstream
+  honours the depth control word on Vulkan (after v0.17.0) and the polygon offset in its engine and on
+  one other backend, not on Vulkan. Expected, not measured: casters nearer the light than its near plane
+  missing from the maps, and lit surfaces shadowing themselves. Also seen: the depth-bounds test on for
+  24% of the look-ups and two-sided stencil for 53% (both handled); user clip planes, logic op, polygon
+  mode, fog mode, primitive restart and the frequency divider never set.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -1156,8 +1170,9 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
-* The shadow comparison (above): a person looking at the pair, then the reversed order as this port's
-  default and a rebuild of the play build.
+* The shadow comparison (above): a person looking at the pair, then upstream's order as the default and a
+  rebuild of the play build. With it: upstream's depth-control change, and polygon offset on Vulkan if the
+  title's factor and bias are not zero.
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU

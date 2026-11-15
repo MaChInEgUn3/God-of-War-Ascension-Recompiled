@@ -112,6 +112,12 @@ Lessons that cost days; keep them.
     ... format ... func ...`), and `RSX_SHADOW_CMP_FLIP=1` evaluates the comparison as "stored depth against
     reference" instead of "reference against stored depth" (off by default; STATUS, 2026-11-15). Compare two
     runs of the same build on frames with the same camera; sort the frame files by number, not by name.
+  * Which render state a title uses at all: `RSX_REG_CENSUS=<hex method>,<hex method>,...` prints, every
+    `RSX_REG_CENSUS_EVERY` pipeline look-ups (default 500000), the first 8 distinct values each listed
+    register held and how many look-ups saw each (`[reg-census] 0A68: 00000000 x4853292 00000001 x546708`).
+    Read the last block. Equal counts on two registers tie them to the same draws (here: polygon offset,
+    the depth control word and the front-face setting of the shadow casters). Take the method numbers from
+    the toolkit's own tables, not from memory: two of the first list's were wrong.
   * A whole feature can be taken out at the title's own frame table to see what it costs or what it draws:
     the frame is a list of records run by one function, and skipping a record there removes its draws and
     its job runs together (a skip in the renderer removes only the draws, and measures nothing when the
