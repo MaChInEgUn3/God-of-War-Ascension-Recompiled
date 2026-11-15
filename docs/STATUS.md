@@ -946,6 +946,15 @@ error there is about +-3%. Each probe logs the spin it applied.
 * My inference, not a measurement: this is why the walker-side changes of 2026-11-14 (joining draws, the
   repeat comparison, the volume upload, the view destroys, larger batches, a fetch worker) did not move the
   frame rate of this scene even where they removed real work.
+* **These runs used the standard build. The play (PGO) build reads differently** (p5a, p5b, one run each, same
+  scene and method): EDGE slowed by 20% (402 ms of spin per on-window) -4.1% +- 3.2%; the walker slowed by 20%
+  (155 ms) -4.5% +- 2.2%. So on the build people play, neither stage is shown to bind as EDGE does on the
+  standard build; what paces that build's corridor is not established yet, and the ceilings above are the
+  standard build's.
+* **The three EDGE lists are equal and serial by the title's design**: workloads 15, 16 and 17 are each 70-80%
+  busy with about 470-495 thousand module runs a minute, and the title registers each with a maximum
+  contention of 1, so one SPU thread at a time serves a list whatever the port grants (more lanes for them
+  measured +0.0%). What is left on that side is the cost of one job run.
 * The skip probe is not kept: it sat in the hottest function of the engine, where any edit discards that
   function's PGO counts until the profile is regenerated.
 
