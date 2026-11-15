@@ -311,6 +311,19 @@ Lessons that cost days; keep them.
   the pattern's shifts is the error of one run in that scene; the per-window standard error is too small
   because neighbouring windows are alike. The slow-down levers print the spin they applied per window
   (`rslow_ms=` for `rslow`, `sslow_ms=` for `slow`): a null without that control says nothing.
+  A slow-down probe shows what a stage costs when slowed, not what speeding it up gives (STATUS, 2026-11-15):
+  judge a stage by a speed-up, and give a width lever (`lanes`) its own control, a timeline with the lever held
+  on (`GOW_AB_PERIODIC=1 GOW_AB=lanes,30,<start>` puts window 0 on) read for runs in progress at once.
+  A lever of a few percent needs four runs, judged on the mean of the per-run ratios (one run is +-3%).
+* **Sampler traps**: `PS3_SAMPLE_HOST=1` prints at most `PS3_SAMPLE_RANKS` buckets per report out of a table of
+  8192: with the 400 default, or 4000, the flat tail of lifted code is dropped and its share reads low (14%
+  for 17%). Use 8192, check that the bucket counts add up to the module total, and resolve with a large top.
+  With all threads sampled the table overflows; hot buckets survive, shares are approximate. `PS3_SAMPLE_MAIN=1`
+  together with `PS3_SAMPLE_HOST=1` credits every sample by a stack scan, not by the instruction pointer: use
+  `PS3_SAMPLE_MAIN=1` alone. In that mode host code that follows a lifted body in the image is credited to
+  that body (an `spu_LS_` name on a PPU thread is this).
+* **Timeline of module runs**: `PS3_FTRACE_MIN_US=1` keeps every module run (one SPU-busy span each, with the
+  workload) and every kernel wait; 5 s of the corridor fight is about 270,000 spans.
   The lever `burn` separates pacing from contention: a spare thread spins `GOW_AB_BURN` microseconds (default
   2000) out of about every 5 ms while on, with nothing slowed, and `burn_ms=` shows what it spun. If frames
   fall with it as they do with a slow-down probe of the same spin, the probe measured the machine's load

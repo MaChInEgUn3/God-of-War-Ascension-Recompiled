@@ -937,7 +937,8 @@ error there is about +-3%. Each probe logs the spin it applied.
   would be worth sizing at +25% or more, and under +10% that side is closed for this scene. It is closed:
   removing ALL the work of draw ends buys under 10% here.
 * **EDGE workloads 15-17 slowed by 20%** (393 and 405 ms of spin per on-window): -16.2% +- 3.2% and
-  -11.8% +- 2.9% (the old pattern had given -9.7%). Binding. **The walker slowed by 20%** (154 ms):
+  -11.8% +- 2.9% (the old pattern had given -9.7%). Sensitive to being slowed (read "binding" at the time; see the next
+  section: a slow-down probe does not show speed-up headroom). **The walker slowed by 20%** (154 ms):
   -3.2% +- 2.8% (old pattern -8.2%): small or none.
 * **Is the EDGE figure CPU contention?** A spare thread spinning 349 ms per on-window, with nothing slowed:
   -1.9% +- 3.3%. No: slowing EDGE costs frames because EDGE paces them, not because of the CPU the probe burns.
@@ -948,7 +949,7 @@ error there is about +-3%. Each probe logs the spin it applied.
   frame rate of this scene even where they removed real work.
 * **These runs used the standard build. On the play (PGO) build** (same scene and method): EDGE slowed by 20%
   (402 and 424 ms of spin per on-window) -4.1% +- 3.2% and -11.4% +- 1.5% in two runs, about -10% combined:
-  binding there too. The walker slowed by 20% (155 and 152 ms): -4.5% +- 2.2% and +0.1% +- 3.1%: small or none, as on the
+  as sensitive there. The walker slowed by 20% (155 and 152 ms): -4.5% +- 2.2% and +0.1% +- 3.1%: small or none, as on the
   standard build. The flip-requesting thread
   delayed by 3 ms a flip (fully binding would be about -5%): -1.4% +- 1.5%, without a logged control. A spare
   thread burning 369 ms per on-window: +4.2% +- 3.3%. A first line here said neither stage was shown to bind on
@@ -961,8 +962,8 @@ error there is about +-3%. Each probe logs the spin it applied.
   one 4%. Over the three lists: three runs in progress 57% of the time, two 26%, one 11%, none 5%, four never.
   When three are in progress they belong to one list; the lists take turns, 11-12 bursts each per frame. So
   EDGE work fills about 95% of the frame at a mean width of 2.37 runs (1,626 runs and 129 ms of run time per
-  54 ms frame), and that side has two levers, not one: what a job run costs and how many run at once. The
-  "+0.0% for more lanes" quoted here was measured with the old pattern in another scene; it is being redone.
+  54 ms frame), and that side looked like it had two levers: what a job run costs and how many run at once. The
+  second is measured in the next section (a fourth lane: nothing).
 * **The SPURS kernel threads are close to full in this scene** (same timeline): of six, 5.0 are inside a
   module run on average (all six 37% of the time, five 38%). Four of them serve the EDGE lists (the title
   gives those workloads a priority on four SPUs): each spends 58-60% of its time in EDGE runs, 29-32% in other
@@ -975,6 +976,54 @@ error there is about +-3%. Each probe logs the spin it applied.
   cannot judge a change of width.
 * The skip probe is not kept: it sat in the hottest function of the engine, where any edit discards that
   function's PGO counts until the profile is regenerated.
+
+### The corridor fight on the play build: one-sided speed-ups do not pay (2026-11-15, l1-e5a)
+All on the play (PGO) build in the corridor fight. In-run A/B with the pseudo-random pattern, 1 s windows, four
+runs per lever, judged on the mean of the per-run ratios; the lines were fixed beforehand (keep at +5%, closed
+under +3%). Timelines are 5 s windows of `PS3_FTRACE` with every module run recorded.
+* **A fourth lane for the EDGE lists** (default three): frames +0.2, -2.4, +0.8, +3.1% -> +0.4% (standard error
+  1.1). Closed. The lever did act: with it held on, four EDGE runs are in progress 32% of the time, the mean
+  width goes 2.37 -> 2.53, the time with no EDGE run 4.7% -> 13.6% of the frame, and the time of one run rose
+  in all four A/B runs (+0.3 to +3.0%).
+* **Six lanes for General6 (workload 3) and the four RenJobSet lists (9-12)** (default three): frames +0.7,
+  +6.0, -1.1, -0.5% -> +1.3% (standard error 1.6). Closed. This lever acted too: held on, General6 runs four
+  to six wide 44% of its active time and is active 19.5% of the window against 31.1%.
+* **Where the time went: the main thread's sleeps.** Milliseconds per frame the main thread sleeps, by call
+  site, in the three timelines (frame 54.4, 50.1 and 56.3 ms in those windows):
+
+  | sleep | default | four EDGE lanes | six lanes for 3, 9-12 |
+  |---|---|---|---|
+  | `0x3E8388`: until an older frame's EDGE list has finished | 4.3 | 0.8 | 5.8 |
+  | `0x375A88`: until the walker has flipped the previous frame | 0.6 | 2.6 | 2.7 |
+  | `0x3436BC`: until a batch of workload 0 jobs is done | 0.3 | 0.5 | 2.6 |
+  | `0x35E7B4` | 1.0 | 0.6 | 1.3 |
+
+  Time freed on one side is taken up by a wait on another.
+* **What clears the count behind `0x3E8388`** (open since 2026-11-11): the EDGE lists themselves. A watch on
+  SPU stores into that cache line (`SPU_LLWATCH`) shows the three counts written only by workloads 15, 16 and
+  17, one each, 1 -> 0. Each frame's EDGE jobs go to one of the three lists in rotation, and the main thread
+  waits there for an older frame's list to finish; per frame two of the three lists carry the EDGE run time
+  (55-58% and 42-45%).
+* **The frame's shape** (default settings; kernel threads inside module runs, by 3 ms phases after the flip
+  request): BatchJobList (0-6 ms); General6 at 2.2-2.5 threads with all six kernel threads in runs (6-21 ms);
+  the main thread's sleeps and MeshProc (21-33 ms, one to two kernel threads idle); General6 again (30-39 ms);
+  the RenJobSet chain at up to 3.3 threads (36-51 ms); HighestPrio6, then the flip. EDGE runs at 1.7-2.9
+  threads in every phase, RenderJobs at 0.85-0.95 for half the frame, the walker is inside FIFO passes 87% of
+  the time.
+* **The main thread**: the timeline has it in recorded waits about 10% of the frame. The sampler puts about a
+  third of its samples (30-36% in two runs) in three guest busy-wait loops on SPU job lists (`0x466E38`,
+  `0x416610`, `0x416A10`) and about 23% in system waits; the rest is a flat tail of its own code, nothing
+  above 1.6%.
+* **How to read the probes above.** "EDGE binds" was read from slow-down probes. Those measure how much a stage
+  costs when it is slowed, not what speeding it up gives: the two speed-ups on the SPU side converted at about
+  zero, and removing all draw work bought under 10% (standard build). My inference, not a measurement: in
+  this scene the main thread's chain, the EDGE lists and the walker are within a few milliseconds of one
+  another and the six kernel threads are 5.0 busy, so a lever on one side moves the wait instead of
+  shortening the frame. Shorter frames here need less CPU per frame on every side, or less work.
+* Not built: serving the older EDGE list first. In the default timeline the list the main thread is waiting
+  for (taken as the one that falls silent at the wake) has no run in progress for 85% of the sleep while the
+  lanes run the other lists; whether its jobs could have run then is not known. The fourth lane already cut
+  that sleep to 0.8 ms and the frames did not move.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -995,13 +1044,13 @@ error there is about +-3%. Each probe logs the spin it applied.
 * The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes (probes above).
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
-* Walker-side work is closed for the corridor fight by the skip ceiling above (at most about +8% there). Next
-  is the EDGE side (ceiling about +15-20%), which has two levers (above): how many EDGE runs are in progress
-  at once (a fourth lane is under test; beyond that the four threads that may run EDGE are shared with other
-  workloads) and what one run costs (native stages 51%, lifted code 20%, transfers about 15%).
-* (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
-  the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
-  and slowing the EDGE workloads does.)
+* The corridor fight on the play build is finished at this resolution: the walker's draw path, the width of
+  the EDGE lists and the width of General6 / RenJobSet each gave nothing or under 10% (above). Next: the same
+  timeline fingerprint (the main thread's sleeps per frame, kernel threads busy, the walker's share in passes,
+  time with no EDGE run) on the other scripted scenes, to find one where a single wait holds a quarter of the
+  frame; and the arena fight, with a trace window, when a person plays it.
+* (Answered 2026-11-15: the sleep at `0x3E8388` waits for an older frame's EDGE list; the lists clear the
+  count themselves. Above.)
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
 
 ## Resolved (M0.11): the GCM `MemTable entry not found` blocker
