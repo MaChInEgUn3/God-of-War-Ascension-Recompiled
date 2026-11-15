@@ -1086,6 +1086,22 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   67.7-76.8 us per module run and 18.0-21.5 frames per second on normal seconds. A build-against-build
   difference under about 10% is not resolved on this machine.
 
+### Play settings against bench settings, and a replay into the first level (2026-11-15, y1-y4, r1)
+* **The settings a diagnostic play session runs with cost about 7%.** The corridor fight with what the
+  profiled play script adds to the bench (a visible window, the fragment-capture log, the interpreter-miss
+  lines, slow-call lines, the main-thread sampler) against the plain bench, two alternating pairs, normal
+  seconds: frames per second 17.3 against 18.7 (-7.4%; -8.0 and -6.8 in the two pairs), an EDGE module run
+  +3.6%, a draw +4.9%. Under the 10% set beforehand as the point where the settings would be the pool: the
+  bench stands for play. Not split: the window against the diagnostics.
+* **A heavier scene is slower in proportion to its work.** The pad recording of the 2026-11-10 played session
+  (New Game), replayed on today's play build with 1 s statistics (no anchors, so it drifts from the original):
+  it goes through the opening and the first fight and into the first level. The first fight: 16-22 frames/s
+  at 2,000-2,270 draws and 1,450-1,670 EDGE runs per frame. The first level after it: 13-15 frames/s at
+  2,500-3,000 draws and 1,780-2,100 EDGE runs per frame. The bench corridor: 18-19 frames/s at about 2,050
+  draws and 1,630 runs. So the first level's lower rate matches its extra draws and job runs (about 1.3
+  times the corridor's), not a new pool. The original session had 6-10 frames/s in that part on its day's
+  build. The arena is not reached by this replay.
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)
