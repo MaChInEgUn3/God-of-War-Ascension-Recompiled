@@ -885,6 +885,28 @@ what the fight's re-uploads are:
   the one of 2026-11-10 stayed in the first fight both times (the replay drifts; the 400 s runs reached the
   corridor) and never came to the arena. Nothing can be read from that either way.
 
+### The PGO profile had gone stale for the walker (2026-11-14/15, pt1-bn7)
+* **Found by turning a silenced warning on.** The profile was from 2026-11-12. The optimized build passes
+  `-Wno-backend-plugin`, and the compiler skips the warning for COMDAT functions anyway, so a function whose
+  body changed after the profile was made loses its counts without a word. Compiling four toolkit files once
+  with the warning on named 23 such functions, among them the FIFO walker's loop
+  (`gcm_rsx_process_fifo_unlocked`, 22.8 billion counts discarded), the engine's method entry
+  (`rsx_draw_engine_method`, 6.9 billion), `sink_end`, `eng_texture_slot`, and in the Vulkan backend the draw
+  itself, the flush, the release and the present. The diagnostics added since had touched exactly the hottest
+  functions, so the PGO build had been optimizing them blind.
+* **Regenerated on the current source**: instrumented build, three training runs (the corridor fight, the
+  still view, and the New Game replay, which covered the opening and the first fight), merged (60,579
+  functions). The same check then names no function. A second trap on the way: the build system does not
+  track the profile file, so the first optimized build after the merge rebuilt nothing; the objects have to be
+  cleaned first (31 minutes for the full rebuild with three jobs).
+* **What it bought, as far as this machine resolves it** (corridor, flips/s over 240-360 s, seven alternating
+  runs at night, the first discarded): new profile 20.5 and 16.7, standard build 18.9 and 16.7, old profile
+  19.5 and 15.5. The machine's load swung during the series (the first three runs of each build sit about
+  3 frames/s above the last three), so by pairs: new against standard +8.5% and +0.2%, new against old
+  +5.4% and +7.5%. On the means the new profile is +4.6% over the standard build and +6.4% over the old
+  profile; neither is resolved. The +27-36% for PGO measured in the afternoon of 2026-11-14 on a machine in
+  use is not reproduced here and should not be quoted; the morning's +10% is the same order as tonight's.
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)

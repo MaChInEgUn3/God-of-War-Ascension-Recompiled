@@ -34,6 +34,8 @@ if not exist "%PGO_DATA%" goto noprofile
 set BDIR=build_pgouse
 set PGOFLAGS=/clang:-fprofile-use=\"%PGO_DATA%\" -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin
 set PGOLINK=
+rem "pgo.bat use clean": a new profile is not seen by the build system; clean the objects first.
+if /i "%2"=="clean" set PGO_CLEAN=1
 goto build
 
 :noprofile
@@ -43,5 +45,6 @@ exit /b 1
 :build
 call "%GOW_ROOT%\scripts\env.bat" cmake -B %BDIR% -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DPS3RECOMP_DIR="%GOW_ROOT%/local/tools/ps3recomp" -DRECOMP_DIR="%GOW_ROOT%/local/recompiled" -DCMAKE_EXE_LINKER_FLAGS="dxguid.lib /MAP %PGOLINK%" -DPS3RECOMP_RSX_VULKAN=ON -DPS3RECOMP_PAD_SDL2=ON -DCMAKE_C_FLAGS="-I\"%GOW_ROOT%/local/tools/sdl2/inc\" %PGOFLAGS%" -DCMAKE_CXX_FLAGS="-I\"%GOW_ROOT%/local/tools/sdl2/inc\" %PGOFLAGS%" -DPS3RECOMP_VULKAN_INCLUDE_DIR="%GOW_ROOT%/local/tools/vulkan-headers/include" -DCMAKE_PREFIX_PATH="%GOW_ROOT%/local/tools/glslang/sdk/Library" -DSDL2_DIR="%GOW_ROOT%/local/tools/sdl2/SDL2-2.32.10/cmake" -DPS3RECOMP_FFMPEG_RUNTIME=ON -DPS3RECOMP_FFMPEG_INCLUDE_DIR="%GOW_ROOT%/local/tools/ffmpeg/sdk/include"
 if errorlevel 1 exit /b 1
+if defined PGO_CLEAN call "%GOW_ROOT%\scripts\env.bat" ninja -C %BDIR% -t clean
 call "%GOW_ROOT%\scripts\env.bat" ninja -C %BDIR% -j %NINJA_JOBS% MyGameRecomp
 exit /b %ERRORLEVEL%

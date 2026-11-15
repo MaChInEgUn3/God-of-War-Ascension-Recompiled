@@ -114,8 +114,10 @@ profile of the game running. Measured on the first level's corridor fight: about
    `reset_s` clears the counters first, for a profile without boot and loading. `GOW_PGO_DUMP` exists only in the
    instrumented build. For more than one scene, do one run per scene with a different `.profraw` name each
    (the 2026-11-12 profile is the corridor fight plus a still view from a later save).
-3. `scripts\pgo.bat merge` merges every `.profraw` in `local\pgo`, then `scripts\pgo.bat use` builds
-   `port\build_pgouse` (a full rebuild).
+3. `scripts\pgo.bat merge` merges every `.profraw` in `local\pgo`, then `scripts\pgo.bat use clean` builds
+   `port\build_pgouse` (a full rebuild). The `clean` matters after a NEW profile: the build system does not
+   track the profile file, so without it nothing is recompiled and the old optimization stays (plain
+   `pgo.bat use` is for source changes under an unchanged profile).
 
 Memory: with the instrumentation or with a profile, one compiler process takes 3.4 GB or more on the large lifted
 files. Set `NINJA_JOBS` low (on 32 GB: 2 for `gen`, 1 for `use`; more were killed for memory). The `use` build
@@ -124,6 +126,15 @@ then takes about an hour.
 The profile matches the lifted sources it was made from: after re-lifting or a toolkit change, functions that changed
 lose their counts (the build still succeeds), so repeat from step 1 when much has changed. Code the training run
 never reached is optimized as cold; a profile from one level says nothing about the others.
+
+That loss is silent. The optimized build passes `-Wno-backend-plugin`, and the compiler does not warn about
+COMDAT functions in any case, which with `/O2` is every function. To see which functions a profile no longer
+matches, compile a file once with the build's own command line, the three `-Wno-...` profile flags removed and
+`-Xclang -mllvm -Xclang -no-pgo-warn-mismatch-comdat-weak=false` added before the output option: each stale
+function prints `function control flow change detected (hash mismatch) <name> ... count discarded`. On
+2026-11-14 that named 23 functions of the RSX walker, the hottest code of the port, after two days of small
+edits to them (STATUS). Check the files you changed before trusting a PGO build, and regenerate the profile
+when hot functions are on the list.
 
 ## Optional: firmware SPURS (LLE)
 
