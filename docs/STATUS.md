@@ -1071,6 +1071,21 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   5.9 ms of a 39.9 ms frame over four call sites; the still view: 14-15 frames/s, kernel threads 5.0-5.2 of 6.
   Neither has one wait that holds a quarter of the frame, so neither is a scene where a single lever pays.
 
+### ThinLTO with the profile (2026-11-15, lp1-lp8)
+* The one all-sides lever left untried: the profile-guided build with every object as bitcode
+  (`/clang:-flto=thin` added to the profile-use flags, lld-link doing the optimizer with two backends). It
+  built in 32 minutes at low priority, the exe is 0.5% smaller, and it runs the corridor clean.
+* Four alternating pairs in the corridor fight against the profile-guided build, 1 s statistics, read on normal
+  seconds only (the machine's tick found by folding at 28.8 s; its second, the one before and the nine after
+  dropped). The line set beforehand: keep at 5% less on both the time of an EDGE module run and the walker's
+  time per draw.
+* Result: an EDGE module run 73.97 us against 71.86 (+2.9%, standard error 2.5); a draw 18.80 us against 19.04
+  (-1.2%, standard error 4.1); frames per second 18.7 against 19.6 (-4.4%, standard error 4.2). Closed: nothing
+  to keep.
+* The same exe moved more from run to run than the two builds differ: the profile-guided build's four runs had
+  67.7-76.8 us per module run and 18.0-21.5 frames per second on normal seconds. A build-against-build
+  difference under about 10% is not resolved on this machine.
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)
@@ -1099,7 +1114,8 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   slow-call lines and a timeline window is what shows whether that gap is one pool or the same balance.
 * (Answered 2026-11-15: the sleep at `0x3E8388` waits for an older frame's EDGE list; the lists clear the
   count themselves. Above.)
-* ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
+* ThinLTO together with the profile-guided build: tried on 2026-11-15, closed (below, "ThinLTO with the
+  profile").
 
 ## Resolved (M0.11): the GCM `MemTable entry not found` blocker
 Root cause: the Edge Zlib HLE (`cellSpursLFQueuePushBody`) ignored the slice offset (`w6 & 0xFFFF`) of a partial
