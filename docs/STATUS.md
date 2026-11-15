@@ -1092,10 +1092,11 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
 * The scripted scenes on the play build (corridor fight, still view, the parked prologue fight) are finished
   at this resolution: one-sided speed-ups gave nothing or under 10%, and no single wait holds a quarter of
-  the frame in any of them. The periodic stall and its dip are the machine's. Next: the arena fight (6-10
-  frames/s in the played session of 2026-11-10, against 15-18 in the corridor), which no script reaches: a
-  played session with per-second statistics, the slow-call lines and a timeline window, to see whether its
-  gap is one pool or the same balance.
+  the frame in any of them. The periodic stall and its dip are the machine's. Next: the fights a person
+  reaches. In the played session of 2026-11-10 (New Game, that day's build) a fight in the first level ran at
+  6-10 frames/s for four minutes, where the same session had 11-16 just before; today's build has not been
+  played through it, and no script reaches it or the arena. A played session with per-second statistics, the
+  slow-call lines and a timeline window is what shows whether that gap is one pool or the same balance.
 * (Answered 2026-11-15: the sleep at `0x3E8388` waits for an older frame's EDGE list; the lists clear the
   count themselves. Above.)
 * ThinLTO together with the profile-guided build has not been tried; alone it gave nothing measurable (above).
