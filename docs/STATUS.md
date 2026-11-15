@@ -948,14 +948,31 @@ error there is about +-3%. Each probe logs the spin it applied.
   frame rate of this scene even where they removed real work.
 * **These runs used the standard build. On the play (PGO) build** (same scene and method): EDGE slowed by 20%
   (402 and 424 ms of spin per on-window) -4.1% +- 3.2% and -11.4% +- 1.5% in two runs, about -10% combined:
-  binding there too. The walker slowed by 20% (155 ms): -4.5% +- 2.2%, one run. The flip-requesting thread
+  binding there too. The walker slowed by 20% (155 and 152 ms): -4.5% +- 2.2% and +0.1% +- 3.1%: small or none, as on the
+  standard build. The flip-requesting thread
   delayed by 3 ms a flip (fully binding would be about -5%): -1.4% +- 1.5%, without a logged control. A spare
   thread burning 369 ms per on-window: +4.2% +- 3.3%. A first line here said neither stage was shown to bind on
   this build; that rested on the first EDGE run alone. The skip ceiling was measured on the standard build only.
-* **The three EDGE lists are equal and serial by the title's design**: workloads 15, 16 and 17 are each 70-80%
-  busy with about 470-495 thousand module runs a minute, and the title registers each with a maximum
-  contention of 1, so one SPU thread at a time serves a list whatever the port grants (more lanes for them
-  measured +0.0%). What is left on that side is the cost of one job run.
+* **Withdrawn: "the three EDGE lists are serial by the title's design".** This line said that one SPU thread
+  at a time serves a list because the title registers each with a maximum contention of 1, and that what is
+  left on that side is the cost of one job run. A timeline of the play build in this scene (`PS3_FTRACE`, 5 s,
+  every module run recorded) shows otherwise. The port's default `SPURS_LANES=15,16,17=3` lets three kernel
+  threads run one list at once, and they do: per list, three runs are in progress 19% of the time, two 8-9%,
+  one 4%. Over the three lists: three runs in progress 57% of the time, two 26%, one 11%, none 5%, four never.
+  When three are in progress they belong to one list; the lists take turns, 11-12 bursts each per frame. So
+  EDGE work fills about 95% of the frame at a mean width of 2.37 runs (1,626 runs and 129 ms of run time per
+  54 ms frame), and that side has two levers, not one: what a job run costs and how many run at once. The
+  "+0.0% for more lanes" quoted here was measured with the old pattern in another scene; it is being redone.
+* **The SPURS kernel threads are close to full in this scene** (same timeline): of six, 5.0 are inside a
+  module run on average (all six 37% of the time, five 38%). Four of them serve the EDGE lists (the title
+  gives those workloads a priority on four SPUs): each spends 58-60% of its time in EDGE runs, 29-32% in other
+  workloads' runs and about 10% waiting. Of the other two, one is in runs 90% of the time, the other 55%.
+* **Where an EDGE thread's time goes on the play build** (host sampler on those threads while they run
+  workloads 15-17, every bucket reported): native stages 51%, the SPU runtime 17% (the channel-write path
+  6-7%, dispatch between lifted functions about 5%), the lifted job module 17%, lifted overlay fragments 3%,
+  the policy module 3%, memory copies in the C runtime 8%. The time of a module run itself (`us_run=` in the
+  `[ab]` lines) does not include a slow-down probe's spin, so it can judge a change to the job's cost; it
+  cannot judge a change of width.
 * The skip probe is not kept: it sat in the hottest function of the engine, where any edit discards that
   function's PGO counts until the profile is regenerated.
 
@@ -979,9 +996,9 @@ error there is about +-3%. Each probe logs the spin it applied.
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
 * Walker-side work is closed for the corridor fight by the skip ceiling above (at most about +8% there). Next
-  is the EDGE side (ceiling about +15-20%): first whether the three EDGE job lists are serial by the title's
-  design or by the port's policy, and whether one of them is the long one; the levers tried there before
-  (more lanes, a shorter idle pause) need a control and a rerun with the unbiased pattern.
+  is the EDGE side (ceiling about +15-20%), which has two levers (above): how many EDGE runs are in progress
+  at once (a fourth lane is under test; beyond that the four threads that may run EDGE are shared with other
+  workloads) and what one run costs (native stages 51%, lifted code 20%, transfers about 15%).
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)
