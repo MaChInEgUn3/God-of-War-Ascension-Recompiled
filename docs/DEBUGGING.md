@@ -304,6 +304,13 @@ Lessons that cost days; keep them.
   destroys came back at the present (STATUS, 2026-11-14). The `[vk-slow]` lines of `VK_SLOW_MS` are a
   thresholded sample; their counts do not compare between runs. Batch size is `VK_DRAW_BATCH_MAX` (default
   128 with `VK_ASYNC`, 512 without).
+* **Before probing a scene, test it with no lever** (`GOW_AB=none,1,<start>`, then `analysis/abnull.py <log>`):
+  it prints the autocorrelation of frames per window and the on/off difference a pattern reports with nothing
+  switched. A scene with a cycle of its own aliases with a periodic pattern: the parked first fight reported
+  +-20% with no lever under the old 4 s pattern (STATUS, 2026-11-15). The spread of the null differences over
+  the pattern's shifts is the error of one run in that scene; the per-window standard error is too small
+  because neighbouring windows are alike. The slow-down levers print the spin they applied per window
+  (`rslow_ms=` for `rslow`, `sslow_ms=` for `slow`): a null without that control says nothing.
   The `[ab]` line also carries `flushes=` and `fl_ms=` (batch flushes in the window and the ms spent ending and
   submitting them), and the lever `bmax` changes the draws per batch while the game runs (`GOW_AB_BMAX`,
   default 256, against the configured size). Read medians beside means: single slow submits dominate a mean.
@@ -434,8 +441,8 @@ Lessons that cost days; keep them.
 
   A stage that fully paces the frame adds n/(100+n) of frame time (pct probes) or the whole wait (`mslow`).
 
-**In-run A/B** (`GOW_AB=<lever>,<window s>,<start s>`, port `main.cpp`): from `<start s>` the lever goes on, off, off, on, on,
-off... and each window prints `[ab] lever= w= on= frames= secs=`. Levers: `icall` (`g_ppu_icall_fast`), `dma`
+**In-run A/B** (`GOW_AB=<lever>,<window s>,<start s>`, port `main.cpp`): from `<start s>` the lever is switched window by window in a fixed
+pseudo-random order (the old order on, off, off, on with `GOW_AB_PERIODIC=1`) and each window prints `[ab] lever= w= on= frames= secs=`. Levers: `icall` (`g_ppu_icall_fast`), `dma`
 (`g_spu_dma_diag`), `wws` (`g_spurs_wws_native`), `vol` (`g_eng_volume_inplace`), `none` (the noise floor). Each window also prints the EDGE module runs, how many were native and `us_run=`; for a lever on the SPU side that figure resolves about 1%, where frame time under load does not. `draws=`, `us_draw=` and `rsx_busy=` are the same for the walker: guest draws, time in FIFO passes per draw (no lock wait, no `RSX_SLOW_PCT` spin) and the share of the window in passes; `passes=` and `words=` count FIFO passes and words. `GOW_AB=ibc,...` sets the SPU indirect-branch cache size in-run (`spu_ibc_set_size`, `GOW_AB_IBC=<n>`, default 4096 against 512). `GOW_AB=lanes,...` sets lanes per workload in-run (`g_spurs_lane_ovr`, `GOW_AB_LANES=<wid>=<n>[,...]`, default `11=2`). `SPURS_WWS_REUSE_ANY=1` lets the driver reuse any reusable code buffer of 8-128 KB, not only EDGE's 0xD000 (`GOW_AB=reuse,...` flips it). `GOW_AB=wwsx,...` flips the native driver on the lists in `GOW_AB_WWS=<wid>,...` (default 2,3,7,9-13) and times their module runs as `us_run=`. `GOW_AB=wws8,...` flips the native driver on wid 8 only, and then `us_run=` times wid 8's module runs. `GOW_AB=nap,...` sets the kernel threads' pause (`g_spurs_nap_us`, `GOW_AB_NAP=<us>`, default 200). `GOW_AB=idle,...` sets the walker's `GOW_IDLE_WAIT` (`GOW_AB_IDLE=<n>`, default 2 against 0). `SPURS_NAP_READY=<s>` prints, of the passes after a pause, how many saw each workload the thread may run ready with a lane free. `GOW_MAIN_PROF` also lists the chains of the last quarter of a game frame (`late`), and a `PS3_FTRACE` DRAIN span has b = 1 when the pass stopped on a park. `GOW_AB=pause,...` flips `ppu_spin_pause` (`GOW_AB_PAUSE=<n>`, default 16). `GOW_AB=fifo,...` flips the FIFO argument fast path (`GCM_FAST_ARGS=0` turns it off, any FIFO debug gate bypasses it). Host sampler on: the walker reads about 20% slower, so walker figures come from sampler-off arms, and `[samp] tidmod <tid> <module> <n>` splits a thread's samples by module. `us_run=` only serves as a host covariate for a probe that leaves it alone; a walker probe lowers it (x392). `scripts/abreport.py <log>` gives the on-off difference per on,off,off,on block, in
 ms per game frame, with quartiles. Only for a switch that can change while the game runs; run `none` first.
   SPU dispatch (2026-11-04): `SPU_IBC_COUNT=1` (`SPU_IBC_COUNT_WIDS=<w>,...` to filter) prints `[ibc-count]` and

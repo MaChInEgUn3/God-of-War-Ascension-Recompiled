@@ -845,13 +845,8 @@ what the fight's re-uploads are:
   player at the machine): in the prologue fight the engine ends 2,050-2,475 draws per frame, the walker's
   thread uses 24.9-26.2 s of CPU per 30 s and 20.6-22.7 s of wall time are inside draw ends, at 13.8-16.9
   frames/s. The corridor bench on the same build and a machine in use gives 12.9-13.8, so the 11-18 frames/s
-  of that session are in line with the standard build under load. What limits the prologue was probed on the
-  replay below (q1a, q1b; a stage slowed by 20% in alternating 1 s windows, fully binding = -16.7%): the
-  walker -2.9% +- 4.6% over all 154 windows, the EDGE workloads 15-17 -2.7% +- 3.1% over 159. Neither is
-  resolved. (A first version of this line gave -8.2% +- 4.5% for the walker over a subset of windows chosen by
-  draws per frame and called the walker a limiter there; that is 1.8 standard errors on a filter that left
-  out part of the fight, and no better resolved than the rest.) The two probes ran on two replays that did
-  not land in the same scenes. What limits the prologue is still not measured. (That session ran the standard
+  of that session are in line with the standard build under load. What limits the prologue: the probe figures first given here (2026-11-14) are
+  withdrawn, for the reason in "The in-run A/B pattern aliased" below, where they are redone. (That session ran the standard
   build because the PGO build of that morning could not see the controller.) New there and not identified:
   a quarter of the main thread's samples at one call site that the corridor profiles do not show.
 * **New Game can be reached by script.** Replaying the player's pad recording (`PAD_PLAY`, from the save their
@@ -906,6 +901,31 @@ what the fight's re-uploads are:
   +5.4% and +7.5%. On the means the new profile is +4.6% over the standard build and +6.4% over the old
   profile; neither is resolved. The +27-36% for PGO measured in the afternoon of 2026-11-14 on a machine in
   use is not reproduced here and should not be quoted; the morning's +10% is the same order as tonight's.
+
+### The in-run A/B pattern aliased with a scene's own cycle (2026-11-15, q2a-q6d)
+* **What went wrong.** The in-run A/B switched its lever on, off, off, on in windows of 1 s: a pattern of period
+  4 s. The parked first fight of the prologue (the replay cut before the first attack, so the game waits at its
+  prompt) has a frame-rate cycle of about 4 s of its own. With no lever at all, that pattern reports a
+  difference of +22.9%, -7.4%, -18.6% or +7.9% there, depending on which window it starts in. One and the same
+  probe gave -23%, -2%, +1% and +13% in four runs. Every prologue probe figure made with the old pattern is
+  void, including the two given here on 2026-11-14.
+* **The test, and the other scenes.** A run with no lever, read with the pattern at each of its offsets
+  (`analysis/abnull.py`): corridor fight +3.2, -1.7, -3.1, +1.7%; arena still view +0.9, -0.3, -0.9, +0.3%.
+  Neither has that cycle (their frames per window follow the slow 25-30 s wave of the machine, which the
+  pattern cancels), so the probes published for them are not aliases. But those offsets are also the honest
+  error of one run: about +-3% in the corridor and +-1% in the still view. The +-1.6-1.8% quoted with the
+  corridor probes assumed independent windows and is too small; read them as -9.7% and -8.2%, each +-3.
+* **The fix.** The port now switches by a fixed pseudo-random sequence (`GOW_AB_PERIODIC=1` restores the old
+  order). With nothing switched it reports, over every shift of the sequence, a spread of 2.3% in the
+  corridor, 1.4% in the still view and 2.2-3.0% in the prologue scene: no bias, and that spread is the error
+  of one run. The slow-down probes also log the spin they actually applied (`rslow_ms=`, `sslow_ms=`), so a
+  probe without effect can be told from a probe that did not act.
+* **The prologue scene, redone** (pseudo-random pattern, 128 windows a run, the spin applied shown): EDGE
+  workloads 15-17 slowed by 20% (about 400 ms of spin per on-window): -9.1% and -3.6% in two runs that sat in
+  different states of the scene (1,489 and 1,699 EDGE runs per frame), combined -5.6% +- 2.0%. The walker
+  slowed by 20% (134-147 ms per on-window): -3.3% and -3.7%, combined -3.5% +- 2.4%. So slowing EDGE cost
+  frames in both runs; the walker is not resolved. Not separated yet: how much of an EDGE probe's effect is
+  the extra CPU it burns (about 0.4 of a core in on-windows) on a machine that is sensitive to load.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache

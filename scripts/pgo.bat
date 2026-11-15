@@ -4,6 +4,7 @@ rem Needs GOW_ROOT like cfg.bat. Steps and measured gain: docs\BUILDING.md, "Opt
 rem   pgo.bat gen    configure + build port\build_pgogen: instrumented exe (-fprofile-generate, GOW_PGO_GEN)
 rem   pgo.bat merge  every %GOW_ROOT%\local\pgo\*.profraw -> gow.profdata
 rem   pgo.bat use    configure + build port\build_pgouse, optimized with gow.profdata
+rem   pgo.bat use clean   the same after a NEW profile: clean the objects first (the profile is not tracked)
 rem The configure line is cfg.bat's plus the profile flags: keep the two in step.
 rem CLANG_RT_DIR overrides where clang_rt.profile-x86_64.lib is (the "23" is the clang major version).
 if "%GOW_ROOT%"=="" (echo set GOW_ROOT first & exit /b 1)
@@ -14,7 +15,7 @@ set "PGO_DATA=%GOW_ROOT%/local/pgo/gow.profdata"
 if "%1"=="gen" goto gen
 if "%1"=="merge" goto merge
 if "%1"=="use" goto use
-echo usage: pgo.bat gen^|merge^|use
+echo usage: pgo.bat gen^|merge^|use [clean]
 exit /b 2
 
 :merge

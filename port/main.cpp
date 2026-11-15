@@ -314,6 +314,8 @@ extern "C" int ppu_spin_pause, g_spurs_nap_us, g_spurs_lane_ovr[32];
 extern "C" int g_spu_slow_pct;
 extern "C" int g_rsx_slow_pct, g_gcm_main_slow_us;
 extern "C" unsigned long long g_vk_wait_us[4];   /* toolkit libs/video/rsx_vulkan_backend.c: fence waits */
+extern "C" long long g_rsx_slow_ticks;   /* toolkit: spin applied by the RSX slow-down probe (QPC ticks) */
+extern "C" volatile long long g_spu_slow_ticks;   /* the same for the SPU probe, all threads */
 extern "C" int g_vk_batch_max;   /* toolkit libs/video/rsx_vulkan_backend.c: draws per submission, in-run */
 extern "C" unsigned long long g_vk_flush_stat[2];   /* batch flushes, us ending and submitting them */
 extern "C" int g_eng_volume_inplace;   /* toolkit libs/video/rsx_draw_engine.c */
@@ -381,7 +383,11 @@ static DWORD WINAPI ab_gate(LPVOID arg)
     g_spurs_ab_mask = !strcmp(a.lever, "wws8") ? 1 << 8 : (!strcmp(a.lever, "wwsx") || !strcmp(a.lever, "reuse")) ? ab_wws_bits() : 7 << 15;   /* us_run= of the lever's workloads: BrBDblBufWrkld, or the EDGE lists */
     g_gcm_ab_on = 1;
     for (unsigned w = 0;; w++) {
-        const int on = !(((w + 1) >> 1) & 1);
+        /* on/off by a fixed pseudo-random sequence: a scene with a cycle of its own (the parked first fight has
+         * one of 4 s) aliases with any periodic pattern and reads as an effect of the lever. GOW_AB_PERIODIC=1
+         * restores on, off, off, on. */
+        static const int s_periodic = getenv("GOW_AB_PERIODIC") != nullptr;
+        const int on = s_periodic ? !(((w + 1) >> 1) & 1) : (int)(((w * 2654435761u) ^ ((w * 2654435761u) >> 15)) >> 7 & 1u);
         ab_set(a.lever, on);
         QueryPerformanceCounter(&t0);
         const unsigned f0 = ab_frame();
@@ -390,12 +396,13 @@ static DWORD WINAPI ab_gate(LPVOID arg)
         unsigned long long vw0[4];
         for (int k = 0; k < 4; k++) vw0[k] = g_vk_wait_us[k];
         const unsigned long long fl0 = g_vk_flush_stat[0], flu0 = g_vk_flush_stat[1];
+        const long long rs0 = g_rsx_slow_ticks, ss0 = g_spu_slow_ticks;
         Sleep(a.window_ms);
         const unsigned f1 = ab_frame();
         const long long gt = g_gcm_ab_ticks - gt0, gd = g_gcm_ab_draws - gd0;
         QueryPerformanceCounter(&t1);
         const long long runs = g_spurs_ab_runs - rn0;
-        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f passes=%lld words=%lld w_sync=%.1f w_slot=%.1f w_idle=%.1f w_present=%.1f flushes=%llu fl_ms=%.1f\n",
+        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f passes=%lld words=%lld w_sync=%.1f w_slot=%.1f w_idle=%.1f w_present=%.1f flushes=%llu fl_ms=%.1f rslow_ms=%.1f sslow_ms=%.1f\n",
                 a.lever, w, on, f1 - f0, (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart, runs,
                 g_spurs_ab_native - nt0,
                 runs ? 1e6 * (double)(g_spurs_ab_ticks - tk0) / (double)f.QuadPart / (double)runs : 0.0,
@@ -403,7 +410,9 @@ static DWORD WINAPI ab_gate(LPVOID arg)
                 (double)gt / (double)(t1.QuadPart - t0.QuadPart), g_gcm_ab_passes - gp0, g_gcm_ab_words - gw0,
                 (g_vk_wait_us[0] - vw0[0]) / 1000.0, (g_vk_wait_us[1] - vw0[1]) / 1000.0,
                 (g_vk_wait_us[2] - vw0[2]) / 1000.0, (g_vk_wait_us[3] - vw0[3]) / 1000.0,   /* ms of fence waits */
-                g_vk_flush_stat[0] - fl0, (g_vk_flush_stat[1] - flu0) / 1000.0);   /* batch flushes, ms ending + submitting */
+                g_vk_flush_stat[0] - fl0, (g_vk_flush_stat[1] - flu0) / 1000.0,   /* batch flushes, ms ending + submitting */
+                1e3 * (double)(g_rsx_slow_ticks - rs0) / (double)f.QuadPart,   /* spin applied by the probes: their control */
+                1e3 * (double)(g_spu_slow_ticks - ss0) / (double)f.QuadPart);
         fflush(stderr);
     }
     return 0;
