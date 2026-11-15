@@ -107,6 +107,16 @@ Lessons that cost days; keep them.
     to a texture that declares only its top-left part: the behaviour before those two fixes, for comparison.
     `RSX_SUBRECT_TEX=2` keeps the fix but sends a colour part through guest memory instead of the copy on the GPU
     (`[eng-stats]` then shows it under `s2guest`; the copy counts under `csnap`).
+  * Shadows that look swapped (a dark scene with small lit patches where objects should cast shadows):
+    `RSX_SHADOW_CMP_LOG=1` prints the first distinct depth-comparison set-ups a title uses (`[shadow-cmp] unit
+    ... format ... func ...`), and `RSX_SHADOW_CMP_FLIP=1` evaluates the comparison as "stored depth against
+    reference" instead of "reference against stored depth" (off by default; STATUS, 2026-11-15). Compare two
+    runs of the same build on frames with the same camera; sort the frame files by number, not by name.
+  * A whole feature can be taken out at the title's own frame table to see what it costs or what it draws:
+    the frame is a list of records run by one function, and skipping a record there removes its draws and
+    its job runs together (a skip in the renderer removes only the draws, and measures nothing when the
+    other side binds). That needs a private build that edits the lifted function, kept out of every
+    published tree; note that a record skipped in the first pass may be run again by the second.
 * **Hitches**: `ENG_SLOW_MS=<ms>` logs every draw end slower than that with its time by phase (`[eng-slow] ...
   | us: fetch pipe tex idxbuild be rest`), `VK_SLOW_MS=<ms>` every slow driver call (`[vk-slow]`). A large `pipe`
   is a pipeline being created, mostly the shader translation. The translations are kept on disk in

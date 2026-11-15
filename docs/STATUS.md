@@ -1102,6 +1102,48 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   times the corridor's), not a new pool. The original session had 6-10 frames/s in that part on its day's
   build. The arena is not reached by this replay.
 
+### Shadows: not the frame-rate lever, and probably drawn inverted (2026-11-15, sp0-sp3, sc0-sc1)
+* **What a frame's shadows are.** The game's frame is a table of records walked twice by one function
+  (`0x368C64`): a first pass that runs each record's callback or queues the record's work (a record that
+  reports "done" is left alone by the second pass), and a second pass that runs the remaining callbacks in
+  line. In the bench scene one frame has 1,202 queued records (the geometry) and 45 + 120 callback records.
+  Each of the six shadow maps is a begin record and an end record (callback `0x35B830`, a toggle) with its
+  casters between them: 1, 1, 3, 54, 99 and 193 queued records in the logged frame. The six mask passes
+  (128 single-triangle draws each, blend MIN into the alpha of one target) are drawn by the per-view
+  function the end record calls in the second pass (`0x359D60`).
+* **Skipping them, measured with a private lab build** (a switch read from the environment at the two
+  places the walk runs a record; one run per condition, same executable, the lab build is slower than the
+  play build):
+
+  | per frame | plain | casters skipped | masks skipped |
+  |---|---|---|---|
+  | draws | 2,689 | 2,376 | 1,922 |
+  | EDGE module runs | 1,948 | 1,670 | 1,948 |
+  | EDGE run time | 177 ms | 160 ms | - |
+  | frames per second | 13.1 | 7.5 | 13.6 |
+
+  The casters are 12% of the draws and 10-14% of the EDGE work; the masks are 29% of the draws, no EDGE
+  work and about 10% of the walker's time (draws times time per draw: 70.7 ms against 63.6 ms). Neither
+  side can give the 25% set beforehand as the line for going further, so shadows are closed as a
+  frame-rate lever. The caster skip was slower, not faster: a record skipped in the first pass is run
+  again by the second, which closes an empty segment for each (about 450 a frame); which call of that path
+  costs the time was not measured. Withdrawn: "shadows are 52% of the draws, so they are the lever".
+* **The scene is dark because of the mask passes, and the comparison looks inverted.** With the masks
+  skipped the courtyard is sunlit with no cast shadows; plain, it is almost all dark with a few small lit
+  patches on the ground (mean brightness of the lower 40% of the picture: 21-25 plain, 113-134 without the
+  masks). With the casters skipped and the masks drawn it stays dark, although every shadow-map pass
+  starts with a clear to the far value: an empty map reads "in shadow". The mask shader looks the map up
+  as a depth texture with comparison function 6 (the one set-up this scene uses; `RSX_SHADOW_CMP_LOG=1`
+  prints them). The toolkit evaluates that as "reference >= stored depth". With the operands the other
+  way round (`RSX_SHADOW_CMP_FLIP=1`, a diagnostic, off by default) the same view on the same build is
+  sunlit with shadows attached to their objects, and they fall where the plain picture has its lit
+  patches: beside the vases, under the enemy, a rectangle on the floor, at the character's feet (matched
+  camera, three frame pairs; judged by eye, the character moves between the frames). So in this scene the
+  current order shows lit and shadowed swapped. Not verified: that "stored depth against reference" is
+  the hardware's rule (it is what this title's choice of function 6 on a far-cleared map implies, and
+  what I recall being documented elsewhere); any second scene; any other title. The default is unchanged
+  until a second scene agrees and a person has looked at the pair.
+
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
   is dropped: with the translated shaders on disk, pipeline creation is already 0.1 s for the opening.)
@@ -1110,6 +1152,8 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
+* The shadow comparison (above): a second scene with `RSX_SHADOW_CMP_FLIP=1`, a person looking at the pair,
+  then the reversed order as this port's default and a rebuild of the play build.
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
