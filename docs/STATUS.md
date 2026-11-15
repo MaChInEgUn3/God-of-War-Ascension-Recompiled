@@ -674,7 +674,9 @@ of the corridor, the corridor is the bench fight.
   PGO build 17.6, standard build 12.9 and 13.8. The PGO build of that morning read controllers through XInput
   only (its build directory was older than the SDL option, BUILDING.md "Controllers"); it was rebuilt with the
   SDL backend before this series.
-* **A periodic dip that is not the game's**: on the test machine the frame rate falls by 25-35% for about 10 s
+* **A periodic dip that is not the game's** (measured again on 2026-11-15, "The periodic stall and the dip
+  after it" below: the stall is larger than said here, and the job runs are not much longer in the dip): on
+  the test machine the frame rate falls by 25-35% for about 10 s
   every 28-34 s, with a stall of 0.3-0.75 s at the start, in both scenes. In a dip the title does the same work
   (the same functions, the same job runs and draws per frame) but each EDGE job run takes 26-34% longer and each
   draw end 62% longer. It coincides, second for second, with a burst of other processes and of kernel time on the
@@ -1024,6 +1026,40 @@ under +3%). Timelines are 5 s windows of `PS3_FTRACE` with every module run reco
   for (taken as the one that falls silent at the wake) has no run in progress for 85% of the sleep while the
   lanes run the other lists; whether its jobs could have run then is not known. The fourth lane already cut
   that sleep to 0.8 ms and the frames did not move.
+
+### The periodic stall and the dip after it (2026-11-15, f1s-f1p)
+On the test machine, play build, every scene (menu, loading, corridor fight, still view, the prologue).
+* **What a player sees.** About every 28-29 s no frame is shown for 1.0-1.9 s, and for about 15 s after that
+  the frame rate is 3-14% lower (median about 9% in eight corridor runs). Counted from the flip lines of the
+  logs (`analysis/stalls.py`): one stall of 0.9 s or more per 73 s of play on 2026-11-15 (56 runs).
+* **The stall is one call.** With `VK_SLOW_MS=20` the port prints every slow Vulkan call: one `vkQueueSubmit`
+  is slow every 28-31 s from the first seconds of a run on, either 60-95 ms or 0.9-1.5 s (20 slow submits,
+  8.6 s in all, in a 300 s run). The sampler has the walker thread in that call for the whole stall, inside
+  the system call that hands a command buffer to the GPU's hardware queue. A 32 s timeline of the still view
+  shows the rest: the walker's FIFO pass lasts about 1 s, the main thread sleeps 910 ms waiting for the
+  walker's flip of the previous frame (`0x375A88`), the SPU side is idle (the EDGE lists are polled and have
+  no work), two flips in that second against 14-15.
+* **The dip is waiting, not slower code.** In the 15 s after a stall the EDGE job runs are 2.5-5.6% longer
+  (eight corridor runs), not the 26-34% measured on 2026-11-14 on a loaded machine. In the timeline the main
+  thread sleeps twice as often and twice as long waiting for batches of workload 0 (`0x3436BC`: 17 ms against
+  8 ms, 8.9 against 4.5 a second), while the kernel threads nap more (1.47 against 0.93 threads idle) and the
+  time from a kick of that workload to its next run is unchanged (median 0.4 ms). What those batches wait
+  for is not known.
+* **The trigger is the machine's, and it comes in regimes.** With no game running, the machine's counters
+  show the same tick: every 27-29 s several desktop programs re-create GPU surfaces within three seconds
+  and the adapter frees and re-allocates 55-70 MB. Stalls of 0.9 s or more per run, by half-day, in the logs
+  since 2026-11-04: between 0.0 (21 runs on the morning of 2026-11-12, a day the machine was restarted) and 4.0; they switch
+  on and off within a day and do not follow the port's commits. On the morning of 2026-11-15 the first four
+  runs after a restart had at most one each, every later run three to ten.
+* **What the port can do is open.** The game cannot show frames while the GPU queue takes no work, whichever
+  thread submits. Open: whether the submit can be kept off the frame's critical path for the short events,
+  and the dip's waits.
+* Withdrawn from the 2026-11-14 section: "a stall of 0.3-0.75 s" (it is 1.0-1.9 s in today's runs) and, for
+  today's runs, "each EDGE job run takes 26-34% longer" in a dip.
+* **Two more scenes read with the timeline, normal seconds only**: the parked first fight of the prologue:
+  25 frames/s, kernel threads 4.4 of 6 in runs, the walker in passes 78% of the time, the main thread's sleeps
+  5.9 ms of a 39.9 ms frame over four call sites; the still view: 14-15 frames/s, kernel threads 5.0-5.2 of 6.
+  Neither has one wait that holds a quarter of the frame, so neither is a scene where a single lever pays.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache

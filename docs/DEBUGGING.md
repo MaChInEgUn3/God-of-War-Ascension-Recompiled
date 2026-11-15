@@ -322,6 +322,15 @@ Lessons that cost days; keep them.
   together with `PS3_SAMPLE_HOST=1` credits every sample by a stack scan, not by the instruction pointer: use
   `PS3_SAMPLE_MAIN=1` alone. In that mode host code that follows a lifted body in the image is credited to
   that body (an `spu_LS_` name on a PPU thread is this).
+* **Stalls**: `python analysis/stalls.py "<logs glob>"` counts them from the `[flip] N at T ms` lines (one per
+  ten flips): a ten-flip group that exceeds the median of the thirty around it, per day and by run clock, and
+  folds their wall-clock times over a scanned period. `VK_SLOW_MS=<ms>` prints every Vulkan call of the
+  backend that takes that long (`[vk-slow] <call> <ms>`): the tool for one outlier call, not for averages.
+  `PS3_SAMPLE_MOD=<system dll>` (with `PS3_SAMPLE_HOST=1`) buckets that DLL's samples by address; resolve them
+  against its export table (nearest export at or below) to name the system call a thread is blocked in.
+  `python analysis/ftsec.py <ftrace>` reads a timeline second by second (flips, kernel threads in runs, EDGE
+  runs and their length, the walker's share in passes, fence waits, the main thread's sleeps); runs that
+  began before the window started leave no span.
 * **Timeline of module runs**: `PS3_FTRACE_MIN_US=1` keeps every module run (one SPU-busy span each, with the
   workload) and every kernel wait; 5 s of the corridor fight is about 270,000 spans.
   The lever `burn` separates pacing from contention: a spare thread spins `GOW_AB_BURN` microseconds (default
