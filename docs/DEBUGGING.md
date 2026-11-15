@@ -311,6 +311,11 @@ Lessons that cost days; keep them.
   the pattern's shifts is the error of one run in that scene; the per-window standard error is too small
   because neighbouring windows are alike. The slow-down levers print the spin they applied per window
   (`rslow_ms=` for `rslow`, `sslow_ms=` for `slow`): a null without that control says nothing.
+  The lever `burn` separates pacing from contention: a spare thread spins `GOW_AB_BURN` microseconds (default
+  2000) out of about every 5 ms while on, with nothing slowed, and `burn_ms=` shows what it spun. If frames
+  fall with it as they do with a slow-down probe of the same spin, the probe measured the machine's load
+  sensitivity. A ceiling probe that dropped every draw end was used once (STATUS, 2026-11-15) and not kept:
+  do not leave diagnostics in PGO-hot functions.
   The `[ab]` line also carries `flushes=` and `fl_ms=` (batch flushes in the window and the ms spent ending and
   submitting them), and the lever `bmax` changes the draws per batch while the game runs (`GOW_AB_BMAX`,
   default 256, against the configured size). Read medians beside means: single slow submits dominate a mean.

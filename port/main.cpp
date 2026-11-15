@@ -333,6 +333,25 @@ static int ab_wws_bits(void)
     return bits;
 }
 
+/* "burn": a spare thread that spins GOW_AB_BURN microseconds (default 2000) and then sleeps 3 ms, while on: the
+ * CPU a slow-down probe burns, without slowing anything. Frames falling with it on = the machine's sensitivity
+ * to load, to set beside a probe's effect. s_burn_ticks = the spin done (the control). */
+static volatile int s_burn_on;
+static volatile long long s_burn_ticks;
+static DWORD WINAPI ab_burn_thread(LPVOID)
+{
+    LARGE_INTEGER f, t0, t;
+    QueryPerformanceFrequency(&f);
+    const char* e = getenv("GOW_AB_BURN");
+    const LONGLONG spin = f.QuadPart * (e ? atoi(e) : 2000) / 1000000;
+    for (;;) {
+        if (!s_burn_on) { Sleep(2); continue; }
+        QueryPerformanceCounter(&t0);
+        do { YieldProcessor(); QueryPerformanceCounter(&t); } while (t.QuadPart - t0.QuadPart < spin);
+        s_burn_ticks += t.QuadPart - t0.QuadPart;
+        Sleep(3);
+    }
+}
 static void ab_set(const char* lever, int on)
 {
     if (!strcmp(lever, "icall")) g_ppu_icall_fast = on;
@@ -352,6 +371,11 @@ static void ab_set(const char* lever, int on)
     else if (!strcmp(lever, "idle")) { const char* e = getenv("GOW_AB_IDLE"); s_idle_wait = on ? (e ? atoi(e) : 2) : 0; }
     else if (!strcmp(lever, "parkcap")) s_park_cap = on;
     else if (!strcmp(lever, "bmax")) { const char* e = getenv("GOW_AB_BMAX"); g_vk_batch_max = on ? (e ? atoi(e) : 256) : 0; }   /* draws per batch */
+    else if (!strcmp(lever, "burn")) {
+        static HANDLE th;
+        if (!th) th = CreateThread(nullptr, 0, ab_burn_thread, nullptr, 0, nullptr);
+        s_burn_on = on;
+    }
     else if (!strcmp(lever, "vol")) g_eng_volume_inplace = on;   /* RSX_VOLUME_INPLACE: a changed volume is rewritten in place */
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
@@ -396,13 +420,13 @@ static DWORD WINAPI ab_gate(LPVOID arg)
         unsigned long long vw0[4];
         for (int k = 0; k < 4; k++) vw0[k] = g_vk_wait_us[k];
         const unsigned long long fl0 = g_vk_flush_stat[0], flu0 = g_vk_flush_stat[1];
-        const long long rs0 = g_rsx_slow_ticks, ss0 = g_spu_slow_ticks;
+        const long long rs0 = g_rsx_slow_ticks, ss0 = g_spu_slow_ticks, bn0 = s_burn_ticks;
         Sleep(a.window_ms);
         const unsigned f1 = ab_frame();
         const long long gt = g_gcm_ab_ticks - gt0, gd = g_gcm_ab_draws - gd0;
         QueryPerformanceCounter(&t1);
         const long long runs = g_spurs_ab_runs - rn0;
-        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f passes=%lld words=%lld w_sync=%.1f w_slot=%.1f w_idle=%.1f w_present=%.1f flushes=%llu fl_ms=%.1f rslow_ms=%.1f sslow_ms=%.1f\n",
+        fprintf(stderr, "[ab] lever=%s w=%u on=%d frames=%u secs=%.3f runs=%lld native=%lld us_run=%.2f draws=%lld us_draw=%.2f rsx_busy=%.3f passes=%lld words=%lld w_sync=%.1f w_slot=%.1f w_idle=%.1f w_present=%.1f flushes=%llu fl_ms=%.1f rslow_ms=%.1f sslow_ms=%.1f burn_ms=%.1f\n",
                 a.lever, w, on, f1 - f0, (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart, runs,
                 g_spurs_ab_native - nt0,
                 runs ? 1e6 * (double)(g_spurs_ab_ticks - tk0) / (double)f.QuadPart / (double)runs : 0.0,
@@ -412,7 +436,8 @@ static DWORD WINAPI ab_gate(LPVOID arg)
                 (g_vk_wait_us[2] - vw0[2]) / 1000.0, (g_vk_wait_us[3] - vw0[3]) / 1000.0,   /* ms of fence waits */
                 g_vk_flush_stat[0] - fl0, (g_vk_flush_stat[1] - flu0) / 1000.0,   /* batch flushes, ms ending + submitting */
                 1e3 * (double)(g_rsx_slow_ticks - rs0) / (double)f.QuadPart,   /* spin applied by the probes: their control */
-                1e3 * (double)(g_spu_slow_ticks - ss0) / (double)f.QuadPart);
+                1e3 * (double)(g_spu_slow_ticks - ss0) / (double)f.QuadPart,
+                1e3 * (double)(s_burn_ticks - bn0) / (double)f.QuadPart);
         fflush(stderr);
     }
     return 0;

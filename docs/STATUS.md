@@ -914,7 +914,7 @@ what the fight's re-uploads are:
   Neither has that cycle (their frames per window follow the slow 25-30 s wave of the machine, which the
   pattern cancels), so the probes published for them are not aliases. But those offsets are also the honest
   error of one run: about +-3% in the corridor and +-1% in the still view. The +-1.6-1.8% quoted with the
-  corridor probes assumed independent windows and is too small; read them as -9.7% and -8.2%, each +-3.
+  corridor probes assumed independent windows and is too small; read them as -9.7% and -8.2%, each +-3. Redone with the new pattern (next section): EDGE -16.2% and -11.8%, the walker -3.2%.
 * **The fix.** The port now switches by a fixed pseudo-random sequence (`GOW_AB_PERIODIC=1` restores the old
   order). With nothing switched it reports, over every shift of the sequence, a spread of 2.3% in the
   corridor, 1.4% in the still view and 2.2-3.0% in the prologue scene: no bias, and that spread is the error
@@ -926,6 +926,28 @@ what the fight's re-uploads are:
   slowed by 20% (134-147 ms per on-window): -3.3% and -3.7%, combined -3.5% +- 2.4%. So slowing EDGE cost
   frames in both runs; the walker is not resolved. Not separated yet: how much of an EDGE probe's effect is
   the extra CPU it burns (about 0.4 of a core in on-windows) on a machine that is sensitive to load.
+
+### What paces the corridor fight (2026-11-15, k1-k5)
+In-run A/B in the corridor fight, the pseudo-random pattern, 1 s windows, one run each unless said; one run's
+error there is about +-3%. Each probe logs the spin it applied.
+* **Every draw end skipped** (a ceiling probe: the walker still parses the FIFO and keeps its state but resolves
+  and draws nothing; the picture is wrong while it is on; draws per window 0 against 38,220): frames
+  +7.9% +- 3.3%, the same in the first and in later on-windows. The walker is in passes 39% of the time with
+  it on against 83% off. The line set beforehand: a redesign of the walker's draw path (a two-stage walker)
+  would be worth sizing at +25% or more, and under +10% that side is closed for this scene. It is closed:
+  removing ALL the work of draw ends buys under 10% here.
+* **EDGE workloads 15-17 slowed by 20%** (393 and 405 ms of spin per on-window): -16.2% +- 3.2% and
+  -11.8% +- 2.9% (the old pattern had given -9.7%). Binding. **The walker slowed by 20%** (154 ms):
+  -3.2% +- 2.8% (old pattern -8.2%): small or none.
+* **Is the EDGE figure CPU contention?** A spare thread spinning 349 ms per on-window, with nothing slowed:
+  -1.9% +- 3.3%. No: slowing EDGE costs frames because EDGE paces them, not because of the CPU the probe burns.
+* **Ceilings to hold any lever against in this scene**: about +8% for anything on the walker's draw path;
+  about +15-20% on the EDGE side, where the walker would bind next (frames / share of time in passes).
+* My inference, not a measurement: this is why the walker-side changes of 2026-11-14 (joining draws, the
+  repeat comparison, the volume upload, the view destroys, larger batches, a fetch worker) did not move the
+  frame rate of this scene even where they removed real work.
+* The skip probe is not kept: it sat in the hottest function of the engine, where any edit discards that
+  function's PGO counts until the profile is regenerated.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -946,12 +968,10 @@ what the fight's re-uploads are:
 * The EDGE geometry workloads (15, 16, 17) are the largest pacing share in both probed scenes (probes above).
   Their interpreted fragments are lifted for the scenes a script reaches; what is left is what their job runs
   cost and whether more of them can run side by side. Probe the still view again, workload 3 first.
-* A second thread for the RSX walker was the plan until the probe showed the walker has slack in the still
-  view. In the corridor fight the walker and the EDGE lists are co-limiting (probes above), and the walker alone
-  caps the fight near 21 frames/s. Before any second thread: the backend's fixed cost per draw (~10 ms per
-  frame, about 5 of it batch flushes, a third of that waiting for a slot, which a second thread would not
-  remove) and the content hashes (1-2 ms per frame). The waits in image releases turned out to be conserved
-  (section above).
+* Walker-side work is closed for the corridor fight by the skip ceiling above (at most about +8% there). Next
+  is the EDGE side (ceiling about +15-20%): first whether the three EDGE job lists are serial by the title's
+  design or by the port's policy, and whether one of them is the long one; the levers tried there before
+  (more lanes, a shorter idle pause) need a control and a rerun with the unbiased pattern.
 * (Answered in part 2026-11-11: the sleep at `0x3E8388` is the game's limit on frames in flight. What clears
   the count it waits on is not established; in the still view slowing the walker does not lengthen the frame
   and slowing the EDGE workloads does.)
