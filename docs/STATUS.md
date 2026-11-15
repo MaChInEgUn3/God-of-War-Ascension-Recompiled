@@ -1102,7 +1102,7 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   times the corridor's), not a new pool. The original session had 6-10 frames/s in that part on its day's
   build. The arena is not reached by this replay.
 
-### Shadows: not the frame-rate lever, and probably drawn inverted (2026-11-15, sp0-sp3, sc0-sc1)
+### Shadows: not the frame-rate lever, and probably drawn inverted (2026-11-15, sp0-sp3, sc0-sc2)
 * **What a frame's shadows are.** The game's frame is a table of records walked twice by one function
   (`0x368C64`): a first pass that runs each record's callback or queues the record's work (a record that
   reports "done" is left alone by the second pass), and a second pass that runs the remaining callbacks in
@@ -1141,8 +1141,12 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   camera, three frame pairs; judged by eye, the character moves between the frames). So in this scene the
   current order shows lit and shadowed swapped. Not verified: that "stored depth against reference" is
   the hardware's rule (it is what this title's choice of function 6 on a far-cleared map implies, and
-  what I recall being documented elsewhere); any second scene; any other title. The default is unchanged
-  until a second scene agrees and a person has looked at the pair.
+  what I recall being documented elsewhere); any other title. A second route agrees (sc2: the replay of
+  the played session through the opening, the first fight and into the first level, flipped, against the
+  same replay plain): the only set-up it logs is again function 6 on that format (another map size), the
+  fight's platform, the first level's courtyard and the weapon in the menu come out lit, and nothing looks
+  worse on a sheet of 24 frames per run (the two runs are not frame-matched). The default is unchanged
+  until a person has looked at the pair.
 
 ## Next
 * The first run through a scene: translate shaders off the walker thread. (Keeping the driver's pipeline cache
@@ -1152,8 +1156,8 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
-* The shadow comparison (above): a second scene with `RSX_SHADOW_CMP_FLIP=1`, a person looking at the pair,
-  then the reversed order as this port's default and a rebuild of the play build.
+* The shadow comparison (above): a person looking at the pair, then the reversed order as this port's
+  default and a rebuild of the play build.
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
