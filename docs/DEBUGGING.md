@@ -118,6 +118,13 @@ Lessons that cost days; keep them.
     Read the last block. Equal counts on two registers tie them to the same draws (here: polygon offset,
     the depth control word and the front-face setting of the shadow casters). Take the method numbers from
     the toolkit's own tables, not from memory: two of the first list's were wrong.
+  * Polygon offset and depth clamp: `PS3RECOMP_ENG_POLY_OFFSET=0` draws without the guest's polygon offset
+    and `PS3RECOMP_ENG_DEPTH_CLAMP=0` always clips at the near and far planes (the behaviour before either
+    was honoured). A pass dump's `draws.txt` shows ` po <factor>/<bias>` on every draw that has the fill
+    offset on. To check that an offset reaches a depth target, dump the same second of a view that repeats
+    with the switch on and off and compare each pass's depth minimum in `passes.txt`: passes with only
+    static geometry repeat to the last digit inside one run, so any difference between the runs is the
+    offset; it must be larger with the offset on.
   * A whole feature can be taken out at the title's own frame table to see what it costs or what it draws:
     the frame is a list of records run by one function, and skipping a record there removes its draws and
     its job runs together (a skip in the renderer removes only the draws, and measures nothing when the

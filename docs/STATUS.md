@@ -1155,10 +1155,31 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * **What else the caster passes ask for** (`RSX_REG_CENSUS`, 5.4 million pipeline look-ups in the corridor).
   The look-ups with the shadow casters' front-face setting (10% of all; in the pass dump every caster draw
   has it and no mask draw does) also have polygon offset for filled polygons switched on and the depth
-  control word `0x110` where every other draw has `0x1`. This port's renderer honours neither. Upstream
+  control word `0x110` where every other draw has `0x1`. This port's renderer honoured neither. Upstream
   honours the depth control word on Vulkan (after v0.17.0) and the polygon offset in its engine and on
-  one other backend, not on Vulkan. Expected, not measured: casters nearer the light than its near plane
-  missing from the maps, and lit surfaces shadowing themselves. Also seen: the depth-bounds test on for
+  one other backend, not on Vulkan.
+  * Both upstream commits are now cherry-picked, and the Vulkan backend applies the offset (depth bias
+    as dynamic state next to the stencil reference; `PS3RECOMP_ENG_POLY_OFFSET=0` and
+    `PS3RECOMP_ENG_DEPTH_CLAMP=0` draw as before). The title's values on the caster draws: factor 2 and
+    a bias of 1,570-40,700 of the depth buffer's smallest steps, depending on the map.
+  * The offset, checked on a view that repeats (the save at the arena entrance, no input, a pass dump at
+    the same second with the offset on and off). Five of the ten shadow maps hold only static casters:
+    their depth minimum is the same to the last digit in both dumped frames of a run, and with the offset
+    on it is larger by 1.9e-4 to 5.1e-3 (depths 0.09-0.23), the same digits again in the second frame. In
+    the picture (shadow comparison in upstream's order) the character's back and a lit pillar are bright
+    with the offset and darker without it: they were shadowing themselves. The view is not perfectly
+    still (fire, idle animation), so that is a difference image read by eye, not a pixel count.
+  * Limitation, not fixed: the host depth buffer is a float format, whose smallest step shrinks with the
+    depth (2^-24 only from 0.5 up, half of it per octave below), so the constant part of the offset is
+    under-applied on the nearer part of a map; the slope part is exact. The measured shifts include the
+    slope part, so they do not say how much is missing.
+  * The depth control word: no visible or measurable change in the corridor (no shadow map there has a
+    caster in front of the near plane: the maps' minima stay between 0.017 and 0.77). Kept as upstream's.
+  * On the replay route (opening, first fight, first level) the caster look-ups are 20% of all and carry
+    the same pair of settings; the route renders through with nothing worse on a sheet of 16 frames (not
+    frame-matched). With no switch set the corridor shows the same dark picture as before, at 13.0
+    frames/s against 14.5 for the previous build in one run each: not resolved, to be repeated in
+    alternating pairs before the play build is rebuilt. Also seen: the depth-bounds test on for
   24% of the look-ups and two-sided stencil for 53% (both handled); user clip planes, logic op, polygon
   mode, fog mode, primitive restart and the frequency divider never set.
 
@@ -1171,8 +1192,9 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
 * The shadow comparison (above): a person looking at the pair, then upstream's order as the default and a
-  rebuild of the play build. With it: upstream's depth-control change, and polygon offset on Vulkan if the
-  title's factor and bias are not zero.
+  rebuild of the play build (it carries the depth-control change and the polygon offset, which are in the
+  standard build already). Before that rebuild: the standard build against the previous one in
+  alternating pairs (one run each gave 13.0 against 14.5 frames/s).
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
