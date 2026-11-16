@@ -26,7 +26,16 @@ Lessons that cost days; keep them.
   "draw batching: on" once and then a draws/submissions count every 16384 flushes.
 * **Run-time selectable tracer**: lift once with `PPU_TRACE_FUNCS=all`, then pick functions per run with
   `PPU_TRACE_ADDRS=3c93e8,2a0000-2b0000` (hex, ranges allowed) and cap with `PPU_TRACE_MAX`. The GoW:A port defaults `PPU_TRACE_ADDRS=0` (trace nothing). Each line shows
-  `tid`, `r3..r7` and `lr`. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
+  `tid`, `r3..r7`, `lr` and `us=` (host microseconds on a steady clock: the gap between two entries times what ran
+  between them, e.g. each call of a guest wait loop when the next traced entry follows it). With `PS3_FTRACE` on,
+  every traced entry is also an instant of kind 15 on the timeline (who = tid, a = function, b = r3), so what the
+  SPU side did during a guest wait reads off one file on one clock (`analysis/ftwait.py <trace> [obj=wid ...]`:
+  per waited job list the wait's length, that workload's runs inside it, kernel threads busy, busy time by
+  workload, nap time). The tracer switches itself off when `PPU_TRACE_MAX` lines are spent and `PPU_TRACE_MAX=0`
+  disables it: for a window late in a run keep the cap high (400000) and trace few functions; a trace that logs
+  from boot fills a small cap in the menus, so check that its lines reach the scene before reading counts per
+  frame off it. A store watch (`SPU_LLWATCH`) slows the watched run several times over: use the ORDER of its
+  events, not their times. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
   so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.
 * **Which functions go with a kind of frame** (needs the `all` lift): `PPU_FRAME_FUNCS=<hex ea of a guest frame

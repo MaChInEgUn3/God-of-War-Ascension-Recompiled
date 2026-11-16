@@ -1249,16 +1249,37 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   not set it. They show only that workload 11 at two lanes gives nothing, with or without the shadow mask
   passes. Nothing follows about EDGE width, and "the main thread holds the frame" was an inference by
   elimination, not a measurement.)
-* Frame rate, the main thread's busy-waits (2026-11-16, mt1-mt3, ml1, im1-im2). The spin that takes about a
-  third of the main thread (`0x466E38`) waits until every worker has passed the last queued job of list
-  index 3 of eight job lists: RenJobSet (workloads 9-12), HighestPrio6 (2), ModelServer (5), RenderJobs
-  (13) and MeshProcJobs (14); none is an EDGE list. Module run time per frame in the corridor (12 s
-  trace, 75.9 ms per frame): EDGE 15-17 about 53 ms each at three wide, workload 8 49.7 ms on a single
-  thread, General (3) 40.8 ms, RenderJobs 27.0 ms strictly one at a time, RenJobSet 30 ms together,
-  MeshProcJobs 4.8 ms. Tried so far, both null: three lanes for workloads 2, 5, 13 and 14 (+1.3% +- 3.5,
-  one run; whether the lever applied to them is not verified) and looking at idle workloads on every
-  pass instead of every 16th (+1.7% and +0.2% in two pairs). Open: whether RenderJobs or workload 8 is
-  what releases the main thread, and whether they are short of a thread or simply cost that much.
+* Frame rate, the main thread's busy-waits (2026-11-16, mt1-mt9, ml1, im1-im2). Read from the lifted code,
+  `0x466E38` spins until every queued command of one job list has been taken and finished (the minimum of
+  the list's next-index and its six per-worker slots reaches the last queued index). In the corridor the main
+  thread calls it about ten times a frame, in a fixed order, always on list index 3: RenJobSet (workloads
+  9-12), HighestPrio6 (2), MeshProcJobs (14), RenderJobs (13), one more list and ModelServer (5). Timed with
+  the stamped trace (standard build, 69 ms frames; upper bounds, the interval runs to the next traced entry):
+  MeshProcJobs 19.6 ms, RenderJobs 23.5 ms, HighestPrio6 1.8 ms, the rest 0-1.4 ms. On one timeline with the
+  SPU side: the RenderJobs interval is about 11.7 ms of spin followed by a sleep at `0x3E8388`; during the
+  MeshProcJobs wait that workload runs 0.36 ms and RenderJobs 17.4 ms, so the two waits are one block that
+  waits for RenderJobs.
+  * Workloads by id (creation order): 0 CollisL, 1 General, 2 HighestPrio6, 3 General6, 4 SysMisc,
+    5 ModelServer, 6 ModelServerPrep, 7 BatchJobList, 8 BrBDblBufWrkld, 9-12 RenJobSet, 13 RenderJobs,
+    14 MeshProcJobs, 15-17 EDGE0-2, 18 RsxSync. Module run time per frame (12 s trace, play build, 75.9 ms
+    frames): EDGE about 53 ms each at three wide, workload 8 49.7 ms on one thread, General6 40.8 ms,
+    RenderJobs 27.0 ms one at a time (about 35 jobs of 0.75 ms), RenJobSet 30 ms together, MeshProcJobs
+    4.8 ms (one 4.9 ms job).
+  * RenderJobs is real lifted job work (sampler on that workload: 77% in one job module, two functions hold
+    29%; 22% SPU runtime, of it channel writes 8%), and it is not a chain: with three lanes its wall time
+    per frame falls from 27.0 to 11.1 ms. The frame does not shorten (one held-on run on a loaded machine;
+    in-run test of three lanes for workloads 2, 5, 13 and 14: +1.3% +- 3.5); the main thread's sleeps grow
+    instead. Looking at idle workloads on every kernel pass instead of every 16th: +1.7% and +0.2% (null).
+  * Whole frames: 4.68 of the six kernel threads are in module runs on average. Four threads carry EDGE
+    (0.58 each, 0.85 busy in all), one carries the audio workload (0.65), and the title's SPU 4, where its
+    priority table gives the EDGE lists priority 0, is 0.45 busy. That spare thread is not an EDGE lever:
+    only one EDGE list has runs in progress at a time (63.5 of 75.9 ms; two lists at once 0.2 ms), three
+    wide, so EDGE is not short of threads (four lanes were closed on 2026-11-15).
+  * Reading (not a measurement): no single wait or width holds the frame. The walker's work per frame
+    (about 22 us a draw times about 2,690 draws) and the SPU work per frame (about 275 ms without audio, on
+    at most six threads) both sit within a quarter of the frame time, and each scheduling lever tried
+    alone moved nothing. What is left are cost levers: the EDGE job code, the walker's cost per draw, and
+    RenderJobs' two hot functions.
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
