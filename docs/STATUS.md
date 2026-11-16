@@ -1243,15 +1243,22 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * The play build with the shadow comparison fix, the depth-control change and the polygon offset: rebuilt
   with the profile, then measured against the previous play build in alternating pairs. A person looking
   at the scenes with it.
-* (Answered 2026-11-16: more EDGE lanes together with less walker work gives nothing either. On the lab
-  build, the lanes lever in pseudo-random 1 s windows, four 300 s corridor runs plain and four with the
-  shadow mask passes skipped (29% fewer draws; the walker's busy share falls from 0.89 to 0.80-0.85):
-  frames with the lever on against off +0.1% (per run +3.7, +3.4, -1.0, -5.7; se 2.2) plain and +0.0%
-  (-0.5, -2.4, -0.1, +3.2; se 1.2) with the masks off, and the frame rate itself is the same in both sets
-  (13.3-15.1 frames/s). The line set beforehand was a difference of 3 points. So with slack on the walker
-  and more width on EDGE the frame still does not shorten: the third side, the main thread, holds it.
-  No cheap frame-rate lever is left among the ones tried; what remains is the title's own main-thread
-  work per frame, or drawing less.)
+* (2026-11-16, corrected the same day: an earlier version of this bullet said that more EDGE lanes together
+  with less walker work gives nothing. That was NOT what was measured: the in-run lanes lever changes the
+  workloads named by `GOW_AB_LANES`, whose default is workload 11 at two lanes, and the eight lab runs did
+  not set it. They show only that workload 11 at two lanes gives nothing, with or without the shadow mask
+  passes. Nothing follows about EDGE width, and "the main thread holds the frame" was an inference by
+  elimination, not a measurement.)
+* Frame rate, the main thread's busy-waits (2026-11-16, mt1-mt3, ml1, im1-im2). The spin that takes about a
+  third of the main thread (`0x466E38`) waits until every worker has passed the last queued job of list
+  index 3 of eight job lists: RenJobSet (workloads 9-12), HighestPrio6 (2), ModelServer (5), RenderJobs
+  (13) and MeshProcJobs (14); none is an EDGE list. Module run time per frame in the corridor (12 s
+  trace, 75.9 ms per frame): EDGE 15-17 about 53 ms each at three wide, workload 8 49.7 ms on a single
+  thread, General (3) 40.8 ms, RenderJobs 27.0 ms strictly one at a time, RenJobSet 30 ms together,
+  MeshProcJobs 4.8 ms. Tried so far, both null: three lanes for workloads 2, 5, 13 and 14 (+1.3% +- 3.5,
+  one run; whether the lever applied to them is not verified) and looking at idle workloads on every
+  pass instead of every 16th (+1.7% and +0.2% in two pairs). Open: whether RenderJobs or workload 8 is
+  what releases the main thread, and whether they are short of a thread or simply cost that much.
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
