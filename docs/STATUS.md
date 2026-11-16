@@ -1177,9 +1177,12 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
     caster in front of the near plane: the maps' minima stay between 0.017 and 0.77). Kept as upstream's.
   * On the replay route (opening, first fight, first level) the caster look-ups are 20% of all and carry
     the same pair of settings; the route renders through with nothing worse on a sheet of 16 frames (not
-    frame-matched). With no switch set the corridor shows the same dark picture as before, at 13.0
-    frames/s against 14.5 for the previous build in one run each: not resolved, to be repeated in
-    alternating pairs before the play build is rebuilt. Also seen: the depth-bounds test on for
+    frame-matched). With no switch set the corridor shows the same dark picture as before.
+  * Cost: none resolved. One run of the new build had 13.0 frames/s against 14.5 for the previous build,
+    so the corridor was run four times on the new build alone, alternating the default with both
+    switches off: 13.80 and 13.67 frames/s with the changes, 13.35 and 13.83 without (ratios +3.4% and
+    -1.2%). The first figure was the machine. Not covered by this pair: depth bias being enabled on
+    every pipeline, which the switches do not undo, and the previous build itself, which was not kept. Also seen: the depth-bounds test on for
   24% of the look-ups and two-sided stencil for 53% (both handled); user clip planes, logic op, polygon
   mode, fog mode, primitive restart and the frequency divider never set.
 
@@ -1193,8 +1196,7 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
 * The shadow comparison (above): a person looking at the pair, then upstream's order as the default and a
   rebuild of the play build (it carries the depth-control change and the polygon offset, which are in the
-  standard build already). Before that rebuild: the standard build against the previous one in
-  alternating pairs (one run each gave 13.0 against 14.5 frames/s).
+  standard build already).
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
