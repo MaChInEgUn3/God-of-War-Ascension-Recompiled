@@ -1239,8 +1239,15 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * The play build with the shadow comparison fix, the depth-control change and the polygon offset: rebuilt
   with the profile, then measured against the previous play build in alternating pairs. A person looking
   at the scenes with it.
-* Frame rate, the one combination not tried: more EDGE lanes together with less walker work (every lever so
-  far was judged alone, with both sides near 95% busy).
+* (Answered 2026-11-16: more EDGE lanes together with less walker work gives nothing either. On the lab
+  build, the lanes lever in pseudo-random 1 s windows, four 300 s corridor runs plain and four with the
+  shadow mask passes skipped (29% fewer draws; the walker's busy share falls from 0.89 to 0.80-0.85):
+  frames with the lever on against off +0.1% (per run +3.7, +3.4, -1.0, -5.7; se 2.2) plain and +0.0%
+  (-0.5, -2.4, -0.1, +3.2; se 1.2) with the masks off, and the frame rate itself is the same in both sets
+  (13.3-15.1 frames/s). The line set beforehand was a difference of 3 points. So with slack on the walker
+  and more width on EDGE the frame still does not shorten: the third side, the main thread, holds it.
+  No cheap frame-rate lever is left among the ones tried; what remains is the title's own main-thread
+  work per frame, or drawing less.)
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
