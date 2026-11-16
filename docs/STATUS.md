@@ -1176,7 +1176,10 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   * **The play build** is rebuilt with a new profile (the old profile no longer matched the renderer's
     hottest functions after today's changes: three training runs, a clean optimized build, no function
     left unmatched). On the replay route it draws the opening, the first fight and the first level as the
-    standard build does, and in the corridor its first two camera views are the sunlit ones.
+    standard build does, and in the corridor its first two camera views are the sunlit ones. Against the
+    previous play build in two alternating corridor pairs (40 s of windows each, all four runs lit or
+    old-look throughout): 14.99 and 15.83 frames/s against 15.25 and 15.05 (-1.7% and +5.2%): no cost
+    resolved for the comparison fix, the polygon offset, the depth clamp and the new profile together.
   * **Open fault:** in four of six corridor runs of the fast builds, once the fight has carried the camera
     to a third view near the far wall, everything the sun should light goes unlit and stays so (the
     health bar is still there and the sky is bright, so it is not a death screen; the frame's draws, job
