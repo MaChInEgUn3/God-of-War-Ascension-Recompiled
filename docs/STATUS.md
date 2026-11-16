@@ -3026,7 +3026,7 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
     they do), the RSX walker is idle 86% of the time and only the audio SPU runs. The run that ends a piece is
     `Wws_Job/CollisL` (wid 0), `MeshProcJobs` (0xE) or `RsxSync` (0x12) (38, 30 and 11 of 94 pieces). Cause
     not named: a few stalls, not a wake latency spread over every frame. The run's CPU log has the security
-    agent's two processes (`avp`, `kpm`) at 0.4 cores each in the first sample after the cluster, above their
+    agent's two processes at 0.4 cores each in the first sample after the cluster, above their
     level elsewhere; suggestive only. `cpuwatch.ps1` now also logs the game's file read/write rates.
   - Not the disk (x263: runWw, which puts the HLE file reads and writes on the timeline; `PS3_FTRACE=420:60`,
     profilers off; 12-13 game frames/s). In 60 s, 536 reads took 20 µs or more, 20 ms in all, the longest
@@ -3155,7 +3155,7 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
       co-bound; a host profile of those threads comes next.
     - Correction (x240-x243): most of the foreign load was the author's own agent process and the terminal that
       draws it (0.4-2.9 cores while merely waiting), plus other jobs on the host (an ffmpeg batch of ~4.5 cores,
-      Disk Cleanup, the NVIDIA container). "Wait for a quiet host" does not work here: explorer alone takes ~0.3
+      Disk Cleanup, a display driver service). "Wait for a quiet host" does not work here: explorer alone takes ~0.3
       cores, and the gate often gives up.
     - Pinning the game to CPUs 0-9 (`0x3FF`, the agent and terminal on 10-11) COLLAPSES it: 2.44 and 8.95 game
       frames/s in two runs of the same scene, the game using only ~2.5-4.7 cores (x242) with 10 CPUs free to it.
@@ -3256,9 +3256,9 @@ Update (M0.61, 2026-10-24): **LS probes out of the lifted SPU code: +12-13% fram
         is paced in real time; `PS3_MUTE=1` only silences the device. Not on the frame's path; its ~0.75 cores
         only matter as one more busy CPU.
       - Other load seen by the new `perf=` field: the WMI provider host at ~0.4 cores, with ~2-core bursts roughly
-        every minute; explorer bursts of 1.4-3.4 cores together with the NVIDIA display container (~0.8) and
-        `nvcontainer` (0.4-0.9) in the same samples, about every 110 s (t = 175, 286, 396, 646; no explorer window
-        was open, and the bursts do not line up with the frame dumps): about one burner's worth, periodically; the security agent `avp` at 0.1-0.4;
+        every minute; explorer bursts of 1.4-3.4 cores together with two display driver services (~0.8 and
+        0.4-0.9) in the same samples, about every 110 s (t = 175, 286, 396, 646; no explorer window
+        was open, and the bursts do not line up with the frame dumps): about one burner's worth, periodically; the security agent at 0.1-0.4;
         the author's agent session (Windows Terminal, claude) at 0.4-2.
       - The monitor itself is not the hidden load. The WMI provider host sat at 0.66 cores over 30 s with no
         `cpuwatch.ps1` running and at 0.53-0.68 with it. The per-process counter query (`sys=`) arrived in
