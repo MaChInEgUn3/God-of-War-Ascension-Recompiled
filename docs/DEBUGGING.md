@@ -109,8 +109,9 @@ Lessons that cost days; keep them.
     (`[eng-stats]` then shows it under `s2guest`; the copy counts under `csnap`).
   * Shadows that look swapped (a dark scene with small lit patches where objects should cast shadows):
     `RSX_SHADOW_CMP_LOG=1` prints the first distinct depth-comparison set-ups a title uses (`[shadow-cmp] unit
-    ... format ... func ...`), and `RSX_SHADOW_CMP_FLIP=1` evaluates the comparison as "stored depth against
-    reference" instead of "reference against stored depth" (off by default; STATUS, 2026-11-15). Compare two
+    ... format ... func ...`), and `RSX_SHADOW_CMP_FLIP=1` evaluates the comparison as "reference against
+    stored depth", the order used before 2026-11-15, instead of "stored depth against reference" (off by
+    default; STATUS, 2026-11-15). Compare two
     runs of the same build on frames with the same camera; sort the frame files by number, not by name.
   * Which render state a title uses at all: `RSX_REG_CENSUS=<hex method>,<hex method>,...` prints, every
     `RSX_REG_CENSUS_EVERY` pipeline look-ups (default 500000), the first 8 distinct values each listed

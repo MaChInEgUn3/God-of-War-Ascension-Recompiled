@@ -10,8 +10,9 @@
   host (x450w, second round) and 15.2-16.6 when the host was less quiet (x451).
 * **Played by a person (2026-11-10):** New Game with a DualSense, 11.5 minutes: the opening, the tutorials and on
   into a courtyard arena fight, where it drops to 7-9 game frames/s. How far the game gets beyond that is open.
-* **Open bugs:** graphics bugs reported in that session, of which two causes are fixed (2026-11-11, below: blown-out
-  bloom and decals, and rectangles in the shadows) and the rest is not triaged; texture garbage on some meshes in a
+* **Open bugs:** graphics bugs reported in that session, of which three causes are fixed (2026-11-11, below: blown-out
+  bloom and decals, and rectangles in the shadows; 2026-11-15: shadows drawn inverted, which made lit scenes dark, and
+  shadow casters drawn without their polygon offset) and the rest is not triaged; texture garbage on some meshes in a
   minority of scripted runs (2 of 30 when last counted); one unexplained freeze in ~30 scripted runs (x430b, below).
   Fixed on 2026-11-10: a freeze a minute into New Game (instructions the lift had left out, below).
 
@@ -1118,7 +1119,7 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   times the corridor's), not a new pool. The original session had 6-10 frames/s in that part on its day's
   build. The arena is not reached by this replay.
 
-### Shadows: not the frame-rate lever, and probably drawn inverted (2026-11-15, sp0-sp3, sc0-sc2)
+### Shadows: not the frame-rate lever, and they were drawn inverted (2026-11-15, sp0-sp3, sc0-sc2, fl1)
 * **What a frame's shadows are.** The game's frame is a table of records walked twice by one function
   (`0x368C64`): a first pass that runs each record's callback or queues the record's work (a record that
   reports "done" is left alone by the second pass), and a second pass that runs the remaining callbacks in
@@ -1144,14 +1145,15 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   frame-rate lever. The caster skip was slower, not faster: a record skipped in the first pass is run
   again by the second, which closes an empty segment for each (about 450 a frame); which call of that path
   costs the time was not measured. Withdrawn: "shadows are 52% of the draws, so they are the lever".
-* **The scene is dark because of the mask passes, and the comparison looks inverted.** With the masks
+* **The scene was dark because of the mask passes: the comparison was inverted (fixed).** The runs below
+  are from before the fix, where `RSX_SHADOW_CMP_FLIP=1` selected the corrected order. With the masks
   skipped the courtyard is sunlit with no cast shadows; plain, it is almost all dark with a few small lit
   patches on the ground (mean brightness of the lower 40% of the picture: 21-25 plain, 113-134 without the
   masks). With the casters skipped and the masks drawn it stays dark, although every shadow-map pass
   starts with a clear to the far value: an empty map reads "in shadow". The mask shader looks the map up
   as a depth texture with comparison function 6 (the one set-up this scene uses; `RSX_SHADOW_CMP_LOG=1`
   prints them). The toolkit evaluates that as "reference >= stored depth". With the operands the other
-  way round (`RSX_SHADOW_CMP_FLIP=1`, a diagnostic, off by default) the same view on the same build is
+  way round (`RSX_SHADOW_CMP_FLIP=1` on that build) the same view on the same build is
   sunlit with shadows attached to their objects, and they fall where the plain picture has its lit
   patches: beside the vases, under the enemy, at the character's feet (matched camera, three frame pairs;
   judged by eye, the character moves between the frames). One blocky patch mid-floor with hard vertical
@@ -1166,8 +1168,11 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   the played session through the opening, the first fight and into the first level, flipped, against the
   same replay plain): the only set-up it logs is again function 6 on that format (another map size), the
   fight's platform, the first level's courtyard and the weapon in the menu come out lit, and nothing looks
-  worse on a sheet of 24 frames per run (the two runs are not frame-matched). The default is unchanged
-  until a person has looked at the pair; the change is then upstream's commit, cherry-picked.
+  worse on a sheet of 24 frames per run (the two runs are not frame-matched).
+  **Fixed 2026-11-15:** upstream's commit is cherry-picked, so "stored depth against reference" is the
+  default; with no switch set the corridor now gives the lit picture (fl1: brightness of the lower 40%
+  117-134, the same set-up line). `RSX_SHADOW_CMP_FLIP=1` now does the opposite of before: it restores
+  the old order, for comparison. The play build is rebuilt with it (below when measured).
 * **What else the caster passes ask for** (`RSX_REG_CENSUS`, 5.4 million pipeline look-ups in the corridor).
   The look-ups with the shadow casters' front-face setting (10% of all; in the pass dump every caster draw
   has it and no mask draw does) also have polygon offset for filled polygons switched on and the depth
@@ -1211,9 +1216,11 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
 * The arena fight: where its time goes (it is 2-3 times slower than the scene everything above was measured in),
   and a scripted way to reach it.
 * A person looking at the fight again with the two graphics fixes, and whatever graphics bugs remain.
-* The shadow comparison (above): a person looking at the pair, then upstream's order as the default and a
-  rebuild of the play build (it carries the depth-control change and the polygon offset, which are in the
-  standard build already).
+* The play build with the shadow comparison fix, the depth-control change and the polygon offset: rebuilt
+  with the profile, then measured against the previous play build in alternating pairs. A person looking
+  at the scenes with it.
+* Frame rate, the one combination not tried: more EDGE lanes together with less walker work (every lever so
+  far was judged alone, with both sides near 95% busy).
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
