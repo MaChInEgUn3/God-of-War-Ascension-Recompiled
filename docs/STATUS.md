@@ -329,6 +329,22 @@ scripted corridor scene and the scene the played session's save opens on. Both f
       * Continue as such: from the checkpoint before the first fight, with no input, that fight's intro cutscene
         runs through its shots to the attack prompt (r8a). So it is this checkpoint, or this cutscene reached
         from it. Parked until a person plays through it again with the profile capture on.
+    * **What the loader does around it (2026-11-15, cs1-cs3; every file read logged by name and mapped to
+      the archives' entries).** The save puts the player at the entry of the level's second area, not at
+      the arena. Walking in, the title frees six mappings and makes two (the same pattern the played
+      session of 2026-11-10 shows 361-372 s in), reads that area's package, its in-game-cinematic package
+      and its small AI package in full, and the close shot begins. In the played session the fight then
+      ran from about 400 s to 680 s and only after it did the title load the next area (two mappings
+      freed, three made, at 677-687 s). So the shot that stops is the opening of that fight's own
+      cinematic, and "the arena" above is this second area. Ruled out by these runs: time since the load
+      (standing still for five minutes before walking in changes nothing); file reading (a steady 5-6 MB
+      per 20 s of music, ambience and a boss's taunt lines goes on to the end, and every package asked
+      for is read whole); the level's animation set being starved (the working corridor scene reads the
+      same first 0.6 MB of it and no more); the title's batch-job wait message, which prints once per
+      million polls and appears once, so that wait ended. The picture is the camera at the character's
+      waist against the scenery: a cinematic camera with nothing driving it. What the cinematic waits for
+      is still not known. One dialog line is asked for as a loose file at the moment its voice bundle
+      starts loading and fails to open in two of the runs: a silent line, not the cause.
     * Seen in both the played session and the repro, so not a difference: the game's
       `BATCHJOB: AddJob: waiting for room in job list 3 for job 56...`, six `UnmapIoAddress` and two
       `MapMainMemory` (0x800000 and 0x700000). In the played session the maps came 13 s after the trigger, in the
@@ -1157,7 +1173,8 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   has it and no mask draw does) also have polygon offset for filled polygons switched on and the depth
   control word `0x110` where every other draw has `0x1`. This port's renderer honoured neither. Upstream
   honours the depth control word on Vulkan (after v0.17.0) and the polygon offset in its engine and on
-  one other backend, not on Vulkan.
+  one other backend; for Vulkan it has an open pull request (702, by another contributor) with the same
+  change as the one made here, to be taken from there once merged.
   * Both upstream commits are now cherry-picked, and the Vulkan backend applies the offset (depth bias
     as dynamic state next to the stencil reference; `PS3RECOMP_ENG_POLY_OFFSET=0` and
     `PS3RECOMP_ENG_DEPTH_CLAMP=0` draw as before). The title's values on the caster draws: factor 2 and

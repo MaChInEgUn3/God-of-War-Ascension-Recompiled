@@ -118,6 +118,12 @@ Lessons that cost days; keep them.
     Read the last block. Equal counts on two registers tie them to the same draws (here: polygon offset,
     the depth control word and the front-face setting of the shadow casters). Take the method numbers from
     the toolkit's own tables, not from memory: two of the first list's were wrong.
+  * What a title reads and when: `FS_READ_ALL=1 FS_READ_PATH=1 FS_CALLER=1` logs every read with its file,
+    every open with the guest function that made it and every seek. A title that keeps its data in a few
+    big archives says little that way; rebuild each descriptor's position from the seeks and the reads'
+    byte counts and look the position up in the archive's table of contents to get the entry being read
+    (a PSARC's table is in its first bytes, the names in its first entry). That shows which package of
+    which area is loaded, whether it is read whole, and what a scene never asks for.
   * Polygon offset and depth clamp: `PS3RECOMP_ENG_POLY_OFFSET=0` draws without the guest's polygon offset
     and `PS3RECOMP_ENG_DEPTH_CLAMP=0` always clips at the near and far planes (the behaviour before either
     was honoured). A pass dump's `draws.txt` shows ` po <factor>/<bias>` on every draw that has the fill
