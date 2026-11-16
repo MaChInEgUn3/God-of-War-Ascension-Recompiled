@@ -113,6 +113,11 @@ Lessons that cost days; keep them.
     stored depth", the order used before 2026-11-15, instead of "stored depth against reference" (off by
     default; STATUS, 2026-11-15). Compare two
     runs of the same build on frames with the same camera; sort the frame files by number, not by name.
+  * Comparing two runs by picture: print the brightness of EVERY dumped frame of each run, not of the last
+    few. Runs of the same length are not at the same point of a scene (a faster build gets further, a
+    fight goes differently), and a scene can change state part-way; a whole night went into a "fault"
+    that was one run ending 45 s earlier than the other. For a controlled pair use a view that repeats
+    (a save with no input) or a pad-recording replay, and compare frames at equal present numbers.
   * Which render state a title uses at all: `RSX_REG_CENSUS=<hex method>,<hex method>,...` prints, every
     `RSX_REG_CENSUS_EVERY` pipeline look-ups (default 500000), the first 8 distinct values each listed
     register held and how many look-ups saw each (`[reg-census] 0A68: 00000000 x4853292 00000001 x546708`).

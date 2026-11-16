@@ -1172,7 +1172,24 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
   **Fixed 2026-11-15:** upstream's commit is cherry-picked, so "stored depth against reference" is the
   default; with no switch set the corridor now gives the lit picture (fl1: brightness of the lower 40%
   117-134, the same set-up line). `RSX_SHADOW_CMP_FLIP=1` now does the opposite of before: it restores
-  the old order, for comparison. The play build is rebuilt with it (below when measured).
+  the old order, for comparison.
+  * **The play build** is rebuilt with a new profile (the old profile no longer matched the renderer's
+    hottest functions after today's changes: three training runs, a clean optimized build, no function
+    left unmatched). On the replay route it draws the opening, the first fight and the first level as the
+    standard build does, and in the corridor its first two camera views are the sunlit ones.
+  * **Open fault:** in four of six corridor runs of the fast builds, once the fight has carried the camera
+    to a third view near the far wall, everything the sun should light goes unlit and stays so (the
+    health bar is still there and the sky is bright, so it is not a death screen; the frame's draws, job
+    runs and command words are unchanged at the moment it happens, so it is a rendering state and not a
+    change in what the title draws). Two runs with the same script never reached that view and stayed
+    lit; no run of the standard build has reached it, so it is not known whether it is the view or the
+    build. The dark state is about as bright as the old inverted picture was, and every run completed.
+    Not the cause, as far as checked: the comparison text in the generated shader (the new one), the
+    shadow maps of a lit moment (same as the standard build's). A dump of the dark moment is still missing.
+  * Withdrawn (told to the user during the night): "the play build is dark because of the depth clamp"
+    and a bisect by object file that seemed to place a fault in the Vulkan backend's optimized code.
+    Both compared the brightness of the LAST frames of runs that had got to different points of the
+    scene: the "lit" runs had simply ended earlier.
 * **What else the caster passes ask for** (`RSX_REG_CENSUS`, 5.4 million pipeline look-ups in the corridor).
   The look-ups with the shadow casters' front-face setting (10% of all; in the pass dump every caster draw
   has it and no mask draw does) also have polygon offset for filled polygons switched on and the depth
