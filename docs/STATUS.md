@@ -1188,7 +1188,11 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
     lit; no run of the standard build has reached it, so it is not known whether it is the view or the
     build. The dark state is about as bright as the old inverted picture was, and every run completed.
     Not the cause, as far as checked: the comparison text in the generated shader (the new one), the
-    shadow maps of a lit moment (same as the standard build's). A dump of the dark moment is still missing.
+    shadow maps of a lit moment (same as the standard build's). Not reproduced since: ten further runs of the same play build (four of 330 s, one
+    of 300 s, the 700 s replay route, four of 240-270 s), five of them with a pass dump armed late, all
+    stayed lit to the end; the four dark runs were all within half an hour of each other, on a machine
+    loaded by other work. So it is intermittent and unplaced, and no dump of the dark moment exists. Low
+    priority until it shows again.
   * Withdrawn (told to the user during the night): "the play build is dark because of the depth clamp"
     and a bisect by object file that seemed to place a fault in the Vulkan backend's optimized code.
     Both compared the brightness of the LAST frames of runs that had got to different points of the
