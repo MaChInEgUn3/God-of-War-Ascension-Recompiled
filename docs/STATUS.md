@@ -551,10 +551,24 @@ so far came from the menu, the first level and its corridor. The scenes after it
   * The corridor fight is fuller still (v5a): A 130.2 MB of 130.2 MB, with 19.5-20.6 MB more waiting (B), a
     ratio of 1.15, and only 2-11 releases per 30 s because nothing is releasable. In both scenes the title has
     more in use than its pool holds.
-  * Ruled out (q1b, `GCM_REPORT_STATS=30`): that the port makes the title draw more than a console by
-    answering every occlusion query "visible". The title issues about 7,700 type-1 report queries a second,
-    all to main memory, but never enables the pixel count and never clears a report: they are the
-    synchronisation it uses reports for, not occlusion queries.
+  * **Withdrawn (2026-11-19).** A bullet here said it was ruled out that the port makes the title draw more
+    than a console by answering every occlusion query "visible", because the title "never enables the pixel
+    count and never clears a report". The counter behind that sentence was blind: the walker's fast path for
+    plain methods takes `NV4097_CLEAR_REPORT_VALUE` (0x17C8) and `NV4097_SET_ZPASS_PIXEL_COUNT_ENABLE`
+    (0x17CC) straight to the draw engine, past the loop that counted them. The register census shows the
+    count enabled at about nine draws in ten and clears of type 1 being issued. And the answer matters: with
+    `GCM_ZPASS_VALUE=0` (every main-memory report answers "0 pixels") the corridor loses 29% of its draws
+    (1,903 against 2,687 a frame) and walls, sky, character and props are gone from the image. That switch
+    also zeroes the reports the title uses only for synchronisation and the picture is broken, so it is not
+    a frame-rate result. What is established: the value the port writes changes what the title draws. Not
+    measured yet: how the queries are bracketed, who reads the value and when, and how much of a real view
+    is hidden (the port still answers 0xFFFF, "visible", to every query).
+  * How the title brackets its queries (corridor, `ENG_OCCL_STATS=20`, standard build, 13.7 fps, changes
+    nothing): per frame about 674 clears of type 1 and about 671 type-1 reports that close a bracket with
+    draws; 668 of those brackets hold exactly ONE draw (one test per object), 3 hold about 670 draws each
+    (whole passes drawn with the count on), and 6 reports a frame are bare (the synchronisation ones, at
+    other addresses). Of the draws made with the count on, 38% write no colour and 56% no depth. The
+    occlusion reports go to two 16-byte-slot areas of main memory used in alternation.
   * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
     said the port never makes it for the textures that churn, and called the churn a port bug. All three came
     from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).

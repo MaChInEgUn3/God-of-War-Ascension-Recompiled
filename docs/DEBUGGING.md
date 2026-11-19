@@ -35,7 +35,16 @@ Lessons that cost days; keep them.
   disables it: for a window late in a run keep the cap high (400000) and trace few functions; a trace that logs
   from boot fills a small cap in the menus, so check that its lines reach the scene before reading counts per
   frame off it. A store watch (`SPU_LLWATCH`) slows the watched run several times over: use the ORDER of its
-  events, not their times. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
+  events, not their times.
+* **A counter in the FIFO walker's full loop does not see every method**: runs of plain methods (no effect of
+  their own outside the draw engine) take a fast path straight to `rsx_draw_engine_method`. A diagnostic placed in
+  the full loop must be listed in `gcm_walk_plain`'s gates, or it reads zero for those methods; this is how
+  `GCM_REPORT_STATS` reported "never enabled, never cleared" for a title that does both (fixed: it is a gate now).
+  Check a zero from such a counter against the register census (`RSX_REG_CENSUS=<methods>`) before building on it.
+  `ENG_OCCL_STATS=<s>` (changes nothing) prints how a title brackets its ZPASS reports: clears by type, enable
+  writes, type-1 reports closing a bracket with draws against bare ones, draws inside brackets and how many of
+  them write no colour or no depth. `GCM_ZPASS_VALUE=<hex>` sets the answer written to main-memory reports
+  (default 0xFFFF): 0 shows whether the title acts on the value at all, at the price of a broken image. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
   so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.
 * **Which functions go with a kind of frame** (needs the `all` lift): `PPU_FRAME_FUNCS=<hex ea of a guest frame
