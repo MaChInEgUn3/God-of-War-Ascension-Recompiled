@@ -1274,12 +1274,30 @@ On the test machine, play build, every scene (menu, loading, corridor fight, sti
     (0.58 each, 0.85 busy in all), one carries the audio workload (0.65), and the title's SPU 4, where its
     priority table gives the EDGE lists priority 0, is 0.45 busy. That spare thread is not an EDGE lever:
     only one EDGE list has runs in progress at a time (63.5 of 75.9 ms; two lists at once 0.2 ms), three
-    wide, so EDGE is not short of threads (four lanes were closed on 2026-11-15).
-  * Reading (not a measurement): no single wait or width holds the frame. The walker's work per frame
-    (about 22 us a draw times about 2,690 draws) and the SPU work per frame (about 275 ms without audio, on
-    at most six threads) both sit within a quarter of the frame time, and each scheduling lever tried
-    alone moved nothing. What is left are cost levers: the EDGE job code, the walker's cost per draw, and
-    RenderJobs' two hot functions.
+    wide, so a fifth EDGE thread has nothing to take (a fourth LANE is another matter, below).
+  * Per-frame order (2026-11-16, standard build, medians from the spin entry on MeshProcJobs): RenderJobs'
+    jobs run from 0.3 to 30.1 ms, MeshProcJobs' one long job follows them (30.1 to 34.6 ms), and from 30.0 to
+    40.8 ms the main thread sleeps at `0x3E8388` for the previous frame's EDGE list to finish. With three
+    RenderJobs lanes held on (quiet machine) its jobs end at 12.3 ms and the long job at 18.1 ms, the sleep
+    lasts from 26.4 to 44.4 ms and the frame is not shorter (70.3 against 64.2 ms): the time saved is slept.
+  * EDGE lanes, in-run tests on the play build (2026-11-16 and 11-19; 1 s windows, about 100 a run). Bench
+    corridor: four lanes for the three EDGE lists +6.8% frames over four runs (+3.8 +8.4 +7.5 +7.6; se 1.0);
+    with three RenderJobs lanes as well +6.3% (se 0.4; in steady windows only, on after on against off after
+    off, +5.8%); three RenderJobs lanes alone +1.1% (two runs). Draws and FIFO words per frame are the same
+    on and off within 0.3%. This supersedes the 2026-11-15 "four lanes: +0.4%" (older build and profile).
+    But on the New Game replay route (one 700 s run, 639 windows) four lanes are not a gain: +0.2% +- 3.8
+    in the opening, -2.7% +- 1.2 in the prologue fight's windows (about -1% in frame time at equal draws
+    per frame, the on windows held slightly heavier frames), -0.9% +- 2.4 above 2,300 draws. So the switch
+    stays off: `SPURS_LANES` keeps three lanes for EDGE.
+  * Where a fourth lane's time comes from (corridor trace at three lanes): for 38.9 ms of a 75.9 ms frame
+    three of the four EDGE threads are inside EDGE runs; the fourth is napping for 19.8 ms of that and
+    running another workload for 19.0 ms. In the prologue fight's trace: 9.7 ms napping, 13.1 ms other
+    work, of a 41.7 ms frame. Not tried yet: an extra lane that a thread takes only when nothing else is
+    ready for it.
+  * Withdrawn: the sentence that stood here on 2026-11-16 ("each scheduling lever tried alone moved nothing;
+    what is left are cost levers") and "EDGE is not short of threads": the lane cap does bind in the
+    corridor. Still true: the walker reaches 0.90-0.91 busy with four lanes there, so its cost per draw
+    (about 22 us times about 2,690 draws) is the next bound in that scene.
 * The cutscene at the arena entrance that stops on its first shot, after Continue and now also from a played
   New Game when the corridor fight is skipped (above).
 * New Game's own route (the prologue and its first fight) has never been reached by a script, so its SPU
