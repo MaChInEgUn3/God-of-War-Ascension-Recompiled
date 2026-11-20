@@ -619,9 +619,11 @@ so far came from the menu, the first level and its corridor. The scenes after it
     * On the play build (profile-optimised, rebuilt 2026-11-20 from a profile trained with the switch on;
       the previous one is kept aside; one in-run run each): bench corridor +15.5% +- 2.0 (17.66 against
       15.28 fps; mean module run 24% shorter); New Game replay route +3.9% +- 8.1, -0.9% +- 3.2, +3.1% +- 2.6
-      (the prologue fight), -0.6% +- 2.2: next to nothing there, as the all-zero ceiling said. Owed: a quiet
-      alternating pair of the new play build against the old one (the replay run above was under a host load
-      and reads lower than the old build's quiet run, which proves nothing either way).
+      (the prologue fight), -0.6% +- 2.2: next to nothing there, as the all-zero ceiling said. New play build
+      against the previous one, plain, alternating on the replay route (old, new, new, old; fps in the fight
+      span): 16.9, 22.5, 22.2, 22.1. The first old run fell behind its recording (2,207 draws a frame there
+      against about 1,940 in the other three) and is no evidence; without it the two builds are level, which
+      on this machine means within about 10%. The new build stands.
   * RenderJobs lanes are the fights' lever (2026-11-20). The prologue fight's trace of 2026-11-15 (41.7 ms
     frames): the main thread sleeps only 5.6 ms a frame, the wait for the previous frame's EDGE list is under
     1 ms and the walker is 0.78 busy, while RenderJobs runs 19.7 ms a frame one job at a time. Three lanes for
@@ -631,7 +633,18 @@ so far came from the menu, the first level and its corridor. The scenes after it
     +3.5% +- 1.5 in the bench corridor (where the same lanes alone had given +1.1%). Draws per frame are the
     same on and off. The title itself asks six workers for that list. So the two levers add: in the corridor
     about 15.3 fps plain, 17.7 with the occlusion answers, 19.1 with both; in the prologue fight about 21.9,
-    22.6 and 24.8 (single in-run runs, not yet defaults).
+    22.6 and 24.8 (single in-run runs).
+    * Four in-run runs in all on the replay route (two more on the new play build without the occlusion
+      answers), fight span: +10.0, +11.8, +15.2, +11.9% = +12.2% (se 1.1); steady windows from 200 s +8.5,
+      +10.6, +9.4, +5.0%; the 200-350 s span +8.8, +11.3, +8.2, +0.4%. FIFO words per frame on against off
+      within 0.8% in three runs, 3.2% lower in one.
+    * On by default in the play script only (`PLAY_LANES=default` goes back to the exe default; the exe's
+      own `SPURS_LANES` default is unchanged until the next profile rebuild). Soak: one replay run with the
+      lanes held on through that environment, 700 s: no unresolved call, no missed flip, frames as bright as
+      a plain run's (mean 50.3 against 51.3), 23.2 / 24.7 (the fight) / 23.6 fps in the three later spans
+      against 21.3 / 22.3 / 21.9 for the two plain runs of the same build.
+    * What bounds the fight now: with the lanes on the walker is 0.83 busy there (about 1,940 draws a frame
+      at 17 us each = 33 ms of a 40.5 ms frame). The per-draw cost is the next lever.
   * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
     said the port never makes it for the textures that churn, and called the churn a port bug. All three came
     from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).
