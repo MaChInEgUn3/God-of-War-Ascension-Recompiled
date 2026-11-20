@@ -565,10 +565,22 @@ so far came from the menu, the first level and its corridor. The scenes after it
     is hidden (the port still answers 0xFFFF, "visible", to every query).
   * How the title brackets its queries (corridor, `ENG_OCCL_STATS=20`, standard build, 13.7 fps, changes
     nothing): per frame about 674 clears of type 1 and about 671 type-1 reports that close a bracket with
-    draws; 668 of those brackets hold exactly ONE draw (one test per object), 3 hold about 670 draws each
-    (whole passes drawn with the count on), and 6 reports a frame are bare (the synchronisation ones, at
-    other addresses). Of the draws made with the count on, 38% write no colour and 56% no depth. The
-    occlusion reports go to two 16-byte-slot areas of main memory used in alternation.
+    draws; 668 of those brackets hold exactly ONE draw, 3 hold about 670 draws each (whole passes drawn with
+    the count on), and 6 reports a frame are bare (the synchronisation ones, at other addresses).
+  * What a test draw is (still view, pass dump with the report methods in `draws.txt`, `analysis/occlbr.py`):
+    of 1,181 one-draw brackets in about three frames, 1,178 are in the main pass (colour target 0x00E10000,
+    zeta 0x011B0000) and are the objects' OWN meshes drawn depth-only (colour writes off, depth write and
+    depth test on; indices median 1,747, tenth to ninetieth percentile 228 to 2,418); three are six-index
+    proxies. So the title's depth prepass doubles as its occlusion test, one query per object, each to its
+    own 16-byte report slot (1,181 distinct offsets, 0x238B80 to 0x262450: no slot reused within three
+    frames).
+  * Who reads the answers: the EDGE geometry jobs (workloads 15-17), each fetching one 16-byte slot into
+    its local store. It is a zero test: with every answer set to 1 the corridor is the same as plain (2,688
+    draws a frame against 2,687, same picture). With every answer 0 (still view) the main pass keeps its
+    depth-only draws and loses its colour draws (about 642 to 373 draws a frame), the shadow-mask target goes
+    from about 460 to 353 and the shadow maps from about 196 to 159, and the mean module run costs half
+    (41 against 84 us): hidden objects would save job time as well as draws. How many objects are really
+    hidden in a normal view is not measured yet; that needs real sample counts from the GPU.
   * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
     said the port never makes it for the textures that churn, and called the churn a port bug. All three came
     from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).

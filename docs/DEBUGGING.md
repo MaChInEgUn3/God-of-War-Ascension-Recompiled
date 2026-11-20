@@ -44,7 +44,11 @@ Lessons that cost days; keep them.
   `ENG_OCCL_STATS=<s>` (changes nothing) prints how a title brackets its ZPASS reports: clears by type, enable
   writes, type-1 reports closing a bracket with draws against bare ones, draws inside brackets and how many of
   them write no colour or no depth. `GCM_ZPASS_VALUE=<hex>` sets the answer written to main-memory reports
-  (default 0xFFFF): 0 shows whether the title acts on the value at all, at the price of a broken image. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
+  (default 0xFFFF): 0 shows whether the title acts on the value at all, at the price of a broken image.
+  A pass dump with `RSX_ENGINE_PASS_DUMP_DRAWS=1` writes the report methods into `draws.txt` (`m 17C8`, `m 17CC`,
+  `m 1800`); `analysis/occlbr.py <dump dir>` turns that into the brackets by number of draws and, for one-draw
+  brackets, the pass, the write masks and the size of the test draw. The dump directory must exist before the
+  run: a missing directory writes nothing and says nothing. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
   so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.
 * **Which functions go with a kind of frame** (needs the `all` lift): `PPU_FRAME_FUNCS=<hex ea of a guest frame
