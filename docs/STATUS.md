@@ -615,7 +615,23 @@ so far came from the menu, the first level and its corridor. The scenes after it
       on a still shot the fed frames differ from their closest plain frame by no more than plain differs from
       plain. Not checkable this way: an object coming into view is drawn only after its next test has been
       answered and read, a frame or two later. So the switch stays off by default until it has been played
-      with; the play build (profile-optimised) does not contain it yet.
+      with (`PLAY_OCCL=1` in the play script turns it on).
+    * On the play build (profile-optimised, rebuilt 2026-11-20 from a profile trained with the switch on;
+      the previous one is kept aside; one in-run run each): bench corridor +15.5% +- 2.0 (17.66 against
+      15.28 fps; mean module run 24% shorter); New Game replay route +3.9% +- 8.1, -0.9% +- 3.2, +3.1% +- 2.6
+      (the prologue fight), -0.6% +- 2.2: next to nothing there, as the all-zero ceiling said. Owed: a quiet
+      alternating pair of the new play build against the old one (the replay run above was under a host load
+      and reads lower than the old build's quiet run, which proves nothing either way).
+  * RenderJobs lanes are the fights' lever (2026-11-20). The prologue fight's trace of 2026-11-15 (41.7 ms
+    frames): the main thread sleeps only 5.6 ms a frame, the wait for the previous frame's EDGE list is under
+    1 ms and the walker is 0.78 busy, while RenderJobs runs 19.7 ms a frame one job at a time. Three lanes for
+    it (`GOW_AB_LANES="13=3"`, in-run on the New Game replay route, one run each): on the previous play build
+    +9.5% +- 7.0, +8.8% +- 2.6, +10.0% +- 2.5 (the fight), +9.4% +- 2.1; on the new play build with the
+    occlusion answers held on: +4.0% +- 6.9, +11.3% +- 3.3, +11.8% +- 2.1 (the fight), +15.4% +- 2.1, and
+    +3.5% +- 1.5 in the bench corridor (where the same lanes alone had given +1.1%). Draws per frame are the
+    same on and off. The title itself asks six workers for that list. So the two levers add: in the corridor
+    about 15.3 fps plain, 17.7 with the occlusion answers, 19.1 with both; in the prologue fight about 21.9,
+    22.6 and 24.8 (single in-run runs, not yet defaults).
   * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
     said the port never makes it for the textures that churn, and called the churn a port bug. All three came
     from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).
