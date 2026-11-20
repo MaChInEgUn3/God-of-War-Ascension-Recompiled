@@ -690,7 +690,19 @@ so far came from the menu, the first level and its corridor. The scenes after it
       an eighth on this scene and gain about 2%). The two hottest General6 functions are generic lifted code
       (each float operation goes through memory twice and takes a checked branch); stages written natively
       before ran 2.5 to 5.3 times faster than their lifted originals. Next: a native version of the hottest
-      one, behind a switch, checked against the lifted code first.
+      one, behind a switch, checked against the lifted code first. (Not started: see the whole-run pairs below; on this scene removing work has
+      gained about 2% where adding the same work costs 7%.)
+    * Whole runs, plain against the occlusion answers held on from the start, alternating pairs (2026-11-20,
+      play build, RenderJobs lanes on, fps over the same 70 s): bench corridor 17.14 / 21.20, 17.65 / 21.76,
+      17.08 / 19.37 = +20.1% (se 3.4; draws 2,683 -> 2,340 a frame); checkpoint 19.64 / 20.30, 19.73 / 20.11,
+      18.80 / 19.13 = +2.3% (se 0.5; draws 2,145 -> 2,016). So the in-run figure for the checkpoint stands, and
+      the corridor's in-run +13 to +15% is, if anything, a little low.
+    * A caution on every absolute figure above: the host's state moves the whole game by 15 to 25% over hours.
+      The same plain checkpoint run gave 14.4 to 15.6 fps in the night's traces (module runs 80 us, 23-26 us a
+      draw) and 18.8 to 19.7 fps in these pairs (72-74 us, 20 us a draw). The checkpoint's trace figures quoted
+      above (61 ms frames, General6 66 ms, EDGE 125 ms, 4.9 threads) are from the busier state; a quiet trace
+      of the same scene reads about 50 ms frames, General6 50, EDGE 105-111. Only windows inside one run or
+      adjacent alternating runs are compared for decisions.
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
