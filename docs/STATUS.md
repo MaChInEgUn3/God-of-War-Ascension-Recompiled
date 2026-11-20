@@ -597,10 +597,25 @@ so far came from the menu, the first level and its corridor. The scenes after it
     (350-500 s) +0.5% although its draws fall 18% and the mean module run from 60 to 35 us and the walker from
     0.77 to 0.62 busy. So real answers can help the traversal scenes and cannot help the prologue fight,
     which neither draws nor EDGE job time nor the walker paces.
-  * Next: host occlusion queries round each test draw, the report written as today ("visible") and its value
-    word corrected to 0 when the query says no sample passed and the slot still carries that report's
-    timestamp; counting only first (how many answers are known before the jobs fetch them, and what the
-    queries cost the walker), behind a switch that is off by default.
+  * Real answers, built (2026-11-19; `PS3RECOMP_ENG_OCCL_QUERY`, off by default; standard build): the draw
+    engine arms a host occlusion query for the one draw of each test bracket; the walker writes the report as
+    before ("visible"); when the query says no sample passed, the slot's value word is corrected to 0 if the
+    slot still carries that report's timestamp. Nothing waits for the GPU.
+    * Counting only (mode 1, corridor): 50.1% of the tests are hidden (the dumps said 47.9%), no query goes
+      unanswered, the answer is seen 2-10 ms after the report in 99% of cases, and 99.5% of the EDGE jobs'
+      fetches of hidden tests come after the answer. Frames and time per draw as plain (14.9 against 14.8 fps,
+      separate runs).
+    * Fed back (mode 2), in-run A/B off against on, bench corridor, four runs: frames +13.9, +12.6, +14.2,
+      +11.8% = +13.1% (se 0.6); steady windows only +13.4% (se 1.8); mean module run 22-23% shorter; draws
+      per frame about 2,340 against 2,680. New Game replay route, one run, by time span: +1.8% +- 7.3,
+      +10.5% +- 4.1, +12.7% +- 1.9, +9.1% +- 9.9; none negative. (On the standard build the replay falls
+      behind its recording, so these spans are not the play build's scenes; the prologue fight, where the
+      all-zero ceiling was nil, is not measured with it yet.)
+    * Picture: dumped frames of a fed corridor run match plain in brightness and, side by side, in content;
+      on a still shot the fed frames differ from their closest plain frame by no more than plain differs from
+      plain. Not checkable this way: an object coming into view is drawn only after its next test has been
+      answered and read, a frame or two later. So the switch stays off by default until it has been played
+      with; the play build (profile-optimised) does not contain it yet.
   * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
     said the port never makes it for the textures that churn, and called the churn a port bug. All three came
     from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).

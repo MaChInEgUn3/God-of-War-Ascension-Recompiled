@@ -55,7 +55,13 @@ Lessons that cost days; keep them.
   `GCM_REPORT_AGE=<lo>-<hi>` (hex EA range of report slots; changes nothing) prints every 20 s how old a slot's
   report is when an SPU job fetches it, which value and +0xC word it holds then, and how many slots held a
   non-zero +0xC word just before the walker wrote them: whether a report's value may still be corrected after
-  the write. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
+  the write.
+  `PS3RECOMP_ENG_OCCL_QUERY=1` gives each one-draw ZPASS bracket a host occlusion query and only counts; `=2`
+  also corrects a hidden test's report value to 0. Every 20 s: `[occl-query]` tests with a query, answers visible /
+  hidden / never came, how long after the report the answer was seen, what was known when an SPU job fetched a
+  tested slot, and (mode 2) values patched against slots rewritten first. Validate the hidden share against a
+  dump's `changed 0` on a still view. The GoW:A port flips it in-run with `GOW_AB=occl,<s>,<start>` (off against
+  mode 2); the lever acted if draws per frame differ between on and off windows. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
   so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.
 * **Which functions go with a kind of frame** (needs the `all` lift): `PPU_FRAME_FUNCS=<hex ea of a guest frame

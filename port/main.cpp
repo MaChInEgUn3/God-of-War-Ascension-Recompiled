@@ -310,7 +310,7 @@ extern "C" int g_spurs_ab_mask;
 extern "C" long long g_spurs_ab_ticks, g_spurs_ab_runs, g_spurs_ab_native;
 extern "C" int g_spurs_wws_reuse_any;
 extern "C" int g_gcm_ab_on, g_gcm_fast_args;
-extern "C" int ppu_spin_pause, g_spurs_nap_us, g_spurs_lane_ovr[32];
+extern "C" int ppu_spin_pause, g_spurs_nap_us, g_spurs_lane_ovr[32], g_rsx_occl_mode;
 extern "C" int g_spu_slow_pct;
 extern "C" int g_rsx_slow_pct, g_gcm_main_slow_us;
 extern "C" unsigned long long g_vk_wait_us[4];   /* toolkit libs/video/rsx_vulkan_backend.c: fence waits */
@@ -378,6 +378,9 @@ static void ab_set(const char* lever, int on)
     }
     else if (!strcmp(lever, "vol")) g_eng_volume_inplace = on;   /* RSX_VOLUME_INPLACE: a changed volume is rewritten in place */
     else if (!strcmp(lever, "nap")) { const char* e = getenv("GOW_AB_NAP"); g_spurs_nap_us = on ? (e ? atoi(e) : 200) : 0; }
+    /* occl: real answers for the title's occlusion tests (host queries, the report's value corrected to 0 when no
+     * sample passed) against the plain "always visible" answer. Off = no query is armed either. */
+    else if (!strcmp(lever, "occl")) g_rsx_occl_mode = on ? 2 : 0;
     else if (!strcmp(lever, "pause")) { const char* e = getenv("GOW_AB_PAUSE"); ppu_spin_pause = on ? (e ? atoi(e) : 16) : 0; }
     else if (!strcmp(lever, "wwsload")) g_spurs_wws_load = on ? 2 : 0;
     else if (!strcmp(lever, "wwsx")) {   /* the driver on the lists in GOW_AB_WWS only; the others as SPURS_WWS_NATIVE sets them */
