@@ -579,8 +579,28 @@ so far came from the menu, the first level and its corridor. The scenes after it
     draws a frame against 2,687, same picture). With every answer 0 (still view) the main pass keeps its
     depth-only draws and loses its colour draws (about 642 to 373 draws a frame), the shadow-mask target goes
     from about 460 to 353 and the shadow maps from about 196 to 159, and the mean module run costs half
-    (41 against 84 us): hidden objects would save job time as well as draws. How many objects are really
-    hidden in a normal view is not measured yet; that needs real sample counts from the GPU.
+    (41 against 84 us): hidden objects would save job time as well as draws.
+  * How many tested objects are hidden (per-draw dumps; a depth-writing test draw that changes no depth pixel;
+    the tests use less-or-equal, so a repeat of a mesh at the same depth would also change nothing, but
+    matching by vertex count, index count and first triangle finds at most 10 such repeats in 564): still view
+    564 of 1,176 tests = 48.0%; bench corridor 522 of 1,090 = 47.9%; prologue fight 422 of 1,351 = 31.2% (40%
+    of the tests' indices). The test draws themselves survive a zero answer (the depth-only pass keeps about
+    566 draws while the colour pass drops from about 500 to 74), so answering "hidden" cannot latch an object
+    off.
+  * When the answers are read (corridor, `GCM_REPORT_AGE`, changes nothing): about 660 slots a frame are
+    written, 99% of them holding a non-zero word at +0xC just before the write, and fetched about 1,600 times
+    a frame by the EDGE jobs; the report is 20-60 ms old at 70-82% of the fetches, 5-20 ms at 14-25%, under
+    5 ms at 2% or less, and 0.1-0.9% of the fetches read a slot not written yet.
+  * Ceiling by scene, every answer set to 0 (broken picture, a scale and not a gain; one run each): bench
+    corridor 20.2 against 16.4 fps; still view 20.7 against 19.8; New Game replay route against the plain
+    windows of an earlier run: opening +20% (45.4 against 37.8 fps), 200-350 s +9%, the prologue fight
+    (350-500 s) +0.5% although its draws fall 18% and the mean module run from 60 to 35 us and the walker from
+    0.77 to 0.62 busy. So real answers can help the traversal scenes and cannot help the prologue fight,
+    which neither draws nor EDGE job time nor the walker paces.
+  * Next: host occlusion queries round each test draw, the report written as today ("visible") and its value
+    word corrected to 0 when the query says no sample passed and the slot still carries that report's
+    timestamp; counting only first (how many answers are known before the jobs fetch them, and what the
+    queries cost the walker), behind a switch that is off by default.
   * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
     said the port never makes it for the textures that churn, and called the churn a port bug. All three came
     from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).

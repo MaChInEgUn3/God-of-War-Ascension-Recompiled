@@ -48,7 +48,14 @@ Lessons that cost days; keep them.
   A pass dump with `RSX_ENGINE_PASS_DUMP_DRAWS=1` writes the report methods into `draws.txt` (`m 17C8`, `m 17CC`,
   `m 1800`); `analysis/occlbr.py <dump dir>` turns that into the brackets by number of draws and, for one-draw
   brackets, the pass, the write masks and the size of the test draw. The dump directory must exist before the
-  run: a missing directory writes nothing and says nothing. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
+  run: a missing directory writes nothing and says nothing.
+  In such a dump every draw's `after:` line ends with `changed N`, the depth pixels that differ from the read-back
+  after the previous draw: for a depth-writing test draw, `changed 0` sizes "hidden" without any GPU query (check
+  the depth function: with less-or-equal a repeat of the same mesh also changes nothing).
+  `GCM_REPORT_AGE=<lo>-<hi>` (hex EA range of report slots; changes nothing) prints every 20 s how old a slot's
+  report is when an SPU job fetches it, which value and +0xC word it holds then, and how many slots held a
+  non-zero +0xC word just before the walker wrote them: whether a report's value may still be corrected after
+  the write. `PPU_TRACE_DUMP=<fn>,<reg|0xEA>,<len>[,<hops>]` also dumps memory (a `reg` of 32 or more is an
   absolute guest address; `hops` follows pointers first). `PPU_TRACE_DUMP2` takes a second spec of the same form,
   so one entry can show an object and a block it points to. The `all` build is slower; relift without it for normal runs.
 * **Which functions go with a kind of frame** (needs the `all` lift): `PPU_FRAME_FUNCS=<hex ea of a guest frame
