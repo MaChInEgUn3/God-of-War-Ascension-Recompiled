@@ -666,8 +666,9 @@ so far came from the menu, the first level and its corridor. The scenes after it
       (pooled +0.04% +- 0.9); checkpoint -5.9% (se 1.4, four runs: -8.5, -3.1, -8.1, -4.0). Opposite signs in
       two scenes of the same level: not a default, not in the play script.
     * The shipped levers on the checkpoint: RenderJobs lanes +1.3% +- 4.1 and -2.3% +- 2.4 (nil; they stay);
-      occlusion answers -1.3, +11.8, +5.1, +3.3% = +4.7% (se 2.7; module runs 68-71 us against 80-86 and
-      about 110 fewer draws a frame with them on). A spare spinning thread costs nothing there either
+      occlusion answers -1.3, +11.8, +5.1, +3.3% on four short runs and +1.2% +- 1.4, +3.5% +- 1.5 on two
+      long ones (the ones to quote: about +2%; module runs 68-71 us against 78-86 and about 110 fewer draws a
+      frame with them on). A spare spinning thread costs nothing there either
       (+2.6% +- 3.6).
     * What the checkpoint scene waits on, and the scheduling levers there (2026-11-20; the scene holds steady
       for 370 s, so one 600 s run resolves about 1%): in two traces the main thread's waits are spent mostly
@@ -682,6 +683,14 @@ so far came from the menu, the first level and its corridor. The scenes after it
       functions of it holding 57% (0x73E0 27%, 0x59C0 19%, 0x4450 11%), the runtime about 6%. EDGE is 58%
       in the stages already written natively, about 20% in lifted code and about 18% in the SPU runtime
       (channel writes 6.7%, indirect branches 3.6%).
+    * What a millisecond of that work costs (slow-down probes on the checkpoint, long span): General6 made
+      to take 16.5 ms more a frame: -7.0% +- 1.2; the EDGE lists made to take 16.9 ms more: -7.0% +- 1.3.
+      So about a quarter of a millisecond of frame per millisecond of SPU work there, the same for both. A
+      speed-up gains at most what the same slow-down costs (the occlusion answers shorten the module runs by
+      an eighth on this scene and gain about 2%). The two hottest General6 functions are generic lifted code
+      (each float operation goes through memory twice and takes a checked branch); stages written natively
+      before ran 2.5 to 5.3 times faster than their lifted originals. Next: a native version of the hottest
+      one, behind a switch, checked against the lifted code first.
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
