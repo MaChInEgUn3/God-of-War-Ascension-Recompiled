@@ -669,6 +669,19 @@ so far came from the menu, the first level and its corridor. The scenes after it
       occlusion answers -1.3, +11.8, +5.1, +3.3% = +4.7% (se 2.7; module runs 68-71 us against 80-86 and
       about 110 fewer draws a frame with them on). A spare spinning thread costs nothing there either
       (+2.6% +- 3.6).
+    * What the checkpoint scene waits on, and the scheduling levers there (2026-11-20; the scene holds steady
+      for 370 s, so one 600 s run resolves about 1%): in two traces the main thread's waits are spent mostly
+      with the General6 list running at its cap of three lanes. Five lanes for General6: +1.8% +- 1.2 and
+      +0.3% +- 0.9 (closed at about +1%). Two EDGE lanes instead of three: -11.7% +- 1.0, so with the fourth
+      lane's -5.9% three is the optimum there: the EDGE lists and the main chain share the kernel threads and
+      both are critical. The audio workload made 50% slower: +0.5% +- 1.0, so the share of its thread that it
+      leaves is not on the critical path, and a dedicated host thread for it is closed unbuilt. No scheduling
+      lever is left on that scene; what bounds it is the amount of SPU work (a frame: EDGE about 125 ms,
+      General6 66, audio 36, RenderJobs 21: 4.9 of 6 threads).
+    * Where that work is (host sampler, one run per workload): General6 is one lifted job module, three
+      functions of it holding 57% (0x73E0 27%, 0x59C0 19%, 0x4450 11%), the runtime about 6%. EDGE is 58%
+      in the stages already written natively, about 20% in lifted code and about 18% in the SPU runtime
+      (channel writes 6.7%, indirect branches 3.6%).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
