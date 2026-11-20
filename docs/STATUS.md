@@ -720,6 +720,20 @@ so far came from the menu, the first level and its corridor. The scenes after it
       0.8-1.1 s beside them in the log (`VK_SLOW_MS=20`): the machine's periodic event of "The periodic stall
       and the dip after it" below. The cut into the cinematic shot costs two or three groups of 0.5-0.7 s. No
       stall specific to the fight has been shown.
+    * What binds the fight (slow-down probes and levers in-run, default configuration, about 370 one-second
+      windows a run, ONE run each so far): General6 made to take 12.5 ms more a frame: -6.7% +- 1.7; the EDGE
+      lists 15.6 ms more: -1.5% +- 2.2; the walker 6.7 ms more: -2.1% +- 1.9; a fourth EDGE lane: +1.6% +- 2.0
+      (not a lever there either). General6 is the chain whose time costs most in the fight; the EDGE figure
+      excludes neither nothing nor 5%. The occlusion answers are not measured in the fight yet: their two runs
+      were among the ones that stayed in the shot (next line).
+    * The shot before the fight does not always end. In 2 of 11 runs of this bench the cinematic's first shot (a
+      close shot of Kratos, still camera) stayed on screen to the end of the run: about 715 draws a frame at 27
+      fps, the same picture as "Open bug: the arena cutscene starts and stops on its first shot" above, which
+      until now had no passing scripted run to compare with. Timing from the logs: the nine runs that went on
+      drop to 8-11 fps for about a second at 155-157 s, show the shot from 158.5-163.2 s and reach the fight
+      at 173-189 s; the two stuck runs show the shot from 155.3 and 155.7 s with no such heavy second before
+      it. Two runs, one after the other; no cause is known. A combat figure is only taken from a run whose
+      draw count shows the fight.
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
