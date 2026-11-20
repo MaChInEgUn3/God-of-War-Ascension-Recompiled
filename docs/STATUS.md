@@ -608,9 +608,9 @@ so far came from the menu, the first level and its corridor. The scenes after it
     * Fed back (mode 2), in-run A/B off against on, bench corridor, four runs: frames +13.9, +12.6, +14.2,
       +11.8% = +13.1% (se 0.6); steady windows only +13.4% (se 1.8); mean module run 22-23% shorter; draws
       per frame about 2,340 against 2,680. New Game replay route, one run, by time span: +1.8% +- 7.3,
-      +10.5% +- 4.1, +12.7% +- 1.9, +9.1% +- 9.9; none negative. (On the standard build the replay falls
-      behind its recording, so these spans are not the play build's scenes; the prologue fight, where the
-      all-zero ceiling was nil, is not measured with it yet.)
+      +10.5% +- 4.1, +12.7% +- 1.9, +9.1% +- 9.9; none negative. (That run was one of the replays that pass the prologue
+      fight early and go on into the first level, see "two modes" below: from 240 s on these spans are the
+      level, not the fight. An earlier version of this line said the replay "falls behind its recording".)
     * Picture: dumped frames of a fed corridor run match plain in brightness and, side by side, in content;
       on a still shot the fed frames differ from their closest plain frame by no more than plain differs from
       plain. Not checkable this way: an object coming into view is drawn only after its next test has been
@@ -619,7 +619,8 @@ so far came from the menu, the first level and its corridor. The scenes after it
     * On the play build (profile-optimised, rebuilt 2026-11-20 from a profile trained with the switch on;
       the previous one is kept aside; one in-run run each): bench corridor +15.5% +- 2.0 (17.66 against
       15.28 fps; mean module run 24% shorter); New Game replay route +3.9% +- 8.1, -0.9% +- 3.2, +3.1% +- 2.6
-      (the prologue fight), -0.6% +- 2.2: next to nothing there, as the all-zero ceiling said. New play build
+      (the prologue fight), -0.6% +- 2.2: next to nothing in the prologue fight (that run stayed in it), as the
+      all-zero ceiling said. New play build
       against the previous one, plain, alternating on the replay route (old, new, new, old; fps in the fight
       span): 16.9, 22.5, 22.2, 22.1. The first old run is no evidence: it passed the prologue fight
       at about 240 s and went on into the first level, another scene (2,207 draws a frame against about
@@ -648,10 +649,26 @@ so far came from the menu, the first level and its corridor. The scenes after it
       each = 33 ms of a 40.5 ms frame). "The per-draw cost is the next lever", written here first, is
       withdrawn as a conclusion: see the next items.
   * The replay route has two modes (found 2026-11-20). In most runs the replay stays in the prologue fight,
-    held by its tutorial prompt, to the end; in some (2 of about 14 so far) it passes the fight at about 240 s
-    and enters the first level (the corridor with enemies). The spans quoted above for 350-700 s are the
-    prologue fight. In the level the play build with the RenderJobs lanes ran 13-17 fps (one run), like the
-    bench corridor, which is the same scene.
+    held by its tutorial prompt, to the end; in some (3 of 18 so far, told apart by the mean module run rising about
+    1.5 times at 240 s) it passes the fight and enters the first level (a corridor with enemies). Unless a line
+    says otherwise, the spans quoted above for 350-700 s are the prologue fight. In the level the play build
+    with the RenderJobs lanes ran 13-17 fps (one run).
+  * A second level scene (2026-11-20): a save made at a checkpoint of the first level (a tunnel with an enemy
+    ahead), loaded by the bench script. Play build, RenderJobs lanes on, no occlusion answers: 15.6 fps, about
+    2,130 draws a frame, mean module run 80 us (the bench corridor in the same configuration: 15.1 fps, about
+    2,690 draws, 82 us). Its 1 s windows are noisy (3-4% per run), so four runs resolve about 2-3% there.
+    * The two level scenes are bound differently (one trace each, rankings). Bench corridor: in 70% of frames
+      the main thread sleeps for the previous frame's EDGE list (8.9% of the frame time) and one SPU kernel
+      thread is half idle. Checkpoint: that sleep never happens, the General6 list does twice the work (66 ms a
+      frame against 34) and five of the six kernel threads are 83-87% busy.
+    * A fourth EDGE lane (`15,16,17=4`, in-run against three): bench corridor +6.5% (se 1.65, four runs,
+      default configuration) and about +4% (se 1.3, eight runs, occlusion answers on); prologue fight nil
+      (pooled +0.04% +- 0.9); checkpoint -5.9% (se 1.4, four runs: -8.5, -3.1, -8.1, -4.0). Opposite signs in
+      two scenes of the same level: not a default, not in the play script.
+    * The shipped levers on the checkpoint: RenderJobs lanes +1.3% +- 4.1 and -2.3% +- 2.4 (nil; they stay);
+      occlusion answers -1.3, +11.8, +5.1, +3.3% = +4.7% (se 2.7; module runs 68-71 us against 80-86 and
+      about 110 fewer draws a frame with them on). A spare spinning thread costs nothing there either
+      (+2.6% +- 3.6).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
@@ -661,8 +678,9 @@ so far came from the menu, the first level and its corridor. The scenes after it
       one run, lanes on) and -7.3% +- 2.6 in the bench corridor with both levers on (one run; that probe
       holds the FIFO lock while it spins, so it also measures the lock). Not established either way; the
       per-draw cost is not shown to bound the level.
-    * The SPU kernel threads are busy 4.4 to 4.6 of 6 over whole frames (corridor: the three EDGE lists
-      about 39 ms a frame each, audio 37, General6 33, RenderJobs 26). The main thread's frame has no single
+    * The SPU kernel threads are busy about 5.0 of 6 over whole frames in the bench corridor (the three EDGE
+      lists about 39 ms a frame each, audio 34, General6 34, RenderJobs 26; an earlier version said 4.4 to 4.6,
+      from a window that included a stall of the run itself) and 4.6 of 6 in the prologue fight. The main thread's frame has no single
       dominant wait any more: the RenderJobs / MeshProc interval, its own work, the sleep for the previous
       frame's EDGE list (about 4 ms), the RenJobSet waits (about 5 ms).
     * One more wait was traced and closed unbuilt: after the MeshProc wait the main thread polls a counter
