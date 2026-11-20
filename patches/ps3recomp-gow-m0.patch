@@ -4239,7 +4239,7 @@ index b58a830b..807bac71 100644
      /* coverage accounting */
      u32 seen[RSX_DSP_NUM_REGS];       /* per-register write count           */
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
-index f99986b3..37d0073f 100644
+index f99986b3..62adbb4f 100644
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
 @@ -22,6 +22,9 @@
@@ -6448,14 +6448,14 @@ index f99986b3..37d0073f 100644
 +                        s_zsub = t.width | (t.height << 12);
 +                    textures[u] = snap; continue;
 +                }
-+            }
+             }
+-            if (eng_zdepth_to_guest((u32)zsrc)) {
 +            if (eng_z2argb_mode() && current_zslot != (u32)zsrc) {
 +                ENG_ST_BEGIN();
 +                const u32 a = eng_zdepth_argb8((u32)zsrc, &t, base_fmt, eng_z2argb_mode() == 2);
 +                ENG_ST_END(ST_Z2G);
 +                if (a) { textures[u] = a; continue; }
-             }
--            if (eng_zdepth_to_guest((u32)zsrc)) {
++            }
 +            int z2g;
 +            eng_note_via_guest(current_zslot == (u32)zsrc ? "z2guest (bound zeta)" : "z2guest", &t,
 +                               g.zdepths[zsrc].zfmt, g.zdepths[zsrc].w, g.zdepths[zsrc].h);
@@ -7563,7 +7563,7 @@ index f99986b3..37d0073f 100644
      g.vp_cb = (u8*)calloc(1, ENG_VP_CB_BYTES);
      if (!g.vp_cb) return -1;
      if (g.be->init && g.be->init(g.be->user, g.width, g.height) != 0) {
-@@ -2933,11 +5390,60 @@ void rsx_draw_engine_shutdown(void)
+@@ -2933,11 +5390,65 @@ void rsx_draw_engine_shutdown(void)
      const rsx_draw_backend* be = g.be;
      memset(&g, 0, sizeof g);
      g.be = be;
@@ -7574,7 +7574,12 @@ index f99986b3..37d0073f 100644
  void rsx_draw_engine_method(u32 method, u32 arg)
  {
      if (!g.ready) return;
-+    if (method < 0x2000u) eng_occl_method(method & 0x1FFCu, arg);
++    if (method < 0x2000u) {
++        const u32 mo = method & 0x1FFCu;
++        /* The report methods go into the pass dump's draws.txt too: which draws a ZPASS query brackets. */
++        if (mo == 0x17C8u || mo == 0x17CCu || mo == 0x1800u) pd_note_method(mo, arg);
++        eng_occl_method(mo, arg);
++    }
 +    {   /* RSX_DRAW_SEQLOG=<s> (diagnostic): from s seconds after the first method, for three triangle lists whose
 +         * vertices all came inline, every method and argument from their END to the next BEGIN (400 lines at
 +         * most): what a title sends between such draws. */
@@ -7624,7 +7629,7 @@ index f99986b3..37d0073f 100644
      /* The subchannel is a binding slot, not an engine selector, and a title
       * whose SPU-built command lists bind NV4097 elsewhere would otherwise
       * store its state in the wrong register bank.  Standard NV4097 methods
-@@ -2945,12 +5451,43 @@ void rsx_draw_engine_method(u32 method, u32 arg)
+@@ -2945,12 +5456,43 @@ void rsx_draw_engine_method(u32 method, u32 arg)
       * (0xE9xx, 0xEBxx) encode the subchannel bits as part of the address;
       * preserve them with the wider mask. */
      u32 m = (method >= 0xE000u) ? (method & 0xFFFCu) : (method & 0x1FFCu);
@@ -7668,7 +7673,7 @@ index f99986b3..37d0073f 100644
      if (buffer_id >= 8) return;
      eng_display_buffer* d = &g.display_buffers[buffer_id];
      d->location = location;
-@@ -2963,12 +5500,14 @@ void rsx_draw_engine_set_display_buffer(u32 buffer_id, u32 location, u32 offset,
+@@ -2963,12 +5505,14 @@ void rsx_draw_engine_set_display_buffer(u32 buffer_id, u32 location, u32 offset,
  
  void rsx_draw_engine_flush(void)
  {
@@ -7683,7 +7688,7 @@ index f99986b3..37d0073f 100644
      /* A host that drives the flip itself gets whichever buffer the guest's
       * own last flip named, and display buffer 0 before there has been one:
       * a runner that both consumes 0xE944 and calls here would otherwise
-@@ -2980,12 +5519,14 @@ void rsx_draw_engine_present(void)
+@@ -2980,12 +5524,14 @@ void rsx_draw_engine_present(void)
  
  void rsx_draw_engine_present_buffer(u32 buffer_id)
  {
