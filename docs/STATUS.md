@@ -621,9 +621,10 @@ so far came from the menu, the first level and its corridor. The scenes after it
       15.28 fps; mean module run 24% shorter); New Game replay route +3.9% +- 8.1, -0.9% +- 3.2, +3.1% +- 2.6
       (the prologue fight), -0.6% +- 2.2: next to nothing there, as the all-zero ceiling said. New play build
       against the previous one, plain, alternating on the replay route (old, new, new, old; fps in the fight
-      span): 16.9, 22.5, 22.2, 22.1. The first old run fell behind its recording (2,207 draws a frame there
-      against about 1,940 in the other three) and is no evidence; without it the two builds are level, which
-      on this machine means within about 10%. The new build stands.
+      span): 16.9, 22.5, 22.2, 22.1. The first old run is no evidence: it passed the prologue fight
+      at about 240 s and went on into the first level, another scene (2,207 draws a frame against about
+      1,940; an earlier version of this line said it "fell behind its recording", which was wrong). Without
+      it the two builds are level, which on this machine means within about 10%. The new build stands.
   * RenderJobs lanes are the fights' lever (2026-11-20). The prologue fight's trace of 2026-11-15 (41.7 ms
     frames): the main thread sleeps only 5.6 ms a frame, the wait for the previous frame's EDGE list is under
     1 ms and the walker is 0.78 busy, while RenderJobs runs 19.7 ms a frame one job at a time. Three lanes for
@@ -643,8 +644,31 @@ so far came from the menu, the first level and its corridor. The scenes after it
       lanes held on through that environment, 700 s: no unresolved call, no missed flip, frames as bright as
       a plain run's (mean 50.3 against 51.3), 23.2 / 24.7 (the fight) / 23.6 fps in the three later spans
       against 21.3 / 22.3 / 21.9 for the two plain runs of the same build.
-    * What bounds the fight now: with the lanes on the walker is 0.83 busy there (about 1,940 draws a frame
-      at 17 us each = 33 ms of a 40.5 ms frame). The per-draw cost is the next lever.
+    * With the lanes on the walker is 0.83 busy in the prologue fight (about 1,940 draws a frame at 17 us
+      each = 33 ms of a 40.5 ms frame). "The per-draw cost is the next lever", written here first, is
+      withdrawn as a conclusion: see the next items.
+  * The replay route has two modes (found 2026-11-20). In most runs the replay stays in the prologue fight,
+    held by its tutorial prompt, to the end; in some (2 of about 14 so far) it passes the fight at about 240 s
+    and enters the first level (the corridor with enemies). The spans quoted above for 350-700 s are the
+    prologue fight. In the level the play build with the RenderJobs lanes ran 13-17 fps (one run), like the
+    bench corridor, which is the same scene.
+  * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
+    * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
+      corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
+      nor the draws got slower with it. So throttling the free-running audio workload (0.63 of a kernel
+      thread at any frame rate, run back to back) to relieve the CPU is closed unbuilt.
+    * The walker: slowed by 20% of each pass, it cost nothing in the level on the replay route (+2.9% +- 2.1,
+      one run, lanes on) and -7.3% +- 2.6 in the bench corridor with both levers on (one run; that probe
+      holds the FIFO lock while it spins, so it also measures the lock). Not established either way; the
+      per-draw cost is not shown to bound the level.
+    * The SPU kernel threads are busy 4.4 to 4.6 of 6 over whole frames (corridor: the three EDGE lists
+      about 39 ms a frame each, audio 37, General6 33, RenderJobs 26). The main thread's frame has no single
+      dominant wait any more: the RenderJobs / MeshProc interval, its own work, the sleep for the previous
+      frame's EDGE list (about 4 ms), the RenJobSet waits (about 5 ms).
+    * One more wait was traced and closed unbuilt: after the MeshProc wait the main thread polls a counter
+      until a handful of small SPURS tasks (about five a frame, started by a manager task) have finished; in
+      the corridor about 3.3 ms a frame, of which the RenderJobs jobs run through most; what is left after
+      the last RenderJobs job is about 0.9 ms a frame, under the line for building anything.
   * **Withdrawn (2026-11-14).** Three paragraphs stood here that called 0x370B48 a "load complete" report,
     said the port never makes it for the textures that churn, and called the churn a port bug. All three came
     from misreading that function's arguments (it has no third argument; the hook logged whatever r5 held).
