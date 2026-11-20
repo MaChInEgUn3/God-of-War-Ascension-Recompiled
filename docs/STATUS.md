@@ -703,6 +703,23 @@ so far came from the menu, the first level and its corridor. The scenes after it
       above (61 ms frames, General6 66 ms, EDGE 125 ms, 4.9 threads) are from the busier state; a quiet trace
       of the same scene reads about 50 ms frames, General6 50, EDGE 105-111. Only windows inside one run or
       adjacent alternating runs are compared for decisions.
+    * With the occlusion answers held on, what binds the checkpoint (slow-down probes, long span, two runs
+      each, in both host states): General6 made to take 15-18 ms more a frame: -8.5% +- 1.5 and -7.0% +- 1.1;
+      the EDGE lists 14-15 ms more: -1.0% +- 1.4 and +0.6% +- 1.2; the walker 7.5 ms more: +0.1% +- 1.5. So with
+      the answers on, General6 is the one binding chain there, and a faster General6 would pay only together
+      with them. Without the answers, in the quiet host state, the EDGE lists bind in 21% of the checkpoint's
+      frames (they never did in the night's traces): the lane verdicts above for that scene are the loaded
+      column.
+  * A combat bench (2026-11-20): from the same checkpoint save, walking forward for 15 s and then pressing
+    attacks reaches the first arena (a short cinematic shot, then a fight with one large enemy that the
+    presses never finish); it holds for at least 400 s. Play build, default configuration: 22-25 fps in the
+    quick host state and 13-17 in the slow one, 1,400-2,000 draws a frame. Frame times over 10 s of it: median
+    46 ms, 95% under 73, 99% under 118 (quick state); median 61-63, 95% under 95-98, 99% under 113-114 (slow
+    state, two runs). The walker's passes reach 80-120 ms on the heavy frames.
+    * Stalls seen in those runs, by cause: the ones at random seconds (1.2-1.9 s) have a `vkQueueSubmit` of
+      0.8-1.1 s beside them in the log (`VK_SLOW_MS=20`): the machine's periodic event of "The periodic stall
+      and the dip after it" below. The cut into the cinematic shot costs two or three groups of 0.5-0.7 s. No
+      stall specific to the fight has been shown.
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
@@ -714,7 +731,8 @@ so far came from the menu, the first level and its corridor. The scenes after it
       per-draw cost is not shown to bound the level.
     * The SPU kernel threads are busy about 5.0 of 6 over whole frames in the bench corridor (the three EDGE
       lists about 39 ms a frame each, audio 34, General6 34, RenderJobs 26; an earlier version said 4.4 to 4.6,
-      from a window that included a stall of the run itself) and 4.6 of 6 in the prologue fight. The main thread's frame has no single
+      from a window that included a stall: the tracer writing its file at the window's end, which costs every
+      traced run 0.7 to 1 s) and 4.6 of 6 in the prologue fight. The main thread's frame has no single
       dominant wait any more: the RenderJobs / MeshProc interval, its own work, the sleep for the previous
       frame's EDGE list (about 4 ms), the RenJobSet waits (about 5 ms).
     * One more wait was traced and closed unbuilt: after the MeshProc wait the main thread polls a counter
