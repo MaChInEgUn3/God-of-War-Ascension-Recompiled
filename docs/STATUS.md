@@ -724,16 +724,54 @@ so far came from the menu, the first level and its corridor. The scenes after it
       windows a run, ONE run each so far): General6 made to take 12.5 ms more a frame: -6.7% +- 1.7; the EDGE
       lists 15.6 ms more: -1.5% +- 2.2; the walker 6.7 ms more: -2.1% +- 1.9; a fourth EDGE lane: +1.6% +- 2.0
       (not a lever there either). General6 is the chain whose time costs most in the fight; the EDGE figure
-      excludes neither nothing nor 5%. The occlusion answers are not measured in the fight yet: their two runs
-      were among the ones that stayed in the shot (next line).
+      excludes neither nothing nor 5%. The occlusion answers in the fight (measured later the same day): +5.2% +- 1.5
+      in-run (one run; about 4% fewer draws with them on) and +4.4% on one whole-run pair; two more pairs had a
+      run that stayed in the shot (next line) and are void.
+    * Where General6's time goes in the fight (host sampler, one run, six kernel threads): the same job module
+      and the same split as on the checkpoint: 0x73E0 22-28% of each thread, 0x59C0 18-20%, 0x4450 11-13%,
+      0x40B8 6-7%; a second module 6-10%; the stages written natively 9-15%; the SPU runtime 5-6%, of which
+      the exact slow path of the float helpers about 2%.
     * The shot before the fight does not always end. In 2 of 11 runs of this bench the cinematic's first shot (a
       close shot of Kratos, still camera) stayed on screen to the end of the run: about 715 draws a frame at 27
       fps, the same picture as "Open bug: the arena cutscene starts and stops on its first shot" above, which
       until now had no passing scripted run to compare with. Timing from the logs: the nine runs that went on
       drop to 8-11 fps for about a second at 155-157 s, show the shot from 158.5-163.2 s and reach the fight
       at 173-189 s; the two stuck runs show the shot from 155.3 and 155.7 s with no such heavy second before
-      it. Two runs, one after the other; no cause is known. A combat figure is only taken from a run whose
-      draw count shows the fight.
+      it. A combat figure is only taken from a run whose draw count shows the fight.
+      * Count by the evening: 13 of 40 runs.
+      * What a stuck run shows (second-by-second draw counts, frame dumps by file time, one traced stuck run
+        against three traced good ones): a good run plays a wide shot of the arena first (2,600-3,100 draws a
+        frame, 9-11 fps, 4-5 s, the main thread sleeping for the EDGE lists), then light shots of about 280 draws
+        for 25 s, then one second of the 720-draw view, then the fight. A stuck run goes from gameplay straight
+        to that 720-draw view (the camera behind Kratos, no HUD, nothing moving) and stays. So the cinematic takes
+        over but its shots never play; the still picture is the pose the game holds around the cinematic.
+      * Two ideas measured and dropped. "The cinematic's data is not ready when Kratos arrives": the walk
+        delayed by 20 s stuck 1 of 5, the walk in short flicks 2 of 5, the old rate. "Flips taken outside the
+        command stream break its start" (in the traced stuck run every flip from 157 s on took that path): a
+        run with that path closed (`GCM_FLIP_SLACK=0`, below) stuck with none of them, so there they were a
+        consequence of the still scene. The cause is not known.
+      * In the still view itself General6 is the bound: made 27% slower -9.6% +- 1.6, on five lanes instead of
+        three +9.8% +- 1.1 (the checkpoint gave about +1% for five lanes). Not a figure for the fight.
+    * Flips presented before their frame's tail (found 2026-11-20, not fixed yet). The runtime queues the
+      title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the
+      flip is taken at call time, before the walker has executed the rest of the frame. This title steps a 64 KB
+      block a frame through its own ring, so that happens on a steady share of its flips: 1,100 of about 8,900
+      in each of two runs (`GCM_FLIP_DIRECT_LOG=1`, an uncommitted diagnostic that prints every hundredth). In frame dumps
+      of the fight the health bar, drawn last, is missing from 0, 1, 1, 3 and 3 of 33-49 frames in five runs
+      with the default configuration, and from 9 of 40 in a run that toggled the occlusion answers every
+      second (not explained; a point to check before those answers become a default). An uncommitted option
+      `GCM_FLIP_SLACK=<bytes>` (default 0x1000, today's behaviour) with value 0 logged no such flip in two runs;
+      whether it removes the missing-HUD frames, and what it does to speed, is not measured yet.
+    * The SPU float helpers (found 2026-11-20, a change under test, not committed). On Windows every `fa`, `fs`,
+      `fm`, `fma`, `fms`, `fnms` of lifted SPU code stored its result to the stack and loaded it back, because
+      the exact per-lane fix-up it may call returns a 16-byte struct by value. With the fix-up returning in a
+      register: a chain of four float operations compiles to 126 instructions instead of 158, and replay of
+      captured jobs (lab build, no profile; every job byte-identical, 400 of 400 and 3,600 of 3,600) takes
+      23.7% less for the General6 jobs (best time per job over ten runs each; jobs captured in the still view)
+      and 1.8% MORE for the EDGE jobs (not explained yet). In game so far one round on the bench corridor, the
+      EDGE-bound scene, builds without the profile: 13.17 and 12.99 fps before, 13.49 after, with the EDGE
+      module runs unchanged (88.5 -> 87.7 us). It stays out of the tree until the EDGE cost is located and
+      whole-run pairs on the play build's settings show the fight and the checkpoint gain.
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
