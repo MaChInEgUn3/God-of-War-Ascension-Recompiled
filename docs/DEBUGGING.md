@@ -954,6 +954,11 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   counter `(count<<16)|(wid<<8)|flags`). `SPURS_PM_HANG_LS=<ls>,<bytes>[;...]` adds LS dumps to `[pm-hang]`;
   `SPURS_PM_ENDLS_WID=<lo>-<hi>` prints them (`[pm-end]`) at the end of the next three runs of those wids once the
   `[walk]` report has fired. The WWS PM caches the list line at LS 0xD00 (EA at 0x1500).
+* **Where is every thread at a given second?** (port) `GOW_STACKS_AT=<s>[,<s>...]` prints the guest stack of
+  every PPU thread (tids 1-47, tag `at<s>`) at those seconds since start. Two times a second apart tell a blocked
+  thread (same sp and lr) from a running one. For a state only some runs reach, the same dump from a run that
+  got there and one that did not shows whether any thread waits in a different place (for the arena shot that
+  does not play: none does).
 * **Where is the main thread when flips stop?** `GOW_CLOCK_WATCH=<s>` prints three `[GSTACK:stall-main]` guest stacks
   (`ppu_dump_thread_stack(1, ...)`); identical sp/lr = blocked. This beat a day of reasoning about pipeline cycles.
 * **SPURS tasksets**: `SPU_TS_COMMITLOG=<taskset ea>` logs the bitsets at each SPU commit to that taskset's header line

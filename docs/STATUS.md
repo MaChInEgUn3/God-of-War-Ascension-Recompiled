@@ -821,6 +821,14 @@ so far came from the menu, the first level and its corridor. The scenes after it
       * With the new play build General6 is no longer a clear bound in the fight: made 27% slower in
         alternating 1 s windows it costs -2.6% +- 2.4 (one run; the previous build: -6.7% +- 1.7). A native
         stage for it would gain less than that there.
+      * What binds the fight on the new play build (slow-down probes in alternating 1 s windows, 600 s runs):
+        the EDGE lists made 14% slower: -13.0% +- 1.3 in a heavy stretch (1,800 draws a frame) and -5.5% +- 2.7
+        in a lighter one (1,590), pooled -11.5% +- 1.2; the walker 20% slower: -0.7% +- 2.3. So with the float
+        helpers fixed the bound in the fight moved from General6 to the EDGE lists.
+      * A fourth EDGE lane on the new build (in-run against three): the fight +4.8% +- 1.9 and +6.2% +- 2.4
+        (pooled +5.3% +- 1.5), the bench corridor +7.4% +- 1.3, the checkpoint -1.2% +- 1.4 (one run, in the
+        host's quick state; the previous build lost 5.9% there in the slow state). Not a default yet: the
+        checkpoint needs the previous build run beside the new one to tell the build from the host state.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench

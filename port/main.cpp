@@ -519,6 +519,21 @@ static DWORD WINAPI frame_clock(LPVOID)
       if (m && atoi(m) > 0) CreateThread(NULL, 0, main_prof, (LPVOID)(uintptr_t)(atoi(m) * 1000), 0, NULL); }
     { const char* w = getenv("GOW_CLOCK_WATCH");
       if (w && atoi(w) > 0) CreateThread(NULL, 0, clock_watch, (LPVOID)(uintptr_t)(atoi(w) * 1000), 0, NULL); }
+    /* GOW_STACKS_AT=<s>[,<s>...]: at those seconds since start, the guest stack of every PPU thread
+     * (tids 1..47, tag at<s>). Two times a second apart tell a blocked thread (same sp and lr) from a
+     * running one. For a state that only some runs reach: the same dump from a run that got there and
+     * one that did not shows which thread waits where. */
+    { const char* a = getenv("GOW_STACKS_AT");
+      if (a && *a) CreateThread(NULL, 0, [](LPVOID p) -> DWORD {
+          const ULONGLONG t0 = GetTickCount64();
+          for (const char* s = (const char*)p; s && *s; ) {
+              const int at = atoi(s);
+              while ((GetTickCount64() - t0) / 1000 < (ULONGLONG)at) Sleep(50);
+              char tag[24]; snprintf(tag, sizeof tag, "at%d", at);
+              for (unsigned tid = 1; tid < 48; tid++) ppu_dump_thread_stack(tid, tag);
+              s = strchr(s, ','); if (s) s++;
+          }
+          return 0; }, (LPVOID)a, 0, NULL); }
     { const char* h = getenv("GOW_HEARTBEAT");
       if (h && atoi(h) > 0) CreateThread(NULL, 0, heartbeat, (LPVOID)(uintptr_t)(atoi(h) * 1000), 0, NULL); }
 #ifdef GOW_PGO_GEN
