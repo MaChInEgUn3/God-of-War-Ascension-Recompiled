@@ -788,6 +788,10 @@ so far came from the menu, the first level and its corridor. The scenes after it
         gain. The bench corridor, three pairs: +2.4, +8.6, -0.7% = +3.4% (se 2.7). Fight frames of both builds
         were looked at side by side: nothing missing. Every lifted SPU module (426) and the hot toolkit files
         match the new profile.
+      * The helper change alone in the fight (builds without a profile, before and after; four runs before and
+        three after, two more lost to the stuck shot): the two pairs that ran side by side gave +14.1 and -0.9%;
+        pooled by draws a frame the 1 s windows give -5.2, +3.8, +13.6, +14.5, +16.3, -4.4% in six bins of 200
+        draws, +10.4% weighted. So most of the bundle's gain in the fight is the helper change.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
