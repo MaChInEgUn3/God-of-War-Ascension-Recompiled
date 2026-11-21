@@ -774,8 +774,9 @@ so far came from the menu, the first level and its corridor. The scenes after it
       of the fight the health bar, drawn last, is missing from 0, 1, 1, 3 and 3 of 33-49 frames in five runs
       with the default configuration, and from 9 of 40 in a run that toggled the occlusion answers every
       second (a later run with the answers on and the margin at 0 still showed 1 of 20 frames without the health
-      bar; plain runs without the answers show such frames at a similar rate, see the flip item, so this is no
-      longer counted against the answers; they stay opt-in until that is understood). The option
+      bar; plain runs without the answers show such frames too, because the title hides the bar for seconds
+      at a time, see the flip item, so this is not counted against the answers; they stay opt-in until a
+      playtest). The option
       `GCM_FLIP_SLACK=<bytes>` (default 0x1000, today's behaviour) with value 0 logged no such flip in two runs.
       * Measured in the fight (play build, 600 s runs, a frame dumped every 100 presents, frames from 200 s
         on): default margin: 1,900 refused flips and 6 of 121 dumped frames incomplete (a second default run
@@ -787,13 +788,17 @@ so far came from the menu, the first level and its corridor. The scenes after it
         stalled seconds 5 against 6 and 3, seconds under 8 fps 11 against 12 and 9, no missed flip. A New Game
         replay with margin 0 ran its 700 s as usual (no refused flip, no missed flip, the prologue fight at
         24-25 fps).
-      * Not closed (2026-11-21, later runs at margin 0, counted by a template detector on the dumped frames):
-        the two runs above keep the health bar in 245 of 245 frames, but a plain run hours later lacks it in
-        3 of 114 (at 402, 405 and 433 s), and seven lever runs in 12 of 325, in stretches of seconds (three
-        dumps in a row in one run) and at the same seconds of the pad script in three runs; the prompt text is
-        drawn in those frames and no flip was refused. Two readings, not separated yet: the title hides its
-        combat HUD during some action, or these frames are presented a few draws before their end by another
-        path. A run with a frame dumped every half second is the next step.
+      * Health-bar-less frames at margin 0 are not this bug (2026-11-21). Later runs, counted by a template
+        detector on the dumped frames, lack the health bar in 3 of 114 frames of a plain run and 12 of 325 of
+        seven lever runs (the two runs above: 245 of 245 with it). A plain run with a frame dumped every ten
+        presents (922 frames, about two a second) shows why: the bar is absent in 46 frames, in seven
+        stretches of 10, 5, 6, 2, 8, 14 and 1 frames, each unbroken, the bar back at full strength in the next
+        frame; no flip was refused. In the stretch looked at Kratos stands in his guard pose without attacking;
+        the prompt text is drawn throughout, and the right-edge meter comes and goes on its own (absent in 106
+        frames, sometimes while the health bar is drawn). So the title takes these HUD parts off the screen
+        for seconds at a time; a frame cut short would give scattered single frames. Not compared with a
+        console. For the tools: neither the health bar nor the meter is a completeness signal on its own; the
+        refused-flip count and the parts that never hide (prompt text, flame) are.
       * The play scripts now set `GCM_FLIP_SLACK=0` (`PLAY_FLIP_SLACK=default` goes back). Upstream's current
         runtime queues this flip differently (a full segment is closed first), so this is a matter of the
         v0.17 tree the port is built on, not an upstream report.
@@ -843,6 +848,14 @@ so far came from the menu, the first level and its corridor. The scenes after it
         fourth lane is an option for fights (`PLAY_LANES="15,16,17=4;3,7=3;9,10,11,12=3;13=3"`). Two plain runs
         that had four lanes from the start both hit the arena shot that does not play; two runs prove nothing
         against a base rate of about a third, but it is a caution for that option.
+      * Where the EDGE workers' time goes in the fight on the new build (host sampler on the three workers,
+        a heavy stretch at 13 fps and 2,070 draws a frame): the stages already written natively 66-68%, lifted
+        job code 15-16%, the SPU runtime 14-16%, the policy module 2%. The lighting stage (73E0: per light,
+        eight vertices at a time) alone is 27% (`g73_loop1` 16.5%, `g73_loop2` 7.2%, its frame 3.8%), against
+        13% in the earlier sample of another scene; then `gow_e550_ec08_run` 7.4%, `spu_wrch` 5.0%,
+        `gow_edge_dcc0_e210` 4.5%. None of the three largest has a hot spot (hundreds of 16-byte buckets, the
+        top one 2-7% of its function): the cost is bulk arithmetic, so the next gain there has to come from
+        doing less per light, not from fixing one instruction.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
