@@ -770,8 +770,14 @@ so far came from the menu, the first level and its corridor. The scenes after it
       23.7% less for the General6 jobs (best time per job over ten runs each; jobs captured in the still view)
       and 1.8% MORE for the EDGE jobs (not explained yet). In game so far one round on the bench corridor, the
       EDGE-bound scene, builds without the profile: 13.17 and 12.99 fps before, 13.49 after, with the EDGE
-      module runs unchanged (88.5 -> 87.7 us). It stays out of the tree until the EDGE cost is located and
-      whole-run pairs on the play build's settings show the fight and the checkpoint gain.
+      module runs unchanged (88.5 -> 87.7 us). On the first level's checkpoint, three alternating pairs of the
+      same two builds: 15.88 -> 17.44, 15.26 -> 16.12, 16.94 -> 17.72 fps = +6.7% (se 1.6; the old build ran first
+      in every pair and the first pair opened the series, so +5% is the safer reading), again with the EDGE
+      module runs no slower (84.1 -> 82.9, 85.7 -> 84.9, 80.7 -> 80.5 us). The fight is not measured yet.
+      * The change alters the control-flow hash of every lifted function that uses those helpers (77 of 525
+        in the General6 module, all of its hot ones), so the existing PGO profile no longer applies to them:
+        a play build needs the profile trained again, not a rebuild with the old one. The retraining is under
+        way; the change stays out of the tree until the fight and two more corridor rounds are in.
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs
