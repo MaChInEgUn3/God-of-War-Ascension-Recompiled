@@ -791,13 +791,19 @@ so far came from the menu, the first level and its corridor. The scenes after it
       * Health-bar-less frames at margin 0 are not this bug (2026-11-21). Later runs, counted by a template
         detector on the dumped frames, lack the health bar in 3 of 114 frames of a plain run and 12 of 325 of
         seven lever runs (the two runs above: 245 of 245 with it). A plain run with a frame dumped every ten
-        presents (922 frames, about two a second) shows why: the bar is absent in 46 frames, in seven
-        stretches of 10, 5, 6, 2, 8, 14 and 1 frames, each unbroken, the bar back at full strength in the next
-        frame; no flip was refused. In the stretch looked at Kratos stands in his guard pose without attacking;
+        presents (922 frames, about two a second) shows why: the bar is absent in 46 frames, in six
+        stretches of 10, 5, 6, 2, 8 and 14 frames, each unbroken, the bar back at full strength in the next
+        frame, and in one single frame (unexplained; its dump was not kept); no flip was refused. In the stretch looked at Kratos stands in his guard pose without attacking;
         the prompt text is drawn throughout, and the right-edge meter comes and goes on its own (absent in 106
         frames, sometimes while the health bar is drawn). So the title takes these HUD parts off the screen
-        for seconds at a time; a frame cut short would give scattered single frames. Not compared with a
-        console. For the tools: neither the health bar nor the meter is a completeness signal on its own; the
+        for seconds at a time; a frame cut short would give scattered single frames. The cause is in the
+        bench, not the port: its button script was a shell loop that starts two processes a press, and on a
+        loaded host it starved. Presses delivered per 600 s run: 285, 318, 295 and 216 in the four runs without
+        a bar-less frame, 167, 143, 122 and 99 in the four with them. With seconds between presses Kratos
+        stands idle and the title takes the bar away (that a console does the same is assumed, not checked).
+        The script is now one process on a fixed clock (a press every 1.35 s, the quiet-host rate). Fight
+        figures compared across runs before this change carry that variation in what the fight does (the
+        in-run levers do not, their windows share one run). For the tools: neither the health bar nor the meter is a completeness signal on its own; the
         refused-flip count and the parts that never hide (prompt text, flame) are.
       * The play scripts now set `GCM_FLIP_SLACK=0` (`PLAY_FLIP_SLACK=default` goes back). Upstream's current
         runtime queues this flip differently (a full segment is closed first), so this is a matter of the
@@ -851,11 +857,15 @@ so far came from the menu, the first level and its corridor. The scenes after it
       * Where the EDGE workers' time goes in the fight on the new build (host sampler on the three workers,
         a heavy stretch at 13 fps and 2,070 draws a frame): the stages already written natively 66-68%, lifted
         job code 15-16%, the SPU runtime 14-16%, the policy module 2%. The lighting stage (73E0: per light,
-        eight vertices at a time) alone is 27% (`g73_loop1` 16.5%, `g73_loop2` 7.2%, its frame 3.8%), against
-        13% in the earlier sample of another scene; then `gow_e550_ec08_run` 7.4%, `spu_wrch` 5.0%,
+        eight vertices at a time) alone is 27% (`g73_loop1` 16.5%, `g73_loop2` 7.2%, its frame 3.8%); an
+        earlier sample read 13%, but of another scene and the previous build; then `gow_e550_ec08_run` 7.4%, `spu_wrch` 5.0%,
         `gow_edge_dcc0_e210` 4.5%. None of the three largest has a hot spot (hundreds of 16-byte buckets, the
-        top one 2-7% of its function): the cost is bulk arithmetic, so the next gain there has to come from
-        doing less per light, not from fixing one instruction.
+        top one 2-7% of its function), so the next gain has to come from doing less per light, not from
+        fixing one instruction. By instruction class (the samples spread over the disassembly) the float
+        math itself is 4% of `g73_loop1`; integer logic and shifts are 36%, compares and min/max 20%, vector
+        stores and loads 20%: the time goes into tracking, operation by operation, that each native result
+        is the one the SPU would give. A faster stage pays only where the EDGE lists bind (this heavy fight;
+        the checkpoint and corridor are not measured on this build).
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench

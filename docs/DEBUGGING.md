@@ -955,8 +955,10 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   `SPURS_PM_ENDLS_WID=<lo>-<hi>` prints them (`[pm-end]`) at the end of the next three runs of those wids once the
   `[walk]` report has fired. The WWS PM caches the list line at LS 0xD00 (EA at 0x1500).
 * **Is a HUD part missing because a frame was cut short?** Not if it is missing for a stretch. The title takes
-  the health cluster and the right-edge meter off the screen for seconds at a time during a fight (a frame every
-  ten presents shows unbroken stretches with sharp ends). A frame presented before its tail shows as scattered
+  the health cluster and the right-edge meter off the screen for seconds at a time when the player does nothing
+  (a frame every ten presents shows unbroken stretches with sharp ends; in the bench it happened whenever the
+  button script starved on a loaded host: count the `[cellPad] PAD_FILE press` lines of a run, about 300 in 600 s
+  is the intended rate). A frame presented before its tail shows as scattered
   single frames, loses the prompt text or the flame too, and comes with refused flips (`GCM_FLIP_DIRECT_LOG=1`).
   Dump densely (`PS3RECOMP_VK_DUMP_EVERY=10`) before reading a missing bar as a bug.
 * **Where is every thread at a given second?** (port) `GOW_STACKS_AT=<s>[,<s>...]` prints the guest stack of
