@@ -774,7 +774,8 @@ so far came from the menu, the first level and its corridor. The scenes after it
       of the fight the health bar, drawn last, is missing from 0, 1, 1, 3 and 3 of 33-49 frames in five runs
       with the default configuration, and from 9 of 40 in a run that toggled the occlusion answers every
       second (a later run with the answers on and the margin at 0 still showed 1 of 20 frames without the health
-      bar, so the answers hide it at times by another path than the flip: they stay opt-in). The option
+      bar; plain runs without the answers show such frames at a similar rate, see the flip item, so this is no
+      longer counted against the answers; they stay opt-in until that is understood). The option
       `GCM_FLIP_SLACK=<bytes>` (default 0x1000, today's behaviour) with value 0 logged no such flip in two runs.
       * Measured in the fight (play build, 600 s runs, a frame dumped every 100 presents, frames from 200 s
         on): default margin: 1,900 refused flips and 6 of 121 dumped frames incomplete (a second default run
@@ -786,6 +787,13 @@ so far came from the menu, the first level and its corridor. The scenes after it
         stalled seconds 5 against 6 and 3, seconds under 8 fps 11 against 12 and 9, no missed flip. A New Game
         replay with margin 0 ran its 700 s as usual (no refused flip, no missed flip, the prologue fight at
         24-25 fps).
+      * Not closed (2026-11-21, later runs at margin 0, counted by a template detector on the dumped frames):
+        the two runs above keep the health bar in 245 of 245 frames, but a plain run hours later lacks it in
+        3 of 114 (at 402, 405 and 433 s), and seven lever runs in 12 of 325, in stretches of seconds (three
+        dumps in a row in one run) and at the same seconds of the pad script in three runs; the prompt text is
+        drawn in those frames and no flip was refused. Two readings, not separated yet: the title hides its
+        combat HUD during some action, or these frames are presented a few draws before their end by another
+        path. A run with a frame dumped every half second is the next step.
       * The play scripts now set `GCM_FLIP_SLACK=0` (`PLAY_FLIP_SLACK=default` goes back). Upstream's current
         runtime queues this flip differently (a full segment is closed first), so this is a matter of the
         v0.17 tree the port is built on, not an upstream report.
@@ -823,12 +831,18 @@ so far came from the menu, the first level and its corridor. The scenes after it
         stage for it would gain less than that there.
       * What binds the fight on the new play build (slow-down probes in alternating 1 s windows, 600 s runs):
         the EDGE lists made 14% slower: -13.0% +- 1.3 in a heavy stretch (1,800 draws a frame) and -5.5% +- 2.7
-        in a lighter one (1,590), pooled -11.5% +- 1.2; the walker 20% slower: -0.7% +- 2.3. So with the float
-        helpers fixed the bound in the fight moved from General6 to the EDGE lists.
+        in a lighter one (1,590), pooled -11.5% +- 1.2; a third run read -2.7% +- 2.5 (its slowed windows had
+        4% fewer draws, which flatters it), so the cost varies with the stretch of the fight; the walker 20%
+        slower: -0.7% +- 2.3. So with the float helpers fixed the bound in the fight moved from General6 to the
+        EDGE lists.
       * A fourth EDGE lane on the new build (in-run against three): the fight +4.8% +- 1.9 and +6.2% +- 2.4
-        (pooled +5.3% +- 1.5), the bench corridor +7.4% +- 1.3, the checkpoint -1.2% +- 1.4 (one run, in the
-        host's quick state; the previous build lost 5.9% there in the slow state). Not a default yet: the
-        checkpoint needs the previous build run beside the new one to tell the build from the host state.
+        (pooled +5.3% +- 1.5), the bench corridor +7.4% +- 1.3, the checkpoint -1.2% +- 1.4 and -2.0% +- 1.1
+        (pooled -1.7% +- 0.9). The previous build, run beside it, read -2.2% +- 1.1 there: its earlier -5.9%
+        (default flip margin) was not reproduced at margin 0; why is not established. Decision: three lanes
+        stay the default, because the checkpoint loses more than the 1.5% this port accepts for a default; the
+        fourth lane is an option for fights (`PLAY_LANES="15,16,17=4;3,7=3;9,10,11,12=3;13=3"`). Two plain runs
+        that had four lanes from the start both hit the arena shot that does not play; two runs prove nothing
+        against a base rate of about a third, but it is a caution for that option.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
