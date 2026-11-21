@@ -752,6 +752,19 @@ so far came from the menu, the first level and its corridor. The scenes after it
         consequence of the still scene. The cause is not known.
       * In the still view itself General6 is the bound: made 27% slower -9.6% +- 1.6, on five lanes instead of
         three +9.8% +- 1.1 (the checkpoint gave about +1% for five lanes). Not a figure for the fight.
+      * Later work on it (2026-11-21; 24 stuck of 85 runs by then). Two more ideas dropped: "a sound-stream
+        thread never wakes": the guest stacks of all 17 PPU threads at 176 and 178 s (`GOW_STACKS_AT`, a
+        diagnostic not yet in the tree) are the same in three stuck and three good runs for twelve threads, and
+        the other five are running in both groups, so no thread waits in the stuck runs that does not wait in
+        the good ones; "a lost wake-up of a file scheduler": that thread waits in `sys_lwcond_wait`, which this
+        runtime serves as a 1 ms poll, so a wake-up cannot be lost there. A wrong reading of mine corrected:
+        the thread `brbDriver` is the title's audio output driver (187.5 calls a second), not a loader.
+      * What is established: it is a state of the game's own logic on running threads, and it depends on
+        timing between threads: with a timing disturbance (a 2 ms sampler on the main thread, or a function
+        trace on the audio driver) 0 of 11 runs stuck, without one 8 of 21 on the same settings. In the traced
+        runs the title's second file scheduler handles a request around 149-161 s in all eight good runs and
+        none in the one traced stuck run. What happens before that (from the level's start to the trigger) is
+        the next thing to trace.
     * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
       path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the
@@ -760,7 +773,8 @@ so far came from the menu, the first level and its corridor. The scenes after it
       in each of two runs (`GCM_FLIP_DIRECT_LOG=1`, a diagnostic that prints every hundredth). In frame dumps
       of the fight the health bar, drawn last, is missing from 0, 1, 1, 3 and 3 of 33-49 frames in five runs
       with the default configuration, and from 9 of 40 in a run that toggled the occlusion answers every
-      second (not explained; a point to check before those answers become a default). The option
+      second (a later run with the answers on and the margin at 0 still showed 1 of 20 frames without the health
+      bar, so the answers hide it at times by another path than the flip: they stay opt-in). The option
       `GCM_FLIP_SLACK=<bytes>` (default 0x1000, today's behaviour) with value 0 logged no such flip in two runs.
       * Measured in the fight (play build, 600 s runs, a frame dumped every 100 presents, frames from 200 s
         on): default margin: 1,900 refused flips and 6 of 121 dumped frames incomplete (a second default run
@@ -804,6 +818,9 @@ so far came from the menu, the first level and its corridor. The scenes after it
         three after, two more lost to the stuck shot): the two pairs that ran side by side gave +14.1 and -0.9%;
         pooled by draws a frame the 1 s windows give -5.2, +3.8, +13.6, +14.5, +16.3, -4.4% in six bins of 200
         draws, +10.4% weighted. So most of the bundle's gain in the fight is the helper change.
+      * With the new play build General6 is no longer a clear bound in the fight: made 27% slower in
+        alternating 1 s windows it costs -2.6% +- 2.4 (one run; the previous build: -6.7% +- 1.7). A native
+        stage for it would gain less than that there.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
