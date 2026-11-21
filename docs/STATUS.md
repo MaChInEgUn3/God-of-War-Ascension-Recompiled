@@ -752,17 +752,18 @@ so far came from the menu, the first level and its corridor. The scenes after it
         consequence of the still scene. The cause is not known.
       * In the still view itself General6 is the bound: made 27% slower -9.6% +- 1.6, on five lanes instead of
         three +9.8% +- 1.1 (the checkpoint gave about +1% for five lanes). Not a figure for the fight.
-    * Flips presented before their frame's tail (found 2026-11-20, not fixed yet). The runtime queues the
+    * Flips presented before their frame's tail (found 2026-11-20, not fixed yet; the diagnostic and the option
+      are in the toolkit since 2026-11-21, see DEBUGGING). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the
       flip is taken at call time, before the walker has executed the rest of the frame. This title steps a 64 KB
       block a frame through its own ring, so that happens on a steady share of its flips: 1,100 of about 8,900
-      in each of two runs (`GCM_FLIP_DIRECT_LOG=1`, an uncommitted diagnostic that prints every hundredth). In frame dumps
+      in each of two runs (`GCM_FLIP_DIRECT_LOG=1`, a diagnostic that prints every hundredth). In frame dumps
       of the fight the health bar, drawn last, is missing from 0, 1, 1, 3 and 3 of 33-49 frames in five runs
       with the default configuration, and from 9 of 40 in a run that toggled the occlusion answers every
-      second (not explained; a point to check before those answers become a default). An uncommitted option
+      second (not explained; a point to check before those answers become a default). The option
       `GCM_FLIP_SLACK=<bytes>` (default 0x1000, today's behaviour) with value 0 logged no such flip in two runs;
       whether it removes the missing-HUD frames, and what it does to speed, is not measured yet.
-    * The SPU float helpers (found 2026-11-20, a change under test, not committed). On Windows every `fa`, `fs`,
+    * The SPU float helpers (found 2026-11-20; in the toolkit and in the play build since 2026-11-21). On Windows every `fa`, `fs`,
       `fm`, `fma`, `fms`, `fnms` of lifted SPU code stored its result to the stack and loaded it back, because
       the exact per-lane fix-up it may call returns a 16-byte struct by value. With the fix-up returning in a
       register: a chain of four float operations compiles to 126 instructions instead of 158, and replay of
@@ -776,8 +777,18 @@ so far came from the menu, the first level and its corridor. The scenes after it
       module runs no slower (84.1 -> 82.9, 85.7 -> 84.9, 80.7 -> 80.5 us). The fight is not measured yet.
       * The change alters the control-flow hash of every lifted function that uses those helpers (77 of 525
         in the General6 module, all of its hot ones), so the existing PGO profile no longer applies to them:
-        a play build needs the profile trained again, not a rebuild with the old one. The retraining is under
-        way; the change stays out of the tree until the fight and two more corridor rounds are in.
+        a play build needs the profile trained again, not a rebuild with the old one.
+      * The play build was rebuilt with a retrained profile (same three training runs as before) and compared
+        with the previous play build, whole runs in alternating order after a throwaway run, both with the
+        same lanes. This compares the bundle (the helper change plus a new profile), not the helper alone:
+        the fight: 18.34 -> 23.45, 16.33 -> 22.42, 16.86 -> 19.12 fps (+27.9, +37.3, +13.4%; a fourth pair lost
+        a run to the stuck shot); the two builds' runs had different draw counts, and in the 1 s windows with
+        the same draws a frame the gain is +5.3, +19.4, +14.3, +15.1% (four bins of 200 draws, +14.6% weighted).
+        The checkpoint, eight pairs: -1.0, +11.0, +1.7, +4.6, +2.0, -3.8, +4.7, +6.2% = +3.2% (se 1.6), a small
+        gain. The bench corridor, three pairs: +2.4, +8.6, -0.7% = +3.4% (se 2.7). Fight frames of both builds
+        were looked at side by side: nothing missing. Every lifted SPU module (426) and the hot toolkit files
+        match the new profile.
+      * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
       corridor (lanes and occlusion answers on) cost 0.0% +- 1.9 of the frames, and neither the module runs

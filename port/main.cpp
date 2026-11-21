@@ -960,8 +960,12 @@ int main(int argc, char** argv)
      * windows, corridor fight, game frames/s on against off: 18.43/16.42, 15.60/14.27,
      * 15.92/14.99 (x448ra, x449rb, x449rc: +12%, +9%, +6%; the same figure with no lever
      * reads -1..+3%). Two lanes +7% and six +8% in one run each; six lanes for wids 3 and
-     * 7 instead of three: nothing (x448ga). Frames as before. */
-    if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3;3,7=3;9,10,11,12=3");
+     * 7 instead of three: nothing (x448ga). Frames as before.
+     * ;13=3 (added 2026-11-20): RenderJobs. In-run lever, 1 s windows: the prologue fight
+     * +12.2% (se 1.1, four runs of the New Game replay), the bench corridor +1.1 / +3.5%,
+     * the first level's checkpoint nothing either way (+1.3 +- 4.1, -2.3 +- 2.4). A fourth
+     * lane for the EDGE lists is not a default: corridor +6.5%, checkpoint -5.9%. */
+    if (!getenv("SPURS_LANES")) _putenv_s("SPURS_LANES", "15,16,17=3;3,7=3;9,10,11,12=3;13=3");
     /* SPURS_WWS_NATIVE=15,16,17 (the default now): the EDGE lists' job manager runs
      * in C (spurs_wws_native.c), the jobs stay lifted. x388, in-run ABBA: 98.9 -> 89.2
      * us per module run. x390, same exe, old new new old, 480 s: 90.5 / 81.1 / 80.1 /

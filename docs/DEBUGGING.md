@@ -797,6 +797,14 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   operands first. The interpreter got this wrong for `bisl` (M0.20); suspect it whenever a job "returns" from an
   API call that never ran (no PM-side trace, result = whatever was in `r3` before).
 * **Frame count**: `GCM_FLIPCOUNT=1` logs every flip with a timestamp.
+* **Flips taken outside the command stream**: `_cellGcmSetFlipCommand` queues the flip into the title's command
+  context only when at least `GCM_FLIP_SLACK` bytes are left before the context's `end` (default 0x1000, the margin
+  the ring-recycling code keeps). Otherwise the flip is taken at call time, before the walker has executed the rest
+  of that frame, and the frame can show without its last draws (here: the HUD). A title that steps fixed-size
+  blocks through its own ring gets that on about margin / block size of its flips. `GCM_FLIP_DIRECT_LOG=1` prints
+  the refusals (`[flip-direct] n: ctx .. begin .. end .. current .. (N bytes left), M queued so far`; the first 40,
+  then every hundredth). `GCM_FLIP_SLACK=0` writes the marker whenever 8 bytes are left; it is not a default: what
+  it does to the picture and to speed is not measured yet.
 * **Frozen frame clock / walker** (port): `GOW_CLOCK_WATCH=<s>` names the frame-clock step that made no progress for
   s seconds. While draining, it adds `[clock-watch] rsx_phase=` (1 clear, 2..5 BEGIN flush, 0x100+n
   `bind_texture(n)`, 6/7 draws) and `vk_fence_waiting` (GPU wait or CPU work). When flips stop, it prints a
