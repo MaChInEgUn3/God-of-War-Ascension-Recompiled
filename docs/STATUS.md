@@ -752,8 +752,8 @@ so far came from the menu, the first level and its corridor. The scenes after it
         consequence of the still scene. The cause is not known.
       * In the still view itself General6 is the bound: made 27% slower -9.6% +- 1.6, on five lanes instead of
         three +9.8% +- 1.1 (the checkpoint gave about +1% for five lanes). Not a figure for the fight.
-    * Flips presented before their frame's tail (found 2026-11-20, not fixed yet; the diagnostic and the option
-      are in the toolkit since 2026-11-21, see DEBUGGING). The runtime queues the
+    * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
+      path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the
       flip is taken at call time, before the walker has executed the rest of the frame. This title steps a 64 KB
       block a frame through its own ring, so that happens on a steady share of its flips: 1,100 of about 8,900
@@ -761,8 +761,20 @@ so far came from the menu, the first level and its corridor. The scenes after it
       of the fight the health bar, drawn last, is missing from 0, 1, 1, 3 and 3 of 33-49 frames in five runs
       with the default configuration, and from 9 of 40 in a run that toggled the occlusion answers every
       second (not explained; a point to check before those answers become a default). The option
-      `GCM_FLIP_SLACK=<bytes>` (default 0x1000, today's behaviour) with value 0 logged no such flip in two runs;
-      whether it removes the missing-HUD frames, and what it does to speed, is not measured yet.
+      `GCM_FLIP_SLACK=<bytes>` (default 0x1000, today's behaviour) with value 0 logged no such flip in two runs.
+      * Measured in the fight (play build, 600 s runs, a frame dumped every 100 presents, frames from 200 s
+        on): default margin: 1,900 refused flips and 6 of 121 dumped frames incomplete (a second default run
+        was lost to the stuck shot); margin 0: no refused flip and 0 of 113 and 0 of 132. The six incomplete
+        frames lack the health bar (all six), the meter (three), the prompt text (two) and in two also the
+        brazier's flame and glow: the frame's tail, not only the HUD.
+      * Speed and pacing with margin 0: no cost seen. In 1 s windows with the same draws a frame the two
+        margin-0 runs read -4.2 to +6.2% against the default run in six bins of 200 draws (+0.3% weighted);
+        stalled seconds 5 against 6 and 3, seconds under 8 fps 11 against 12 and 9, no missed flip. A New Game
+        replay with margin 0 ran its 700 s as usual (no refused flip, no missed flip, the prologue fight at
+        24-25 fps).
+      * The play scripts now set `GCM_FLIP_SLACK=0` (`PLAY_FLIP_SLACK=default` goes back). Upstream's current
+        runtime queues this flip differently (a full segment is closed first), so this is a matter of the
+        v0.17 tree the port is built on, not an upstream report.
     * The SPU float helpers (found 2026-11-20; in the toolkit and in the play build since 2026-11-21). On Windows every `fa`, `fs`,
       `fm`, `fma`, `fms`, `fnms` of lifted SPU code stored its result to the stack and loaded it back, because
       the exact per-lane fix-up it may call returns a 16-byte struct by value. With the fix-up returning in a
