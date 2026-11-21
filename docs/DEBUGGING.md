@@ -699,7 +699,14 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   LS bit or one r5 bit after the native loop, to show that the gates catch it.
   73E0's region (`loc_79B0`..`81C0`, `port/gow_edge_native_73e0.c`) has its own switch `GOW_EDGE_73E0`: 0 =
   lifted, unset/1 = native v3 (`GOW_EDGE_73E0_V2=1`: v2), 2 = v1, 3/4 = check (`[edge-73e0-check] N calls checked, M
-  differ`, every 4096 calls and at exit); `GOW_EDGE_73E0_FAULT=1|2` flips one LS bit or one r60 bit.
+  differ`, every 4096 calls and at exit); `GOW_EDGE_73E0_FAULT=1|2` flips one LS bit or one r60 bit. `GOW_EDGE_73E0_V4=1|2` runs the
+  packed loops' speculative iterations on the runtime's SPU_FP_DAZ rule (2: the +0 step only where bits are read);
+  it needs the SPU thread's float mode (round toward zero, FTZ, DAZ: checked at every region entry, else v3 for
+  that call) and prints `[edge-73e0] self-test of the v4 ops against the 4-lane helpers (MXCSR ...): 0 of N kept
+  ops differ` at mode init, switching itself off if that count is not 0. Lab switches: `GOW_EDGE_73E0_V4=3` draws
+  v3 / v4a / v4b at random per region entry and prints ticks per iteration for each (`[edge-73e0-alt]`, at exit
+  and with the check report), the way to time them on a busy host; `GOW_EDGE_73E0_V4_REJECT=N` redoes every Nth
+  kept v4 iteration exactly (to exercise that path under check mode).
   D640's two loops (`loc_D92C` triangle culling in D640, `loc_D4DC` vertex transform in D250,
   `port/gow_edge_native_d640.c`) share `GOW_EDGE_D640`: 0 = lifted, unset/1 = native v3 (`GOW_EDGE_D640_V2=1`: v2),
   2 = v1, 3/4 = check (`[edge-d640-check] D92C: N calls checked, M differ` and the same for D4DC);

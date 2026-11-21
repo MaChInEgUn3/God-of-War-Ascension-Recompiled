@@ -1172,3 +1172,43 @@ Status: design, started 2026-10-24. Progress log at the end.
   fsmb (start-up self-test 0 of 200,000 / 131,072 differ). cap_4: 400/400 off/on/check, 399 calls, 0 differ;
   faults caught; -19% per call, job time inside the noise (~0.8% expected). In game, check mode in the corridor
   (x360, 480 s): 2,805,762 calls, 0 differ, 12.6k vs 16.2k tsc per call.
+- 2026-11-21: 73E0's packed loops on the runtime's current rule (v4; `GOW_EDGE_73E0_V4`, default still v3).
+  - **Why:** a host sampler on the EDGE workers in a heavy fight (play build) put this stage at 27% of their
+    time (`g73_loop1` 16.5%, `g73_loop2` 7.2%), and by instruction class the float math was 4% of
+    `g73_loop1`'s samples against 55% for integer logic, compares and min/max: v3's bookkeeping. A ceiling
+    build with the bookkeeping compiled out (not exact, lab only) read 229.9 / 110.5 ticks per iteration
+    against v3's 349.6 / 157.3.
+  - **The rule:** v3 was written against the first SPU_FP_NATIVE helpers (every input ordinary or zero, every
+    result's exponent in 1..253, an allowed zero forced to +0), so it carried zero lanes through each operation
+    and a running min and max. The helpers now run under SPU_FP_DAZ (spu__xd_bad / spu__xd_pos0): with the
+    SPU threads in round-toward-zero + FTZ + DAZ a native fm / fma / fa / fs result is the SPU's unless its
+    exponent is 254 or 255; a -0 becomes +0; inputs need no check (exponent 0 is zero on both sides, exponent
+    255 makes an exponent-255 result). v4a applies exactly that per operation, eight lanes: the +0 step and
+    one running unsigned max of the result shifted left by one; an iteration is kept iff the max stays below
+    0xFE000000. v4b leaves the +0 step out where no store, handed-back register or integer operation reads
+    the bits before another float operation does (the six values loop 1 stores keep it; each loop applies it
+    to the registers it hands back); the reasons, use by use, are in the comment above `g73_pos0v`.
+  - **What the rule rests on:** FTZ returning zero for every tiny result, exact ones too. A direct test under
+    that MXCSR on the development machine: 2^-100 x 2^-30, an exact tiny difference, an exact tiny fma
+    remainder and 0.75 x 2^-126 all come back 0 (with FTZ off: denormals). That is one CPU model, so the
+    stage tests itself at mode init on the calling SPU thread (nine input classes: any bits, exponent 0 with a
+    fraction, both zeros, exponent 254 and 255, small powers of two with and without low bits, mid range,
+    large, a - a, an addend that cancels the product): whenever the range test keeps an operation all eight
+    lanes must be the 4-lane helper's bits, else v4 is switched off. `[edge-73e0] self-test of the v4 ops
+    against the 4-lane helpers (MXCSR FFC0): 0 of 269806 kept ops differ (480000 tried)`. The runtime's own
+    helpers rest on the same behaviour.
+  - **Guard:** built only under SPU_FP_DAZ; at every region entry `(MXCSR & 0xE040) == 0xE040` or that call
+    runs v3.
+  - **Gates** (lab exe, `SPU_JOB_REPLAY` of a 3,600-job capture): `=1` and `=2` each `[replay] 3600/3600 jobs
+    identical`; check mode `[edge-73e0-check] 4852 calls checked, 0 differ; 99352 outer iterations (8 vertices
+    each), 853544 inner iterations per loop`, `v3 iterations recomputed exactly: 0 of 2 x 853544` (v3: 29512);
+    `GOW_EDGE_73E0_FAULT=1` with v4: `3599/3600`, one FAIL. The redo path after a v4 iteration, which the
+    capture never takes, forced with `GOW_EDGE_73E0_V4_REJECT=3` under check mode: `2426 calls checked, 0
+    differ`, `recomputed exactly: 260104 of 2 x 426772`, for `=1` and for `=2`.
+  - **Timing** (`GOW_EDGE_73E0_V4=3`: the rule drawn per region entry in one process, so a busy host hits all
+    three alike; ticks per iteration, loop 1 / loop 2; two runs): v3 349.4 / 150.1 and 298.0 / 125.6; v4a
+    250.8 / 124.9 and 218.6 / 100.6; v4b 220.8 / 109.0 and 188.6 / 90.6. v4b against v3: -37% / -27% and
+    -37% / -28%. Separate runs of one rule each scattered by 20% on that host and are not quoted.
+  - **Not covered:** the game (check mode over a fight and the New Game replay: October's in-game check took
+    fallbacks the capture never did), other CPU models beyond the self-test, the frame-rate figure. The other
+    native stages carry v3's kind of tracking too.

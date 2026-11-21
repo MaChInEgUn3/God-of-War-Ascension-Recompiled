@@ -866,6 +866,18 @@ so far came from the menu, the first level and its corridor. The scenes after it
         stores and loads 20%: the time goes into tracking, operation by operation, that each native result
         is the one the SPU would give. A faster stage pays only where the EDGE lists bind (this heavy fight;
         the checkpoint and corridor are not measured on this build).
+      * 73E0 on the runtime's current float rule (2026-11-21, an option, not the default: `GOW_EDGE_73E0_V4`).
+        The native loops still tracked what the first native helpers needed (zero lanes through every
+        operation, a running minimum and maximum); the helpers themselves have since moved to a shorter rule
+        (round toward zero with FTZ and DAZ on the SPU threads: a native result is the SPU's unless its exponent
+        is 254 or 255, a -0 becomes +0, inputs unchecked). With the loops on that rule, replay of 3,600
+        captured jobs, the rule drawn at random per region entry inside one process: loop 1 -28% and -27%
+        ticks per iteration, loop 2 -17% and -20% (`=1`); with the +0 step only where a store, a handed-back
+        register or an integer operation reads the bits (`=2`): loop 1 -37% and -37%, loop 2 -27% and -28%.
+        All 3,600 jobs identical, the whole-state check against the lifted region 0 of 4,852 calls differ, no
+        iteration needs the exact redo any more (29,512 before), and a forced redo of every third iteration
+        stays exact. Not done yet: the in-game check, the frame-rate figure, the other native stages (they
+        carry the same older tracking). Details in EDGE_NATIVE.md.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench

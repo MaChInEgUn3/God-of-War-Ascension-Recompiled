@@ -288,6 +288,39 @@ static inline int g73_rng_ok(const g73_rng* g)
     const v8 hi = _mm256_cmpeq_epi32(_mm256_min_epu32(g->mx, _mm256_set1_epi32((int)0xFDFFFFFFu)), g->mx);
     return _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_and_si256(lo, hi))) == 0xFF;
 }
+/* ---- v4 building blocks: the rule of the runtime's native helpers as they are built today (SPU_FP_DAZ in
+ * spu_helpers.h: spu__xd_bad / spu__xd_pos0). The SPU threads run round-toward-zero with FTZ and DAZ, so a
+ * native fm / fma / fa / fs result is the SPU's unless its exponent is 254 or 255 (an overflow lands on 254,
+ * 255 is an Inf or NaN to the host), a -0 result becomes +0, and the inputs need no check: an exponent-0 input
+ * is zero on both sides and an exponent-255 input makes an exponent-255 result. So a speculative iteration
+ * keeps one running unsigned max of every op result shifted left by one, and is kept iff that stays below
+ * 0xFE000000; no zero lanes, no min. frsqest / fi / fcgt and the shuffles are the exact integer forms. */
+typedef struct { v8 mx; } g73_dr;
+/* lazy (v4b): the +0 step is left out for a result no integer op, store or handed-back register reads before
+ * another float op does: a -0 where the SPU has +0 gives the same nonzero results and only zeros of another
+ * sign (fm / fma / fa / fs), the same fcgt key (both zeros map to 0), the same max0 / cgt0 (0 for both), the
+ * same andc of the sign, the same frsqest / fi (they read the exponent and fraction bits), and the exact
+ * path's ops test for zero with the sign shifted out and return +0. The values that are stored, and the
+ * registers a loop hands back, keep the step (g73_pos0v). */
+static inline v8 g73_pos0v(v8 r) { return _mm256_andnot_si256(_mm256_cmpeq_epi32(r, _mm256_set1_epi32((int)0x80000000u)), r); }
+static inline v8 g73_dout(g73_dr* g, v8 r, int lazy)
+{
+    if (!lazy) r = g73_pos0v(r);
+    g->mx = _mm256_max_epu32(g->mx, _mm256_add_epi32(r, r));
+    return r;
+}
+static inline v8 g73_dfm(g73_dr* g, v8 a, v8 b, int lazy) { return g73_dout(g, g73_f(_mm256_mul_ps(g73_p(a), g73_p(b))), lazy); }
+static inline v8 g73_dfma(g73_dr* g, v8 a, v8 b, v8 c, int lazy) { return g73_dout(g, g73_f(_mm256_fmadd_ps(g73_p(a), g73_p(b), g73_p(c))), lazy); }
+static inline v8 g73_dfa(g73_dr* g, v8 a, v8 b, int lazy) { return g73_dout(g, g73_f(_mm256_add_ps(g73_p(a), g73_p(b))), lazy); }
+static inline v8 g73_dfs(g73_dr* g, v8 a, v8 b, int lazy)   /* a - b as the helper forms it: a + (b with its sign flipped) */
+{
+    return g73_dout(g, g73_f(_mm256_add_ps(g73_p(a), g73_p(_mm256_xor_si256(b, _mm256_set1_epi32((int)0x80000000u))))), lazy);
+}
+static inline int g73_dr_ok(const g73_dr* g)
+{
+    const v8 hi = _mm256_cmpeq_epi32(_mm256_min_epu32(g->mx, _mm256_set1_epi32((int)0xFDFFFFFFu)), g->mx);
+    return _mm256_movemask_ps(_mm256_castsi256_ps(hi)) == 0xFF;
+}
 static inline int g73_plain_all(v8 x)   /* every lane ordinary or +-0 (the helpers' input rule, exactly) */
 {
     return g73_all(g73_plain(x));
@@ -405,6 +438,12 @@ typedef struct { u128 r[128]; } g73_io;   /* the loop's registers, by number (on
 static long s73_fb_l1, s73_fb_v2, s73_v3_redo, s73_iters;   /* lab statistics; racy across threads */
 static uint64_t s73_cyc_l1, s73_cyc_l2;   /* rdtsc around the packed loops (lab statistic) */
 static long s73_nospec[2];                /* iterations that ran the checked ops without trying v3's (per loop) */
+static int s73_v4;                        /* GOW_EDGE_73E0_V4=1 / 2: the speculative iterations use the v4 rule (2: v4b);
+                                           * 3 (lab): v3 / v4a / v4b picked at random per region entry, timed apart */
+static int s73_v4_rej;                    /* GOW_EDGE_73E0_V4_REJECT=N (lab): every Nth kept v4 iteration is redone exactly */
+static uint64_t s73_alt_cyc[3][2];        /* rdtsc in loop 1 / loop 2 by the rule the region entry ran with */
+static long s73_alt_it[3], s73_alt_calls[3];
+static uint32_t s73_alt_rng = 0x9E3779B9u;
 
 /* ---- per region entry: the constants and shuffle tables both loops use. Every register read here is one
  * the region never writes (r64 and r9 are set per outer iteration and handled in the loop). ---- */
@@ -441,6 +480,7 @@ typedef struct {
     g73_shuf S59, S78, S81, S82, C104;     /* pshufb forms, exact for any control (the checked ops use them) */
     g73_wsh W59, W78, W81, W82;            /* word forms (v3, when the controls move whole words) */
     int fast;                               /* the region-invariant conditions of v3 hold */
+    int v4;                                 /* the speculative iteration uses the v4 rule (GOW_EDGE_73E0_V4=1) */
     u128 c64; g73_shuf C64; int c64_set;   /* r64's table, rebuilt when its value changes */
 } g73_rk;
 static void g73_rk_make(g73_rk* K, int v3, u128 r33, u128 r44, u128 r59, u128 r72, u128 r78, u128 r81, u128 r82,
@@ -576,6 +616,58 @@ static inline __attribute__((always_inline)) int g73_l1_spec(const uint8_t* ls, 
     return g73_rng_ok(&rg);
 }
 
+/* the same iteration on the v4 rule (the ops in v3's order; no input checks, no zero lanes) */
+static inline __attribute__((always_inline)) int g73_l1_dspec(const uint8_t* ls, const g73_rk* RK, const g73_l1k* K,
+                                                              const g73_shuf* ctl, uint32_t o43, int last,
+                                                              const g73_l1s* s, g73_l1s* n, g73_l1o* o, const int lz)
+{
+    g73_dr rg = { _mm256_setzero_si256() };
+    const v8 DIST = g73_dfm(&rg, s->D2, s->RS, lz);
+    const v8 NZ = g73_dfm(&rg, s->DZ, s->RS, 0);   /* stored */
+    const v8 NX = g73_dfm(&rg, s->DX, s->RS, 0);   /* stored */
+    const v8 NY = g73_dfm(&rg, s->DY, s->RS, 0);   /* stored */
+    const v8 T = g73_dfm(&rg, DIST, s->IR, lz);
+    o->NZp = g73_shuf2(ctl, NZ, s->LZ);
+    o->NXp = g73_shuf2(ctl, NX, s->LX);
+    o->NYp = g73_shuf2(ctl, NY, s->LY);
+    const v8 TC = g73_selb(T, RK->ONE, g73_fcgt(T, RK->ONE));
+    const v8 S = g73_dfs(&rg, RK->ONE, TC, lz);
+    v8 DT = g73_dfm(&rg, K->NVX, o->NXp, lz);
+    DT = g73_dfma(&rg, K->NVY, o->NYp, DT, lz);
+    DT = g73_dfma(&rg, K->NVZ, o->NZp, DT, lz);
+    const v8 KK = g73_dfma(&rg, RK->NTWO, S, RK->THREE, lz);
+    const v8 S2 = g73_dfm(&rg, S, S, lz);
+    const v8 SM = g73_dfm(&rg, S2, KK, lz);
+    const v8 SM2 = g73_dfm(&rg, SM, SM, lz);
+    const v8 WR = g73_andc(g73_dfma(&rg, DT, RK->HALF, RK->HALF, lz), RK->SIGN);
+    const v8 WRc = g73_selb(WR, RK->ONE, g73_fcgt(WR, RK->ONE));
+    const v8 ATT = g73_dfm(&rg, SM2, s->CW, lz);
+    o->OZ = g73_dfm(&rg, s->CZ, ATT, 0);   /* stored */
+    o->OX = g73_dfm(&rg, s->CX, ATT, 0);   /* stored */
+    o->OY = g73_dfm(&rg, s->CY, ATT, 0);   /* stored */
+    const v8 W = g73_dfm(&rg, g73_andc(ATT, RK->SIGN), WRc, lz);
+    n->AZ = g73_dfma(&rg, o->NZp, W, s->AZ, lz);
+    n->WS = g73_dfa(&rg, s->WS, W, lz);
+    n->AX = g73_dfma(&rg, o->NXp, W, s->AX, lz);
+    n->AY = g73_dfma(&rg, o->NYp, W, s->AY, lz);
+    if (!last) {
+        const v8 P = g73_bc(LD(K->b99 + o43)), C = g73_bc(LD(K->b97 + o43)), L = g73_bc(LD(K->b98 + o43));
+        n->IR = g73_wsh1(&RK->W78, P);
+        n->LZ = g73_wsh1(&RK->W81, L); n->LX = g73_wsh1(&RK->W59, L); n->LY = g73_wsh1(&RK->W82, L);
+        n->DX = g73_dfs(&rg, g73_wsh1(&RK->W59, P), K->VX, lz);
+        n->DY = g73_dfs(&rg, g73_wsh1(&RK->W82, P), K->VY, lz);
+        n->DZ = g73_dfs(&rg, g73_wsh1(&RK->W81, P), K->VZ, lz);
+        v8 D2 = g73_dfma(&rg, n->DX, n->DX, RK->EPS, lz);
+        D2 = g73_dfma(&rg, n->DY, n->DY, D2, lz);
+        n->D2 = g73_dfma(&rg, n->DZ, n->DZ, D2, lz);
+        n->RS = g73_fi(n->D2, g73_frsqest_g(n->D2));
+        const v8 CC = g73_dfm(&rg, RK->R93, C, lz);
+        n->CX = g73_wsh1(&RK->W59, CC); n->CY = g73_wsh1(&RK->W82, CC);
+        n->CW = g73_wsh1(&RK->W78, CC); n->CZ = g73_wsh1(&RK->W81, CC);
+    }
+    return g73_dr_ok(&rg);
+}
+
 /* inner loop 1, all n iterations; io holds the registers it reads, and gets back the 8 live ones */
 static __attribute__((noinline)) void g73_loop1(uint8_t* ls, g73_rk* RK, g73_io* io, uint32_t nit)
 {
@@ -617,7 +709,10 @@ static __attribute__((noinline)) void g73_loop1(uint8_t* ls, g73_rk* RK, g73_io*
         const int last = k + 1 == nit;
         const uint32_t o43 = q43._u32[0];
         g73_l1o o;
-        int ok = spec && g73_l1_spec(ls, RK, &K, ctl, o43, last, &s, &n, &o);
+        int ok = spec && (RK->v4 == 2 ? g73_l1_dspec(ls, RK, &K, ctl, o43, last, &s, &n, &o, 1)
+                          : RK->v4 ? g73_l1_dspec(ls, RK, &K, ctl, o43, last, &s, &n, &o, 0)
+                                   : g73_l1_spec(ls, RK, &K, ctl, o43, last, &s, &n, &o));
+        if (__builtin_expect(s73_v4_rej != 0, 0) && RK->v4 && ok && (k % (uint32_t)s73_v4_rej) == (uint32_t)s73_v4_rej - 1) ok = 0;
         if (!ok) {
             if (spec) s73_v3_redo++; else s73_nospec[0]++;
             g73_l1_exact(ls, RK, &K, ctl, o43, last, &s, &n, &o);
@@ -650,6 +745,7 @@ static __attribute__((noinline)) void g73_loop1(uint8_t* ls, g73_rk* RK, g73_io*
             spec = fast;
     }
     s73_iters += nit;
+    if (RK->v4 == 2) { s.AX = g73_pos0v(s.AX); s.AY = g73_pos0v(s.AY); s.AZ = g73_pos0v(s.AZ); s.WS = g73_pos0v(s.WS); }   /* handed back */
     io->r[57] = g73_lo(s.AX); io->r[48] = g73_hi(s.AX); io->r[49] = g73_lo(s.AY); io->r[58] = g73_hi(s.AY);
     io->r[51] = g73_lo(s.AZ); io->r[47] = g73_hi(s.AZ); io->r[42] = g73_lo(s.WS); io->r[45] = g73_hi(s.WS);
 }
@@ -717,6 +813,38 @@ static inline __attribute__((always_inline)) int g73_l2_spec(const uint8_t* ls, 
     return g73_rng_ok(&rg);
 }
 
+/* loop 2's iteration on the v4 rule */
+static inline __attribute__((always_inline)) int g73_l2_dspec(const uint8_t* ls, const g73_rk* RK, const g73_l2k* K,
+                                                              uint32_t p30, uint32_t p31, int last,
+                                                              const g73_l2s* s, g73_l2s* n, g73_l2o* o, const int lz)
+{
+    g73_dr rg = { _mm256_setzero_si256() };
+    const v8 C = g73_and(g73_selb(s->X, RK->ONE, g73_fcgt(s->X, RK->ONE)), g73_cgt0(s->X));
+    const v8 NXn = g73_ld2(ls, p30 + 0x00, p30 + 0x30), NYn = g73_ld2(ls, p30 + 0x10, p30 + 0x40);
+    const v8 NZn = g73_ld2(ls, p30 + 0x20, p30 + 0x50);
+    n->CX = g73_ld2(ls, p31 + 0x00, p31 + 0x30); n->CY = g73_ld2(ls, p31 + 0x10, p31 + 0x40);
+    n->CZ = g73_ld2(ls, p31 + 0x20, p31 + 0x50);
+    const v8 VZc = g73_dfm(&rg, s->CZ, C, lz);
+    const v8 VXc = g73_dfm(&rg, s->CX, C, lz);
+    const v8 VYc = g73_dfm(&rg, s->CY, C, lz);
+    if (!last) {
+        v8 X = g73_dfm(&rg, K->NNX, NXn, lz);
+        X = g73_dfma(&rg, K->NNY, NYn, X, lz);
+        n->X = g73_dfma(&rg, K->NNZ, NZn, X, lz);
+    } else {   /* as in v3: r12 from whatever the records past the last one hold, by the 4-lane helpers */
+        const u128 x = spu_fma(g73_lo(K->NNZ), g73_lo(NZn), spu_fma(g73_lo(K->NNY), g73_lo(NYn), spu_fm(g73_lo(K->NNX), g73_lo(NXn))));
+        n->X = g73_v8(x, x);
+    }
+    n->PX = g73_dfa(&rg, s->PX, g73_max0(VXc), lz);
+    n->PY = g73_dfa(&rg, s->PY, g73_max0(VYc), lz);
+    n->PZ = g73_dfa(&rg, s->PZ, g73_max0(VZc), lz);
+    n->MX = g73_dfa(&rg, s->MX, g73_max0(g73_xor(VXc, RK->SIGN)), lz);
+    n->MY = g73_dfa(&rg, s->MY, g73_max0(g73_xor(VYc, RK->SIGN)), lz);
+    n->MZ = g73_dfa(&rg, s->MZ, g73_max0(g73_xor(VZc, RK->SIGN)), lz);
+    o->VXc = VXc; o->VZc = VZc; o->NZn = NZn; o->CYn = n->CY;
+    return g73_dr_ok(&rg);
+}
+
 static __attribute__((noinline)) void g73_loop2(const uint8_t* ls, const g73_rk* RK, g73_io* io, uint32_t nit)
 {
     const u128* R = io->r;
@@ -735,7 +863,10 @@ static __attribute__((noinline)) void g73_loop2(const uint8_t* ls, const g73_rk*
                g73_plain_all(s.MY) && g73_plain_all(s.MZ);
     uint32_t p30 = R[30]._u32[0], p31 = R[31]._u32[0];
     for (uint32_t k = 0; k < nit; k++) {
-        const int ok = spec && g73_l2_spec(ls, RK, &K, p30, p31, k + 1 == nit, &s, &n, &o);
+        int ok = spec && (RK->v4 == 2 ? g73_l2_dspec(ls, RK, &K, p30, p31, k + 1 == nit, &s, &n, &o, 1)
+                          : RK->v4 ? g73_l2_dspec(ls, RK, &K, p30, p31, k + 1 == nit, &s, &n, &o, 0)
+                                   : g73_l2_spec(ls, RK, &K, p30, p31, k + 1 == nit, &s, &n, &o));
+        if (__builtin_expect(s73_v4_rej != 0, 0) && RK->v4 && ok && (k % (uint32_t)s73_v4_rej) == (uint32_t)s73_v4_rej - 1) ok = 0;
         if (!ok) {
             if (spec) s73_v3_redo++; else s73_nospec[1]++;
             g73_l2_exact(ls, RK, &K, p30, p31, &s, &n, &o);
@@ -748,6 +879,11 @@ static __attribute__((noinline)) void g73_loop2(const uint8_t* ls, const g73_rk*
                    g73_plain_all(s.MY) && g73_plain_all(s.MZ);
         else
             spec = fast;
+    }
+    if (RK->v4 == 2) {   /* handed back (v4b) */
+        s.PX = g73_pos0v(s.PX); s.PY = g73_pos0v(s.PY); s.PZ = g73_pos0v(s.PZ);
+        s.MX = g73_pos0v(s.MX); s.MY = g73_pos0v(s.MY); s.MZ = g73_pos0v(s.MZ);
+        s.X = g73_pos0v(s.X); o.VXc = g73_pos0v(o.VXc); o.VZc = g73_pos0v(o.VZc);
     }
     u128* W = io->r;
     W[46] = g73_lo(s.PX); W[35] = g73_hi(s.PX); W[42] = g73_lo(s.PY); W[45] = g73_hi(s.PY);
@@ -767,6 +903,12 @@ static void g73_v23(spu_context* ctx, int v3)
     g73_io io;
     g73_rk RK;
     g73_rk_make(&RK, v3, r33, r44, r59, r72, r78, r81, r82, r84, r93, r101, r102, r104);
+    /* v4 needs the mode its rule is stated for: round toward zero, FTZ and DAZ on this thread (the runtime sets
+     * them for SPU threads); anything else runs v3 */
+    RK.v4 = s73_v4;
+    if (RK.v4 == 3) { s73_alt_rng ^= s73_alt_rng << 13; s73_alt_rng ^= s73_alt_rng >> 17; s73_alt_rng ^= s73_alt_rng << 5; RK.v4 = (int)(s73_alt_rng % 3u); }
+    if (RK.v4 && (_mm_getcsr() & 0xE040u) != 0xE040u) RK.v4 = 0;
+    s73_alt_calls[RK.v4]++;
     do {
         GOW_73_S79B0()
         if (r116._u32[0] != 0) {
@@ -784,7 +926,7 @@ static void g73_v23(spu_context* ctx, int v3)
                 G73_L1_IN(G73_PUT)
                 const uint64_t t0 = __rdtsc();
                 g73_loop1(ls, &RK, &io, n);
-                s73_cyc_l1 += __rdtsc() - t0;
+                { const uint64_t dt = __rdtsc() - t0; s73_cyc_l1 += dt; s73_alt_cyc[RK.v4][0] += dt; s73_alt_it[RK.v4] += n; }
                 G73_L1_OUT(G73_GET)
             } else {
                 s73_fb_l1++;
@@ -799,7 +941,7 @@ static void g73_v23(spu_context* ctx, int v3)
                 G73_L2_IN(G73_PUT)
                 const uint64_t t0 = __rdtsc();
                 g73_loop2(ls, &RK, &io, n);
-                s73_cyc_l2 += __rdtsc() - t0;
+                { const uint64_t dt = __rdtsc() - t0; s73_cyc_l2 += dt; s73_alt_cyc[RK.v4][1] += dt; }
                 G73_L2_OUT(G73_GET)
             } else {
                 s73_fb_l1++;
@@ -847,6 +989,68 @@ static void g73_selftest(void)
     fprintf(stderr, "[edge-73e0] self-test of frsqest (two forms)/fi/fcgt x8 against the 4-lane helpers: %ld of 200000 differ\n", bad);
 }
 
+/* ---- self-test of the v4 ops (once, at mode init, on the calling SPU thread and in its float mode): on random
+ * and edge inputs, whenever the range test keeps an op, all eight lanes must be the 4-lane helper's bits. The
+ * edge classes: exponent 0 with and without a fraction, exponent 254 and 255, powers of two whose product or
+ * difference is tiny and exact, tiny and inexact, zeros of both signs, a product that cancels its addend. ---- */
+static uint32_t g73_edge(int cls)
+{
+    const uint32_t r = g73_rand(), sign = r & 0x80000000u;
+    switch (cls) {
+    case 0: return r;                                                   /* any bits */
+    case 1: return sign | (r & 0x007FFFFFu);                            /* exponent 0, a fraction */
+    case 2: return sign;                                                /* +-0 */
+    case 3: return sign | 0x7F800000u | (r & 0x007FFFFFu);              /* exponent 255 */
+    case 4: return sign | 0x7F000000u | (r & 0x007FFFFFu);              /* exponent 254 */
+    case 5: return sign | ((1u + (r >> 8) % 40u) << 23);                /* a small power of two (2^-126 .. 2^-87) */
+    case 6: return sign | ((1u + (r >> 8) % 40u) << 23) | (r & 7u);     /* near one, a few low bits */
+    case 7: return sign | ((100u + (r >> 8) % 56u) << 23) | (r & 0x007FFFFFu);   /* ordinary, mid range */
+    default: return sign | ((215u + (r >> 8) % 40u) << 23) | (r & 0x007FFFFFu);  /* large */
+    }
+}
+static long g73_selftest_v4(void)
+{
+    long bad = 0, kept = 0, tried = 0;
+    for (int it = 0; it < 60000; it++) {
+        u128 a[2], b[2], c[2];
+        const int ca = it % 9, cb = (it / 9) % 9, cc = (it / 81) % 9;
+        for (int h = 0; h < 2; h++)
+            for (int i = 0; i < 4; i++) {
+                a[h]._u32[i] = g73_edge(ca); b[h]._u32[i] = g73_edge(cb); c[h]._u32[i] = g73_edge(cc);
+                if ((it & 31) == 5) b[h]._u32[i] = a[h]._u32[i] ^ 0x80000000u;                 /* a - a */
+            }
+        if ((it & 31) == 6)   /* an addend that cancels the (truncated) product, where that is exact */
+            for (int h = 0; h < 2; h++) { const u128 pr = spu_fm(a[h], b[h]); for (int i = 0; i < 4; i++) c[h]._u32[i] = pr._u32[i] ^ 0x80000000u; }
+        const v8 A = g73_v8(a[0], a[1]), B = g73_v8(b[0], b[1]), C = g73_v8(c[0], c[1]);
+        for (int op = 0; op < 4; op++)
+            for (int lazy = 0; lazy < 2; lazy++) {
+                g73_dr rg = { _mm256_setzero_si256() };
+                v8 r = op == 0 ? g73_dfm(&rg, A, B, lazy) : op == 1 ? g73_dfma(&rg, A, B, C, lazy) : op == 2 ? g73_dfa(&rg, A, B, lazy) : g73_dfs(&rg, A, B, lazy);
+                if (lazy) r = g73_pos0v(r);   /* the lazy form is the same value up to the sign of a zero */
+                tried++;
+                if (!g73_dr_ok(&rg)) continue;
+                kept++;
+                for (int h = 0; h < 2; h++) {
+                    const u128 e = op == 0 ? spu_fm(a[h], b[h]) : op == 1 ? spu_fma(a[h], b[h], c[h]) : op == 2 ? spu_fa(a[h], b[h]) : spu_fs(a[h], b[h]);
+                    const u128 g = h ? g73_hi(r) : g73_lo(r);
+                    bad += memcmp(&e, &g, 16) != 0;
+                }
+            }
+    }
+    fprintf(stderr, "[edge-73e0] self-test of the v4 ops against the 4-lane helpers (MXCSR %04X): %ld of %ld kept ops differ (%ld tried)\n",
+            _mm_getcsr() & 0xFFC0u, bad, kept, tried);
+    return bad;
+}
+static void g73_alt_report(void)
+{
+    static const char* nm[3] = { "v3", "v4a", "v4b" };
+    for (int m = 0; m < 3; m++)
+        if (s73_alt_it[m])
+            fprintf(stderr, "[edge-73e0-alt] %s: %ld region entries, %ld iterations per loop; ticks per iteration loop 1 %.1f, loop 2 %.1f\n",
+                    nm[m], s73_alt_calls[m], s73_alt_it[m], (double)s73_alt_cyc[m][0] / (double)s73_alt_it[m],
+                    (double)s73_alt_cyc[m][1] / (double)s73_alt_it[m]);
+}
+
 /* ---- entry points the lift calls ---------------------------------------------------- */
 static int s73_mode = -1;
 static int s73_v2;   /* GOW_EDGE_73E0_V2=1: modes 1 and 3 use v2 instead of v3 */
@@ -859,12 +1063,26 @@ int gow_edge_73e0_mode(void)
         if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_73E0_V2");
         s73_v2 = v && atoi(v) == 1;
+        const char* v4 = getenv("GOW_EDGE_73E0_V4");
+        s73_v4 = v4 ? atoi(v4) : 0;
+        if (s73_v4 < 0 || s73_v4 > 3) s73_v4 = 0;
+#if !(defined(SPU_FP_DAZ) && SPU_FP_DAZ)
+        s73_v4 = 0;   /* the v4 rule is the runtime's SPU_FP_DAZ rule: without that build option, v3 */
+#endif
+        { const char* rj = getenv("GOW_EDGE_73E0_V4_REJECT"); s73_v4_rej = rj ? atoi(rj) : 0; if (s73_v4_rej < 0) s73_v4_rej = 0; }
+        if (s73_v4) fprintf(stderr, "[edge-73e0] GOW_EDGE_73E0_V4=%d (speculative iterations on the DAZ rule%s)\n", s73_v4,
+                            s73_v4 == 2 ? ", +0 only where bits are read" : "");
         s73_mode = m;
         if (!m) fprintf(stderr, "[edge-73e0] GOW_EDGE_73E0=0 (lifted region)\n");
         else {
             fprintf(stderr, "[edge-73e0] GOW_EDGE_73E0=%d (%s %s)\n", m, m <= 2 ? "native" : "check",
                     (m == 2 || m == 4) ? "v1" : s73_v2 ? "v2" : "v3");
             g73_selftest();
+            if (s73_v4 && g73_selftest_v4() != 0) {
+                fprintf(stderr, "[edge-73e0] the v4 self-test FAILED on this host: GOW_EDGE_73E0_V4 ignored (v3)\n");
+                s73_v4 = 0;
+            }
+            if (s73_v4 == 3) atexit(g73_alt_report);
         }
     }
     return s73_mode;
@@ -996,5 +1214,5 @@ void gow_edge_73e0_check_end(spu_context* ctx)
         s73_bad++;
         fprintf(stderr, "[edge-73e0-check] call %ld: %d GPRs and %ld LS bytes differ\n", call, bad, nls);
     }
-    if ((call & 4095) == 4095) g73_check_report();   /* a game run ends by kill: atexit never runs */
+    if ((call & 4095) == 4095) { g73_check_report(); if (s73_v4 == 3) g73_alt_report(); }   /* a game run ends by kill: atexit never runs */
 }
