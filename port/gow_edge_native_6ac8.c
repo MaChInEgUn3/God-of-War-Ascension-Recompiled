@@ -28,6 +28,8 @@
 #include <immintrin.h>
 #include "spu_context.h"
 #include "spu_helpers.h"
+/* GOW_AB=v4 (main.cpp) and GOW_EDGE_V4_HOLD=1: while this is 1 every stage's v4 rule is held off (v3 runs) */
+extern int g_gow_edge_v4_hold;
 
 /* ---- LS access: big-endian words, 16-byte aligned, wrapped to the 256 KB store (as
  * spu_ls_read128/write128 do). One byte shuffle swaps the four words. */
@@ -232,9 +234,28 @@ static inline v8 g6a_fs(v8 a, v8 b)          /* a - b: spu__xn_fa with b's sign 
 typedef struct { v8 mn, mx; } g6a_rng;
 #define G6A_AI static inline __attribute__((always_inline))
 G6A_AI void g6a_rng_add(g6a_rng* R, v8 lo, v8 hi) { R->mn = _mm256_min_epu32(R->mn, lo); R->mx = _mm256_max_epu32(R->mx, hi); }
+/* ---- v4 (spec == 2): the rule of the runtime's native helpers as they are built today (SPU_FP_DAZ; statement
+ * and tests in gow_edge_native_73e0.c): a native result is the SPU's unless its exponent is 254 or 255, a -0
+ * becomes +0, inputs need no check. The x-ops take the +0 step and feed the rng's running max only (its min
+ * keeps its initial value, so the range test checks the max alone); the input tracker tracks nothing. */
+G6A_AI v8 g6a_dout(g6a_rng* R, v8 r)
+{
+    r = _mm256_andnot_si256(_mm256_cmpeq_epi32(r, _mm256_set1_epi32((int)0x80000000u)), r);
+    R->mx = _mm256_max_epu32(R->mx, _mm256_add_epi32(r, r));
+    return r;
+}
+static int s6a_v4;                     /* GOW_EDGE_6AC8_V4=1: speculative iterations on the v4 rule; 3 (lab): drawn per call */
+static int s6a_v4_rej;                 /* GOW_EDGE_6AC8_V4_REJECT=N (lab): every Nth kept v4 iteration is redone exactly */
+static _Thread_local int t6a_v4;       /* the rule of the call in progress (set by g6a_run) */
+static _Thread_local unsigned t6a_rej_n;
+static uint64_t s6a_alt_cyc[2];
+static long s6a_alt_calls[2];
+static uint32_t s6a_alt_rng = 0x9E3779B9u;
+static inline int g6a_rej_hit(void) { return s6a_v4_rej > 0 && (++t6a_rej_n % (unsigned)s6a_v4_rej) == 0; }
+
 G6A_AI v8 g6a_xin(int spec, g6a_rng* R, v8 x)
 {
-    if (!spec) return _mm256_setzero_si256();
+    if (!spec || spec == 2) return _mm256_setzero_si256();
     const v8 s = _mm256_add_epi32(x, x);
     const v8 z = _mm256_cmpeq_epi32(s, _mm256_setzero_si256());
     g6a_rng_add(R, _mm256_or_si256(s, z), s);
@@ -257,24 +278,28 @@ static inline int g6a_rng_ok(const g6a_rng* R)
 G6A_AI v8 g6a_xfm(int spec, g6a_rng* R, v8 a, v8 za, v8 b, v8 zb, v8* z)
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g6a_fm(a, b); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g6a_dout(R, g6a_f(_mm256_mul_ps(g6a_p(a), g6a_p(b)))); }
     *z = _mm256_or_si256(za, zb);
     return g6a_chk_out(R, g6a_f(_mm256_mul_ps(g6a_p(a), g6a_p(b))), *z);
 }
 G6A_AI v8 g6a_xfma(int spec, g6a_rng* R, v8 a, v8 za, v8 b, v8 zb, v8 c, v8 zc, v8* z)   /* a*b + c */
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g6a_fma(a, b, c); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g6a_dout(R, g6a_f(_mm256_fmadd_ps(g6a_p(a), g6a_p(b), g6a_p(c)))); }
     *z = _mm256_and_si256(_mm256_or_si256(za, zb), zc);
     return g6a_chk_out(R, g6a_f(_mm256_fmadd_ps(g6a_p(a), g6a_p(b), g6a_p(c))), *z);
 }
 G6A_AI v8 g6a_xfnms(int spec, g6a_rng* R, v8 a, v8 za, v8 b, v8 zb, v8 c, v8 zc, v8* z)  /* c - a*b */
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g6a_fnms(a, b, c); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g6a_dout(R, g6a_f(_mm256_fnmadd_ps(g6a_p(a), g6a_p(b), g6a_p(c)))); }
     *z = _mm256_and_si256(_mm256_or_si256(za, zb), zc);
     return g6a_chk_out(R, g6a_f(_mm256_fnmadd_ps(g6a_p(a), g6a_p(b), g6a_p(c))), *z);
 }
 G6A_AI v8 g6a_xfs(int spec, g6a_rng* R, v8 a, v8 b, v8* z)   /* a - b */
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g6a_fs(a, b); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g6a_dout(R, g6a_f(_mm256_sub_ps(g6a_p(a), g6a_p(b)))); }
     const v8 r = g6a_f(_mm256_add_ps(g6a_p(a), g6a_p(_mm256_xor_si256(b, G6A_SIGN))));
     *z = g6a_zero(r);
     return g6a_chk_out(R, r, *z);
@@ -360,6 +385,7 @@ G6A_AI int g6a_step(const g6a_inv* I, v8 X, v8 Y, v8 Z, v8 S, v8 V, v8* acc, int
     o[2] = g6a_xfma(spec, &R, G6A_SPL(w, 2), G6A_SPL(zw, 2), Vs, zVs, acc[2], zacc[2], &zk[2]);
     o[3] = g6a_xfma(spec, &R, G6A_SPL(w, 3), G6A_SPL(zw, 3), Vs, zVs, acc[3], zacc[3], &zk[3]);
     if (spec && !g6a_rng_ok(&R)) return 0;
+    if (spec == 2 && __builtin_expect(s6a_v4_rej != 0, 0) && g6a_rej_hit()) return 0;
     for (int k = 0; k < 4; k++) acc[k] = o[k];
     return 1;
 }
@@ -388,7 +414,7 @@ G6A_AI int g6a_iter(const uint8_t* ls, uint32_t a67, const g6a_inv* I, uint32_t*
     for (uint32_t j = 0; j < I->ns; j++) {
         const uint32_t o = j == 0 ? I->o77 : j == 1 ? I->o78 : I->o84 + 16u * (j - 2);
         const v8 S = g6a_bc(g6a_ld(ls, I->b51 + o)), V = g6a_bc(g6a_ld(ls, I->b50 + o));
-        if (spec && g6a_step(I, X, Y, Z, S, V, acc, 1)) { kept++; continue; }
+        if (spec && (t6a_v4 ? g6a_step(I, X, Y, Z, S, V, acc, 2) : g6a_step(I, X, Y, Z, S, V, acc, 1))) { kept++; continue; }
         if (spec) s6a_redo++;
         g6a_step(I, X, Y, Z, S, V, acc, 0);
     }
@@ -605,6 +631,77 @@ static void g6a_selftest(void)
 }
 
 /* ---- entry points the lift calls ---------------------------------------------------- */
+/* v4 needs the mode its rule is stated for (round toward zero, FTZ, DAZ on this thread), else v3 for the call */
+static inline int g6a_v4_pick(void)
+{
+    int v4 = s6a_v4;
+    if (v4 == 3) { s6a_alt_rng ^= s6a_alt_rng << 13; s6a_alt_rng ^= s6a_alt_rng >> 17; s6a_alt_rng ^= s6a_alt_rng << 5; v4 = (int)(s6a_alt_rng & 1u); }
+    if (v4 && (g_gow_edge_v4_hold || (_mm_getcsr() & 0xE040u) != 0xE040u)) v4 = 0;
+    t6a_v4 = v4;
+    return v4;
+}
+/* self-test of the v4 ops (once, at mode init, on the calling SPU thread): whenever the range test keeps an op,
+ * all eight lanes must be the 4-lane helper's bits; a failure switches v4 off */
+static uint32_t s6a_st_rng = 0x2545F491u;
+static uint32_t g6a_st_rand(void) { s6a_st_rng ^= s6a_st_rng << 13; s6a_st_rng ^= s6a_st_rng >> 17; s6a_st_rng ^= s6a_st_rng << 5; return s6a_st_rng; }
+static uint32_t g6a_st_edge(int cls)
+{
+    const uint32_t r = g6a_st_rand(), sign = r & 0x80000000u;
+    switch (cls) {
+    case 0: return r;
+    case 1: return sign | (r & 0x007FFFFFu);
+    case 2: return sign;
+    case 3: return sign | 0x7F800000u | (r & 0x007FFFFFu);
+    case 4: return sign | 0x7F000000u | (r & 0x007FFFFFu);
+    case 5: return sign | ((1u + (r >> 8) % 40u) << 23);
+    case 6: return sign | ((1u + (r >> 8) % 40u) << 23) | (r & 7u);
+    case 7: return sign | ((100u + (r >> 8) % 56u) << 23) | (r & 0x007FFFFFu);
+    default: return sign | ((215u + (r >> 8) % 40u) << 23) | (r & 0x007FFFFFu);
+    }
+}
+static long g6a_selftest_v4(void)
+{
+    long bad = 0, kept = 0, tried = 0;
+    const v8 Z = _mm256_setzero_si256();
+    for (int it = 0; it < 60000; it++) {
+        u128 a[2], b[2], c[2];
+        const int ca = it % 9, cb = (it / 9) % 9, cc = (it / 81) % 9;
+        for (int h = 0; h < 2; h++)
+            for (int i = 0; i < 4; i++) {
+                a[h]._u32[i] = g6a_st_edge(ca); b[h]._u32[i] = g6a_st_edge(cb); c[h]._u32[i] = g6a_st_edge(cc);
+                if ((it & 31) == 5) b[h]._u32[i] = a[h]._u32[i] ^ ((it & 32) ? 0x80000000u : 0u);   /* a - a, a + (-a) */
+            }
+        if ((it & 31) == 6)
+            for (int h = 0; h < 2; h++) { const u128 pr = spu_fm(a[h], b[h]); for (int i = 0; i < 4; i++) c[h]._u32[i] = pr._u32[i] ^ 0x80000000u; }
+        const v8 A = g6a_v8(a[0], a[1]), B = g6a_v8(b[0], b[1]), C = g6a_v8(c[0], c[1]);
+        (void)C;
+        for (int op = 0; op < 4; op++) {
+            g6a_rng R; R.mn = _mm256_set1_epi32(-1); R.mx = _mm256_setzero_si256();
+            v8 z;
+            const v8 r = op == 0 ? g6a_xfm(2, &R, A, Z, B, Z, &z) : op == 1 ? g6a_xfma(2, &R, A, Z, B, Z, C, Z, &z) : op == 2 ? g6a_xfnms(2, &R, A, Z, B, Z, C, Z, &z) : g6a_xfs(2, &R, A, B, &z);
+            tried++;
+            if (!g6a_rng_ok(&R)) continue;
+            kept++;
+            for (int h = 0; h < 2; h++) {
+                const u128 e = op == 0 ? spu_fm(a[h], b[h]) : op == 1 ? spu_fma(a[h], b[h], c[h]) : op == 2 ? spu_fnms(a[h], b[h], c[h]) : spu_fs(a[h], b[h]);
+                const u128 gg = h ? g6a_hi(r) : g6a_lo(r);
+                bad += memcmp(&e, &gg, 16) != 0;
+            }
+        }
+    }
+    fprintf(stderr, "[edge-6ac8] self-test of the v4 ops against the 4-lane helpers (MXCSR %04X): %ld of %ld kept ops differ (%ld tried)\n",
+            _mm_getcsr() & 0xFFC0u, bad, kept, tried);
+    return bad;
+}
+static void g6a_alt_report(void)
+{
+    static const char* nm[2] = { "v3", "v4" };
+    for (int m = 0; m < 2; m++)
+        if (s6a_alt_calls[m])
+            fprintf(stderr, "[edge-6ac8-alt] %s: %ld calls; ticks per call %.1f\n", nm[m], s6a_alt_calls[m],
+                    (double)s6a_alt_cyc[m] / (double)s6a_alt_calls[m]);
+}
+
 static int s6a_mode = -1;
 
 int gow_edge_6ac8_mode(void)
@@ -615,6 +712,16 @@ int gow_edge_6ac8_mode(void)
         if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_6AC8_V2");
         s6a_v2 = v && atoi(v) == 1;
+        { const char* v4 = getenv("GOW_EDGE_6AC8_V4"); s6a_v4 = v4 ? atoi(v4) : 0; if (s6a_v4 != 1 && s6a_v4 != 3) s6a_v4 = 0; }
+        { const char* rj = getenv("GOW_EDGE_6AC8_V4_REJECT"); s6a_v4_rej = rj ? atoi(rj) : 0; if (s6a_v4_rej < 0) s6a_v4_rej = 0; }
+#if !(defined(SPU_FP_DAZ) && SPU_FP_DAZ)
+        s6a_v4 = 0;   /* the v4 rule is the runtime's SPU_FP_DAZ rule */
+#endif
+        if (m && s6a_v4) {
+            fprintf(stderr, "[edge-6ac8] GOW_EDGE_6AC8_V4=%d (speculative iterations on the DAZ rule)\n", s6a_v4);
+            if (g6a_selftest_v4() != 0) { fprintf(stderr, "[edge-6ac8] the v4 self-test FAILED on this host: GOW_EDGE_6AC8_V4 ignored (v3)\n"); s6a_v4 = 0; }
+            if (s6a_v4) atexit(g6a_alt_report);
+        }
         s6a_mode = m;
         if (!m) fprintf(stderr, "[edge-6ac8] GOW_EDGE_6AC8=0 (lifted loop nest)\n");
         else {
@@ -650,7 +757,8 @@ static void g6a_fault(spu_context* ctx)
 static void g6a_run(spu_context* ctx)
 {
     if (s6a_mode == 2 || s6a_mode == 4) g6a_v1(ctx);
-    else                                g6a_pk(ctx);
+    else { const int v4 = g6a_v4_pick(); const uint64_t t0 = __rdtsc(); g6a_pk(ctx);
+           s6a_alt_cyc[v4] += __rdtsc() - t0; s6a_alt_calls[v4]++; }
     if (__builtin_expect(s6a_fault != 0, 0)) g6a_fault(ctx);
 }
 
@@ -737,5 +845,5 @@ void gow_edge_6ac8_check_end(spu_context* ctx)
         s6a_bad++;
         fprintf(stderr, "[edge-6ac8-check] call %ld: %d GPRs and %ld LS bytes differ\n", call, bad, nls);
     }
-    if ((call & 4095) == 4095) g6a_check_report();   /* a game run ends by kill: atexit never runs */
+    if ((call & 4095) == 4095) { g6a_check_report(); if (s6a_v4) g6a_alt_report(); }   /* a game run ends by kill: atexit never runs */
 }

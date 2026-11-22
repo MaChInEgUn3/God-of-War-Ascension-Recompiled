@@ -31,6 +31,8 @@
 #include <immintrin.h>
 #include "spu_context.h"
 #include "spu_helpers.h"
+/* GOW_AB=v4 (main.cpp) and GOW_EDGE_V4_HOLD=1: while this is 1 every stage's v4 rule is held off (v3 runs) */
+extern int g_gow_edge_v4_hold;
 
 /* ---- LS access: big-endian words, 16-byte aligned, wrapped to the 256 KB store (as
  * spu_ls_read128/write128 do). One byte shuffle swaps the four words. */
@@ -375,34 +377,59 @@ static inline int g64_plain_all(v8 x) { return g64_all(g64_plain(x)); }
 /* a float op of a pair: speculative (the raw native op, its result tracked; *z = its allowed zero lanes)
  * or checked (spec == 0: the per-lane rule with the 4-lane fallback; z unused) */
 #define G64_AI static inline __attribute__((always_inline))
-G64_AI v8 g64_xin(int spec, g64_rng* R, v8 x) { return spec ? g64_chk_in(R, x) : _mm256_setzero_si256(); }
+/* ---- v4 (spec == 2): the rule of the runtime's native helpers as they are built today (SPU_FP_DAZ in
+ * spu_helpers.h; statement and tests in gow_edge_native_73e0.c). With the SPU thread in round-toward-zero + FTZ +
+ * DAZ a native result is the SPU's unless its exponent is 254 or 255, a -0 becomes +0, and inputs need no
+ * check. So the x-ops take the +0 step and feed one running unsigned max (the rng's mx; its mn is left at its
+ * initial value, so g64_rng_ok tests the max alone); g64_xin tracks nothing and no zero lanes are carried. */
+G64_AI v8 g64_dout(g64_rng* R, v8 r)
+{
+    r = _mm256_andnot_si256(_mm256_cmpeq_epi32(r, _mm256_set1_epi32((int)0x80000000u)), r);
+    R->mx = _mm256_max_epu32(R->mx, _mm256_add_epi32(r, r));
+    return r;
+}
+static int s64_v4;                       /* GOW_EDGE_D640_V4=1: speculative pairs on the v4 rule; 3 (lab): drawn per call */
+static int s64_v4_rej;                   /* GOW_EDGE_D640_V4_REJECT=N (lab): every Nth kept v4 pair is redone exactly */
+static _Thread_local int t64_v4;         /* the rule of the call in progress (set by g64_a_run / g64_b_run) */
+static _Thread_local unsigned t64_rej_n;
+static uint64_t s64_alt_cyc[2][2];       /* rdtsc by rule and region (0: A, 1: B) */
+static long s64_alt_calls[2][2];
+static uint32_t s64_alt_rng = 0x9E3779B9u;
+static inline int g64_rej_hit(void) { return s64_v4_rej > 0 && (++t64_rej_n % (unsigned)s64_v4_rej) == 0; }
+
+G64_AI v8 g64_xin(int spec, g64_rng* R, v8 x) { return spec == 1 ? g64_chk_in(R, x) : _mm256_setzero_si256(); }
 G64_AI v8 g64_xfma(int spec, g64_rng* R, v8 a, v8 za, v8 b, v8 zb, v8 c, v8 zc, v8* z)
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g64_fma(a, b, c); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g64_dout(R, g64_f(_mm256_fmadd_ps(g64_p(a), g64_p(b), g64_p(c)))); }
     *z = _mm256_and_si256(_mm256_or_si256(za, zb), zc);
     return g64_chk_out(R, g64_f(_mm256_fmadd_ps(g64_p(a), g64_p(b), g64_p(c))), *z);
 }
 G64_AI v8 g64_xfms(int spec, g64_rng* R, v8 a, v8 za, v8 b, v8 zb, v8 c, v8 zc, v8* z)   /* a*b - c */
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g64_fms(a, b, c); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g64_dout(R, g64_f(_mm256_fmsub_ps(g64_p(a), g64_p(b), g64_p(c)))); }
     *z = _mm256_and_si256(_mm256_or_si256(za, zb), zc);
     return g64_chk_out(R, g64_f(_mm256_fmsub_ps(g64_p(a), g64_p(b), g64_p(c))), *z);
 }
 G64_AI v8 g64_xfnms(int spec, g64_rng* R, v8 a, v8 za, v8 b, v8 zb, v8 c, v8 zc, v8* z)  /* c - a*b */
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g64_fnms(a, b, c); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g64_dout(R, g64_f(_mm256_fnmadd_ps(g64_p(a), g64_p(b), g64_p(c)))); }
     *z = _mm256_and_si256(_mm256_or_si256(za, zb), zc);
     return g64_chk_out(R, g64_f(_mm256_fnmadd_ps(g64_p(a), g64_p(b), g64_p(c))), *z);
 }
 G64_AI v8 g64_xfm(int spec, g64_rng* R, v8 a, v8 za, v8 b, v8 zb, v8* z)
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g64_fm(a, b); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g64_dout(R, g64_f(_mm256_mul_ps(g64_p(a), g64_p(b)))); }
     *z = _mm256_or_si256(za, zb);
     return g64_chk_out(R, g64_f(_mm256_mul_ps(g64_p(a), g64_p(b))), *z);
 }
 G64_AI v8 g64_xfs(int spec, g64_rng* R, v8 a, v8 b, v8* z)   /* a - b */
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g64_fs(a, b); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g64_dout(R, g64_f(_mm256_sub_ps(g64_p(a), g64_p(b)))); }
     const v8 r = g64_f(_mm256_sub_ps(g64_p(a), g64_p(b)));
     *z = g64_zero(r);
     return g64_chk_out(R, r, *z);
@@ -507,6 +534,7 @@ G64_AI int g64_b_pair(const g64_bk* K, const uint8_t* ls, uint32_t k0, const g64
     o->B6 = g64_xfma(spec, &R, g64_xor(q9, py), zpy, K->r73, K->z73, K->r72, K->z72, &zd);
     o->B11 = g64_xfma(spec, &R, g64_xor(q9, pz), zpz, K->r68, K->z68, K->r67, K->z67, &zd);
     if (spec && !g64_rng_ok(&R)) return 0;
+    if (spec == 2 && __builtin_expect(s64_v4_rej != 0, 0) && g64_rej_hit()) return 0;
     /* C: records (k-2, k-1); integer work only */
     const v8 c22 = g64_back(pv->B22, o->B22), c6 = g64_back(pv->B6, o->B6), c11 = g64_back(pv->B11, o->B11);
     const v8 c12 = g64_back(pv->B12, o->B12);
@@ -602,7 +630,7 @@ static void g64_b_pk(spu_context* ctx)
     const uint32_t P = (n - 1) / 2;
     for (uint32_t p = 0; p < P; p++) {
         const uint32_t k0 = q23._u32[0];
-        if (!spec || !g64_b_pair(&K, ls, k0, &pv, &cu, 1)) {
+        if (!spec || !(t64_v4 ? g64_b_pair(&K, ls, k0, &pv, &cu, 2) : g64_b_pair(&K, ls, k0, &pv, &cu, 1))) {
             if (spec) s64_redo[1]++;
             g64_b_pair(&K, ls, k0, &pv, &cu, 0);
         }
@@ -800,6 +828,7 @@ G64_AI int g64_a_pair(const g64_ak* K, const g64_ag* g0, const g64_ag* g1, v8 t1
     v8 zc[6], ze[4];
     g64_a_s2(K, g0, g1, o2, &R, spec, zc, ze);
     *r5 = g64_a_s3(K, o2, t12, &R, spec, zc, ze);
+    if (spec == 2 && __builtin_expect(s64_v4_rej != 0, 0) && g64_rej_hit()) return 0;
     return spec ? g64_rng_ok(&R) : 1;
 }
 
@@ -865,7 +894,7 @@ static void g64_a_pk(spu_context* ctx)
         S.r5 = g64_hi(r5p); g64_a_serial(&K, ls, &S, &g1);
         /* S3 of j+1 takes iteration j+1's tail mask, S3 of j+2 the one iteration j+2 will form */
         const v8 t12 = g64_v8(g1.t12, spu_and(K.r66, spu_ceqi(spu_ai(S.r34, -1), 1)));
-        if (!spec || !g64_a_pair(&K, &g0, &g1, t12, &a2, &r5p, 1)) {
+        if (!spec || !(t64_v4 ? g64_a_pair(&K, &g0, &g1, t12, &a2, &r5p, 2) : g64_a_pair(&K, &g0, &g1, t12, &a2, &r5p, 1))) {
             if (spec) s64_redo[0]++;
             g64_a_pair(&K, &g0, &g1, t12, &a2, &r5p, 0);
         }
@@ -891,6 +920,81 @@ static void g64_a_pk(spu_context* ctx)
     GOW_D6A_STORE()
 }
 
+/* v4 needs the mode its rule is stated for (round toward zero, FTZ, DAZ on this thread), else v3 for the call */
+static inline int g64_v4_pick(void)
+{
+    int v4 = s64_v4;
+    if (v4 == 3) { s64_alt_rng ^= s64_alt_rng << 13; s64_alt_rng ^= s64_alt_rng >> 17; s64_alt_rng ^= s64_alt_rng << 5; v4 = (int)(s64_alt_rng & 1u); }
+    if (v4 && (g_gow_edge_v4_hold || (_mm_getcsr() & 0xE040u) != 0xE040u)) v4 = 0;
+    t64_v4 = v4;
+    return v4;
+}
+/* ---- self-test of the v4 ops (once, at mode init, on the calling SPU thread and in its float mode): whenever the
+ * range test keeps an op, all eight lanes must be the 4-lane helper's bits; a failure switches v4 off. ---- */
+static uint32_t s64_st_rng = 0x2545F491u;
+static uint32_t g64_st_rand(void) { s64_st_rng ^= s64_st_rng << 13; s64_st_rng ^= s64_st_rng >> 17; s64_st_rng ^= s64_st_rng << 5; return s64_st_rng; }
+static uint32_t g64_st_edge(int cls)
+{
+    const uint32_t r = g64_st_rand(), sign = r & 0x80000000u;
+    switch (cls) {
+    case 0: return r;
+    case 1: return sign | (r & 0x007FFFFFu);                            /* exponent 0, a fraction */
+    case 2: return sign;                                                /* +-0 */
+    case 3: return sign | 0x7F800000u | (r & 0x007FFFFFu);              /* exponent 255 */
+    case 4: return sign | 0x7F000000u | (r & 0x007FFFFFu);              /* exponent 254 */
+    case 5: return sign | ((1u + (r >> 8) % 40u) << 23);                /* a small power of two */
+    case 6: return sign | ((1u + (r >> 8) % 40u) << 23) | (r & 7u);
+    case 7: return sign | ((100u + (r >> 8) % 56u) << 23) | (r & 0x007FFFFFu);
+    default: return sign | ((215u + (r >> 8) % 40u) << 23) | (r & 0x007FFFFFu);
+    }
+}
+static long g64_selftest_v4(void)
+{
+    long bad = 0, kept = 0, tried = 0;
+    const v8 Z = _mm256_setzero_si256();
+    for (int it = 0; it < 60000; it++) {
+        u128 a[2], b[2], c[2];
+        const int ca = it % 9, cb = (it / 9) % 9, cc = (it / 81) % 9;
+        for (int h = 0; h < 2; h++)
+            for (int i = 0; i < 4; i++) {
+                a[h]._u32[i] = g64_st_edge(ca); b[h]._u32[i] = g64_st_edge(cb); c[h]._u32[i] = g64_st_edge(cc);
+                if ((it & 31) == 5) b[h]._u32[i] = a[h]._u32[i];                                /* a - a */
+            }
+        if ((it & 31) == 6)   /* an addend that cancels the product */
+            for (int h = 0; h < 2; h++) { const u128 pr = spu_fm(a[h], b[h]); for (int i = 0; i < 4; i++) c[h]._u32[i] = pr._u32[i] ^ 0x80000000u; }
+        const v8 A = g64_v8(a[0], a[1]), B = g64_v8(b[0], b[1]), C = g64_v8(c[0], c[1]);
+        for (int op = 0; op < 5; op++) {
+            g64_rng R; g64_rng_init(&R);
+            v8 z;
+            const v8 r = op == 0 ? g64_xfm(2, &R, A, Z, B, Z, &z) : op == 1 ? g64_xfma(2, &R, A, Z, B, Z, C, Z, &z)
+                       : op == 2 ? g64_xfms(2, &R, A, Z, B, Z, C, Z, &z) : op == 3 ? g64_xfnms(2, &R, A, Z, B, Z, C, Z, &z)
+                       : g64_xfs(2, &R, A, B, &z);
+            tried++;
+            if (!g64_rng_ok(&R)) continue;
+            kept++;
+            for (int h = 0; h < 2; h++) {
+                const u128 e = op == 0 ? spu_fm(a[h], b[h]) : op == 1 ? spu_fma(a[h], b[h], c[h]) : op == 2 ? spu_fms(a[h], b[h], c[h])
+                             : op == 3 ? spu_fnms(a[h], b[h], c[h]) : spu_fs(a[h], b[h]);
+                const u128 gg = h ? g64_hi(r) : g64_lo(r);
+                bad += memcmp(&e, &gg, 16) != 0;
+            }
+        }
+    }
+    fprintf(stderr, "[edge-d640] self-test of the v4 ops against the 4-lane helpers (MXCSR %04X): %ld of %ld kept ops differ (%ld tried)\n",
+            _mm_getcsr() & 0xFFC0u, bad, kept, tried);
+    return bad;
+}
+static void g64_alt_report(void)
+{
+    static const char* nm[2] = { "v3", "v4" };
+    static const char* rg[2] = { "A (D92C)", "B (D4DC)" };
+    for (int m = 0; m < 2; m++)
+        for (int k = 0; k < 2; k++)
+            if (s64_alt_calls[m][k])
+                fprintf(stderr, "[edge-d640-alt] %s region %s: %ld calls; ticks per call %.1f\n", nm[m], rg[k],
+                        s64_alt_calls[m][k], (double)s64_alt_cyc[m][k] / (double)s64_alt_calls[m][k]);
+}
+
 /* ---- entry points the lift calls ---------------------------------------------------- */
 static int s64_mode = -1;
 
@@ -902,8 +1006,18 @@ int gow_edge_d640_mode(void)
         if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_D640_V2");
         s64_v2 = v && atoi(v) == 1;
+        { const char* v4 = getenv("GOW_EDGE_D640_V4"); s64_v4 = v4 ? atoi(v4) : 0; if (s64_v4 != 1 && s64_v4 != 3) s64_v4 = 0; }
+        { const char* rj = getenv("GOW_EDGE_D640_V4_REJECT"); s64_v4_rej = rj ? atoi(rj) : 0; if (s64_v4_rej < 0) s64_v4_rej = 0; }
+#if !(defined(SPU_FP_DAZ) && SPU_FP_DAZ)
+        s64_v4 = 0;   /* the v4 rule is the runtime's SPU_FP_DAZ rule */
+#endif
         s64_mode = m;
         g64_luts();
+        if (m && s64_v4) {
+            fprintf(stderr, "[edge-d640] GOW_EDGE_D640_V4=%d (speculative pairs on the DAZ rule)\n", s64_v4);
+            if (g64_selftest_v4() != 0) { fprintf(stderr, "[edge-d640] the v4 self-test FAILED on this host: GOW_EDGE_D640_V4 ignored (v3)\n"); s64_v4 = 0; }
+            if (s64_v4) atexit(g64_alt_report);
+        }
         if (!m) fprintf(stderr, "[edge-d640] GOW_EDGE_D640=0 (lifted loops)\n");
         else    fprintf(stderr, "[edge-d640] GOW_EDGE_D640=%d (%s %s)\n", m, m <= 2 ? "native" : "check",
                         (m == 2 || m == 4) ? "v1" : s64_v2 ? "packed v2" : "packed v3");
@@ -930,13 +1044,15 @@ static void g64_fault(spu_context* ctx, int region)   /* region 0: D92C, 1: D4DC
 static void g64_a_run(spu_context* ctx)
 {
     if (s64_mode == 2 || s64_mode == 4) g64_a_v1(ctx);
-    else                                g64_a_pk(ctx);
+    else { const int v4 = g64_v4_pick(); const uint64_t t0 = __rdtsc(); g64_a_pk(ctx);
+           s64_alt_cyc[v4][0] += __rdtsc() - t0; s64_alt_calls[v4][0]++; }
     if (__builtin_expect(s64_fault != 0, 0)) g64_fault(ctx, 0);
 }
 static void g64_b_run(spu_context* ctx)
 {
     if (s64_mode == 2 || s64_mode == 4) g64_b_v1(ctx);
-    else                                g64_b_pk(ctx);
+    else { const int v4 = g64_v4_pick(); const uint64_t t0 = __rdtsc(); g64_b_pk(ctx);
+           s64_alt_cyc[v4][1] += __rdtsc() - t0; s64_alt_calls[v4][1]++; }
     if (__builtin_expect(s64_fault != 0, 0)) g64_fault(ctx, 1);
 }
 
@@ -1028,7 +1144,7 @@ static void g64_check_end(spu_context* ctx, int k)
         s64_bad[k]++;
         fprintf(stderr, "[edge-d640-check] %s call %ld: %d GPRs and %ld LS bytes differ\n", k64_name[k], call, bad, nls);
     }
-    if ((call & 4095) == 4095) g64_check_report();   /* a game run ends by kill: atexit never runs */
+    if ((call & 4095) == 4095) { g64_check_report(); if (s64_v4) g64_alt_report(); }   /* a game run ends by kill: atexit never runs */
 }
 
 void gow_edge_d640_d92c_check_begin(spu_context* ctx) { g64_check_begin(ctx, 0); }

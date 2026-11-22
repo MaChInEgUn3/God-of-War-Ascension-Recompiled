@@ -26,6 +26,8 @@
 #include <immintrin.h>
 #include "spu_context.h"
 #include "spu_helpers.h"
+/* GOW_AB=v4 (main.cpp) and GOW_EDGE_V4_HOLD=1: while this is 1 every stage's v4 rule is held off (v3 runs) */
+extern int g_gow_edge_v4_hold;
 
 /* ---- LS access: big-endian words, 16-byte aligned, wrapped to the 256 KB store (as
  * spu_ls_read128/write128 do). One byte shuffle swaps the four words. */
@@ -451,7 +453,32 @@ static int gow_wordmask(u128 m)
     return 1;
 }
 
-static void gow_e550_ec08_v3(spu_context* ctx)
+/* ---- v4: the rule of the runtime's native helpers as they are built today (SPU_FP_DAZ in spu_helpers.h; see
+ * gow_edge_native_73e0.c for the statement and its tests). With the SPU thread in round-toward-zero + FTZ + DAZ a
+ * native fm / fma result is the SPU's unless its exponent is 254 or 255, a -0 becomes +0, and the inputs need no
+ * check. One running unsigned max of every op result shifted left by one; the iteration is kept iff it stays
+ * below 0xFE000000. The +0 step is applied where the bits are read: the three row sums (masked, shuffled and
+ * stored), the position sum (stored) and the weights (shuffled into registers that are handed back); the partial
+ * sums in between only feed the next fma, where a zero of either sign is the same addend. */
+typedef struct { v8 mx; } gow_dr;
+static inline v8 gow_pos0v(v8 r) { return _mm256_andnot_si256(_mm256_cmpeq_epi32(r, _mm256_set1_epi32((int)0x80000000u)), r); }
+static inline v8 gow_dq(gow_dr* g, v8 r) { g->mx = _mm256_max_epu32(g->mx, _mm256_add_epi32(r, r)); return r; }
+static inline v8 gow_dfm(gow_dr* g, v8 a, v8 b)
+{ return gow_dq(g, _mm256_castps_si256(_mm256_mul_ps(_mm256_castsi256_ps(a), _mm256_castsi256_ps(b)))); }
+static inline v8 gow_dfma(gow_dr* g, v8 a, v8 b, v8 c)
+{ return gow_dq(g, _mm256_castps_si256(_mm256_fmadd_ps(_mm256_castsi256_ps(a), _mm256_castsi256_ps(b), _mm256_castsi256_ps(c)))); }
+static inline int gow_dr_ok(const gow_dr* g)
+{
+    const v8 hi = _mm256_cmpeq_epi32(_mm256_min_epu32(g->mx, _mm256_set1_epi32((int)0xFDFFFFFFu)), g->mx);
+    return _mm256_movemask_ps(_mm256_castsi256_ps(hi)) == 0xFF;
+}
+static int s_edge_v4;        /* GOW_EDGE_V4=1: the speculative iterations use the v4 rule; 3 (lab): v3 / v4 drawn per call */
+static int s_edge_v4_rej;    /* GOW_EDGE_V4_REJECT=N (lab): every Nth kept v4 iteration is redone exactly */
+static uint64_t s_alt_cyc[2];
+static long s_alt_it[2], s_alt_calls[2];
+static uint32_t s_alt_rng = 0x9E3779B9u;
+
+static void gow_e550_ec08_v3(spu_context* ctx, const int v4)
 {
     u128* const g = ctx->gpr;
     const uint32_t n0 = g[48]._u32[0];
@@ -506,7 +533,29 @@ static void gow_e550_ec08_v3(spu_context* ctx)
 
         v8 R0m, R1m, R2m, P, wf;
         int done = 0;
-        if (spec) {
+        if (spec && v4) {
+            gow_dr rg = { _mm256_setzero_si256() };
+            v8 R0, R1, R2;
+#define GOW_DROW(R, b)                                                \
+            R = gow_dfm(&rg, W0, GOW_ROWLD(b, 0));                    \
+            R = gow_dfma(&rg, W1, GOW_ROWLD(b, 1), R);                \
+            R = gow_dfma(&rg, W2, GOW_ROWLD(b, 2), R);                \
+            R = gow_pos0v(gow_dfma(&rg, W3, GOW_ROWLD(b, 3), R));
+            GOW_DROW(R0, b34)
+            GOW_DROW(R1, b35)
+            GOW_DROW(R2, b37)
+#undef GOW_DROW
+            R0m = _mm256_and_si256(R0, m84);
+            R1m = _mm256_and_si256(R1, m84);
+            R2m = _mm256_or_si256(m97o, _mm256_and_si256(R2, m84));
+            const v8 T = gow_shuf2(&s69, gow_shuf2(&s70, R1, R0), R2);
+            P = gow_dfma(&rg, X, R2m, T);
+            P = gow_dfma(&rg, Y, R1m, P);
+            P = gow_pos0v(gow_dfma(&rg, Z, R0m, P));
+            wf = gow_pos0v(gow_dfm(&rg, cuf, k91));
+            done = gow_dr_ok(&rg);
+            if (__builtin_expect(s_edge_v4_rej != 0, 0) && done && (it % (uint32_t)s_edge_v4_rej) == (uint32_t)s_edge_v4_rej - 1) done = 0;
+        } else if (spec) {
             gow_rng rg = { _mm256_set1_epi32(-1), _mm256_setzero_si256() };
             const v8 zw0 = gow_zf8(W0), zw1 = gow_zf8(W1), zw2 = gow_zf8(W2), zw3 = gow_zf8(W3);
             v8 z, zm, M, R0, R1, R2, t;
@@ -604,6 +653,63 @@ static void gow_e550_ec08_v3(spu_context* ctx)
     GOW_E550_STORE_OUTPUTS()
 }
 
+/* ---- self-test of the v4 ops (once, at mode init, on the calling SPU thread and in its float mode): on random and
+ * edge inputs, whenever the range test keeps an op, all eight lanes (after the +0 step) must be the 4-lane
+ * helper's bits; a failure switches v4 off. ---- */
+static uint32_t s_st_rng = 0x2545F491u;
+static uint32_t gow_st_rand(void) { s_st_rng ^= s_st_rng << 13; s_st_rng ^= s_st_rng >> 17; s_st_rng ^= s_st_rng << 5; return s_st_rng; }
+static uint32_t gow_st_edge(int cls)
+{
+    const uint32_t r = gow_st_rand(), sign = r & 0x80000000u;
+    switch (cls) {
+    case 0: return r;
+    case 1: return sign | (r & 0x007FFFFFu);                            /* exponent 0, a fraction */
+    case 2: return sign;                                                /* +-0 */
+    case 3: return sign | 0x7F800000u | (r & 0x007FFFFFu);              /* exponent 255 */
+    case 4: return sign | 0x7F000000u | (r & 0x007FFFFFu);              /* exponent 254 */
+    case 5: return sign | ((1u + (r >> 8) % 40u) << 23);                /* a small power of two */
+    case 6: return sign | ((1u + (r >> 8) % 40u) << 23) | (r & 7u);
+    case 7: return sign | ((100u + (r >> 8) % 56u) << 23) | (r & 0x007FFFFFu);
+    default: return sign | ((215u + (r >> 8) % 40u) << 23) | (r & 0x007FFFFFu);
+    }
+}
+static long gow_selftest_v4(void)
+{
+    long bad = 0, kept = 0, tried = 0;
+    for (int it = 0; it < 60000; it++) {
+        u128 a[2], b[2], c[2];
+        const int ca = it % 9, cb = (it / 9) % 9, cc = (it / 81) % 9;
+        for (int h = 0; h < 2; h++)
+            for (int i = 0; i < 4; i++) { a[h]._u32[i] = gow_st_edge(ca); b[h]._u32[i] = gow_st_edge(cb); c[h]._u32[i] = gow_st_edge(cc); }
+        if ((it & 31) == 6)   /* an addend that cancels the product */
+            for (int h = 0; h < 2; h++) { const u128 pr = spu_fm(a[h], b[h]); for (int i = 0; i < 4; i++) c[h]._u32[i] = pr._u32[i] ^ 0x80000000u; }
+        const v8 A = gow_v8(a[0], a[1]), B = gow_v8(b[0], b[1]), C = gow_v8(c[0], c[1]);
+        for (int op = 0; op < 2; op++) {
+            gow_dr rg = { _mm256_setzero_si256() };
+            const v8 r = gow_pos0v(op == 0 ? gow_dfm(&rg, A, B) : gow_dfma(&rg, A, B, C));
+            tried++;
+            if (!gow_dr_ok(&rg)) continue;
+            kept++;
+            for (int h = 0; h < 2; h++) {
+                const u128 e = op == 0 ? spu_fm(a[h], b[h]) : spu_fma(a[h], b[h], c[h]);
+                const u128 gg = h ? gow_hi(r) : gow_lo(r);
+                bad += memcmp(&e, &gg, 16) != 0;
+            }
+        }
+    }
+    fprintf(stderr, "[edge-native] self-test of the v4 ops against the 4-lane helpers (MXCSR %04X): %ld of %ld kept ops differ (%ld tried)\n",
+            _mm_getcsr() & 0xFFC0u, bad, kept, tried);
+    return bad;
+}
+static void gow_alt_report(void)
+{
+    static const char* nm[2] = { "v3", "v4" };
+    for (int m = 0; m < 2; m++)
+        if (s_alt_it[m])
+            fprintf(stderr, "[edge-native-alt] %s: %ld loop entries, %ld iterations; ticks per iteration %.1f\n",
+                    nm[m], s_alt_calls[m], s_alt_it[m], (double)s_alt_cyc[m] / (double)s_alt_it[m]);
+}
+
 /* ---- entry points the lab lift calls ---------------------------------------------- */
 static int s_edge_mode = -1;
 static int s_edge_v2;   /* GOW_EDGE_V2=1: modes 1 and 3 use v2 instead of v3 */
@@ -616,6 +722,16 @@ int gow_edge_native_mode(void)
         if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_V2");
         s_edge_v2 = v && atoi(v) == 1;
+        { const char* v4 = getenv("GOW_EDGE_V4"); s_edge_v4 = v4 ? atoi(v4) : 0; if (s_edge_v4 != 1 && s_edge_v4 != 3) s_edge_v4 = 0; }
+        { const char* rj = getenv("GOW_EDGE_V4_REJECT"); s_edge_v4_rej = rj ? atoi(rj) : 0; if (s_edge_v4_rej < 0) s_edge_v4_rej = 0; }
+#if !(defined(SPU_FP_DAZ) && SPU_FP_DAZ)
+        s_edge_v4 = 0;   /* the v4 rule is the runtime's SPU_FP_DAZ rule */
+#endif
+        if (m && s_edge_v4) {
+            fprintf(stderr, "[edge-native] GOW_EDGE_V4=%d (speculative iterations on the DAZ rule)\n", s_edge_v4);
+            if (gow_selftest_v4() != 0) { fprintf(stderr, "[edge-native] the v4 self-test FAILED on this host: GOW_EDGE_V4 ignored (v3)\n"); s_edge_v4 = 0; }
+            if (s_edge_v4) atexit(gow_alt_report);
+        }
         s_edge_mode = m;
         if (!m) fprintf(stderr, "[edge-native] GOW_EDGE_NATIVE=0 (lifted loop)\n");
         else fprintf(stderr, "[edge-native] GOW_EDGE_NATIVE=%d (%s %s)\n", m, m <= 2 ? "native" : "check",
@@ -631,7 +747,16 @@ static void gow_e550_ec08_run(spu_context* ctx)
 {
     if (s_edge_mode == 2 || s_edge_mode == 4) gow_e550_ec08_v1(ctx);
     else if (s_edge_v2)                       gow_e550_ec08_v2(ctx);
-    else                                      gow_e550_ec08_v3(ctx);
+    else {
+        /* v4 needs the mode its rule is stated for (round toward zero, FTZ, DAZ on this thread), else v3 */
+        int v4 = s_edge_v4;
+        if (v4 == 3) { s_alt_rng ^= s_alt_rng << 13; s_alt_rng ^= s_alt_rng >> 17; s_alt_rng ^= s_alt_rng << 5; v4 = (int)(s_alt_rng & 1u); }
+        if (v4 && (g_gow_edge_v4_hold || (_mm_getcsr() & 0xE040u) != 0xE040u)) v4 = 0;
+        const uint32_t n2 = ctx->gpr[48]._u32[0] / 2;
+        const uint64_t t0 = __rdtsc();
+        gow_e550_ec08_v3(ctx, v4);
+        s_alt_cyc[v4] += __rdtsc() - t0; s_alt_it[v4] += (long)n2; s_alt_calls[v4]++;
+    }
     if (__builtin_expect(s_edge_fault != 0, 0)) {
         if (s_edge_fault < 0) { const char* f = getenv("GOW_EDGE_FAULT"); s_edge_fault = f ? atoi(f) : 0; }
         if (s_edge_fault == 1) ctx->ls[(ctx->gpr[86]._u32[0] - 32u + 15u) & SPU_LS_MASK] ^= 1;
@@ -751,5 +876,5 @@ void gow_edge_e550_check_end(spu_context* ctx)
         s_chk_bad++;
         fprintf(stderr, "[edge-check] call %ld: %d GPRs and %ld LS bytes differ\n", call, bad, nls);
     }
-    if ((call & 4095) == 4095) gow_check_report();   /* a game run ends by kill: atexit never runs */
+    if ((call & 4095) == 4095) { gow_check_report(); if (s_edge_v4) gow_alt_report(); }   /* a game run ends by kill: atexit never runs */
 }

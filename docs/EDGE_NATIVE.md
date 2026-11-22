@@ -1212,3 +1212,68 @@ Status: design, started 2026-10-24. Progress log at the end.
   - **Not covered:** the game (check mode over a fight and the New Game replay: October's in-game check took
     fallbacks the capture never did), other CPU models beyond the self-test, the frame-rate figure. The other
     native stages carry v3's kind of tracking too.
+- 2026-11-22: the five other module stages on the same rule, a switch to hold it in a running game, and the
+  first in-game figures. All of it is optional; every stage's default is still v3.
+  - **Options.** `GOW_EDGE_V4=1` (E550's EC08 loop), `GOW_EDGE_F538_V4=1`, `GOW_EDGE_D640_V4=1` (both of its
+    loops), `GOW_EDGE_A880_V4=1`, `GOW_EDGE_6AC8_V4=1`, beside `GOW_EDGE_73E0_V4=1|2`. Each stage's
+    speculative 8-lane operations take the +0 step and feed one running unsigned max of the result shifted
+    left by one; a call's packed iteration is kept iff that max stays below 0xFE000000, else it is redone
+    exactly as before. These five use the plain form (the +0 step on every operation). Each stage runs the
+    self-test of its own v4 operations at mode init and switches its v4 off if a kept operation differs; each
+    needs SPU_FP_DAZ and checks `(MXCSR & 0xE040) == 0xE040` per call, else that call runs v3. `=3` draws the
+    rule per call for timing, `..._V4_REJECT=N` forces the redo path (lab).
+  - **Which rule a call took.** Whenever a v4 option is set, each stage prints `[edge-<stage>-alt]` lines
+    (calls and ticks per rule) at exit and with its check report. A v3 line there means the MXCSR guard or the
+    hold flag sent calls to v3: the check lines alone would not show it.
+  - **Hold flag.** `g_gow_edge_v4_hold` (port `main.cpp`; `GOW_EDGE_V4_HOLD=1` sets it from the start): while
+    it is 1 every stage's v4 is held and v3 runs. `GOW_AB=v4,<window s>,<start s>` flips it window by window
+    in a running game (on = the options as set), so v4 is measured against v3 on the same scene.
+  - **Lab gates** (replay of the 3,600-job capture, lab exe, every v4 option on): `[replay] 3600/3600 jobs
+    identical`; all six check modes at once: `[edge-check] 6284 calls checked, 0 differ`, `[edge-73e0-check]
+    1213 calls checked, 0 differ`, `[edge-f538-check] 4026 calls checked, 0 differ`, `[edge-d640-check] D92C:
+    1370 calls checked, 0 differ` and `D4DC: 1370 calls checked, 0 differ`, `[edge-a880-check] 1853 calls
+    checked, 0 differ`, `[edge-6ac8-check] 1213 calls checked, 0 differ`, the counts of each stage's check run
+    alone, every by-rule line v4; with `GOW_EDGE_F538_FAULT=1` added: `[edge-f538-check] 4026 calls checked, 1
+    differ`; with the hold flag: the same counts, 0 differ, every by-rule line v3. Sum of per-job minimum over
+    12 repeats, off / on / held in turn, four rounds: 225.3 / 209.3 / 237.8, 224.6 / 209.6 / 224.2, 224.5 /
+    214.8 / 224.3, 224.4 / 210.1 / 226.2 ms: on is 4.3 to 7.1% below off, held reads like off. Per stage
+    alone, the rule drawn per call (ticks per call): f538 -43% and -46%, E550 -28%, a880 -12%, d640's two
+    loops -5% and -15%, 6ac8 about -4.5%.
+  - **In game, check modes** (a non-PGO build of this source, every v4 option on):
+    - All six check modes at once, fight save 600 s and New Game replay 700 s: 0 differ in every stage, no
+      v3 line among the by-rule lines. Fight save: `[edge-check] 2330626 calls checked, 0 differ`,
+      `[edge-73e0-check] 278528`, `[edge-f538-check] 909313`, `[edge-d640-check] D92C: 368653` and `D4DC:
+      368640`, `[edge-a880-check] 466944`, `[edge-6ac8-check] 241665`. New Game: 1728513, 360449, 1777665,
+      466966 and 466944, 552960, 356352. Six checks together run the game at 2 to 4 frames a second, and
+      neither run reached its heavy part.
+    - The lighting stage alone, in the fight proper (1,468 draws a frame): `[edge-73e0-check] 2117634 calls
+      checked, 0 differ`, every by-rule line `v4b`.
+    - The five other stages with one or two checks a run (six runs): 0 differ in 1.1 to 7.0 million calls a
+      stage, all v4, but every one of those runs stayed at the opening shot of the arena (see STATUS.md: with
+      one of these check modes on, the fight save does not leave that shot, with the hold flag set as well,
+      so it is the check's slow-down and not v4). Those five are therefore checked in game on that shot and
+      the New Game start, not on the fight.
+  - **The fight, by capture.** 4,000 jobs of the fight (one in 150, from 230 s, the hold flag set so that the
+    reference is v3's own) replayed on the lab exe: v3 `[replay] 4240/4240 jobs identical`; every v4 on
+    `4240/4240 jobs identical`; all six check modes at once: `[edge-check] 9132 calls checked, 0 differ`,
+    `[edge-73e0-check] 1031`, `[edge-f538-check] 3716`, `[edge-d640-check] D92C: 1247` and `D4DC: 1247`,
+    `[edge-a880-check] 2013`, `[edge-6ac8-check] 1024`, each 0 differ and all v4; with the f538 fault:
+    `[edge-f538-check] 3716 calls checked, 1 differ`.
+  - **In-game figure** (the lever, 1 s windows from 200 s, 600 s runs, non-PGO build, v4 against v3 inside
+    one run). The fixed window sequence meets a scripted fight, so the on and off windows of a fight run do
+    not hold the same scene (a run with no lever read +6.7% with 5.2% fewer draws in its on windows):
+    `analysis/abfit.py` fits log fps on the lever and log draws per window. On five fight runs with no lever
+    the fitted lever is +0.8% +- 0.7 pooled (plain means: +6.7, +2.2, +2.3, +0.2, +0.1).
+    - Corridor: +8.2% +- 0.5 and +8.0% +- 1.0 (draws balanced; plain +8.1 and +7.7).
+    - Fight: +8.0 +- 1.6, +4.0 +- 1.5, +6.7 +- 1.8; pooled +6.1% +- 0.9 (plain +9.9, +8.2, +8.7).
+    - Checkpoint: +0.2% +- 1.7.
+    - The EDGE lists' time per run (`us_run`) with v4 on: 8 to 12% lower in every scene (corridor 81.3
+      against 89.9 us).
+    - The same build with the EDGE lanes slowed by 14% in the on windows: corridor -7.9% +- 1.2, fight -4.2%
+      +- 1.8, checkpoint -3.7% +- 1.4: the lists bind in the corridor, less at the checkpoint.
+  - **Not covered / open:** the play (PGO) build: its profile was trained without these paths, so they would
+    compile cold there; a figure needs a profile trained with the options on. Other CPU models beyond the
+    self-tests. Whether a faster EDGE path changes how often the fight save sticks at the arena's opening
+    shot (STATUS.md): of the plain runs of this day, 3 of 5 stuck with v4 active before the fight and 1 of 8
+    with it held or absent, against 27 of 103 before; too few to say. No default changes before that is
+    answered.

@@ -759,6 +759,13 @@ so far came from the menu, the first level and its corridor. The scenes after it
         the good ones; "a lost wake-up of a file scheduler": that thread waits in `sys_lwcond_wait`, which this
         runtime serves as a 1 ms poll, so a wake-up cannot be lost there. A wrong reading of mine corrected:
         the thread `brbDriver` is the title's audio output driver (187.5 calls a second), not a loader.
+      * Two observations of 2026-11-22, neither followed up yet. (a) With a whole-state check mode on one of
+        five EDGE stages (`GOW_EDGE_A880=3 GOW_EDGE_6AC8=3` is the cheapest: 17 to 20 frames a second on that
+        shot) the fight save stayed at the shot in eight runs of eight, on the old float rule as well as the
+        new: slowing the EDGE jobs of that shot may be a reliable way to reproduce it. (b) Of that day's plain
+        fight runs, 3 of 5 stuck with the faster EDGE stages active before the fight and 1 of 8 with them held
+        or absent (27 of 103 before): too few to tell, and it has to be answered before those stages become a
+        default.
       * What is established: it is a state of the game's own logic on running threads, and it depends on
         timing between threads: with a timing disturbance (a 2 ms sampler on the main thread, or a function
         trace on the audio driver) 0 of 11 runs stuck, without one 8 of 21 on the same settings. In the traced
@@ -878,6 +885,22 @@ so far came from the menu, the first level and its corridor. The scenes after it
         iteration needs the exact redo any more (29,512 before), and a forced redo of every third iteration
         stays exact. Not done yet: the in-game check, the frame-rate figure, the other native stages (they
         carry the same older tracking). Details in EDGE_NATIVE.md.
+      * All six module stages on that rule, measured in game (2026-11-22; options, every default still v3:
+        `GOW_EDGE_V4`, `GOW_EDGE_73E0_V4`, `GOW_EDGE_F538_V4`, `GOW_EDGE_D640_V4`, `GOW_EDGE_A880_V4`,
+        `GOW_EDGE_6AC8_V4`). Replay of 3,600 captured jobs with all six on: every job identical, the six
+        whole-state checks at once 0 differ, total job time 4.3 to 7.1% lower. In game the six checks at once
+        found 0 differing calls in millions per stage over the fight save and the New Game replay, and a
+        counter by rule shows every call on the new rule. Coverage is not equal: the lighting stage is checked
+        in the fight proper (2,117,634 calls); the five others are checked in game only on the arena's opening
+        shot and the New Game start, because one of their check modes slows that shot and the scene then never
+        leaves it, so the fight is covered for them by a capture of 4,000 fight jobs replayed with the six
+        checks (0 differ, every stage called). A new lever switches all six between the old and new rule
+        inside one run (`GOW_AB=v4`): on a non-PGO build the frame rate with the new rule is +8.2% +- 0.5 and
+        +8.0% +- 1.0 in the corridor, +6.1% +- 0.9 in the fight (three runs, fitted per window against the
+        draw count, since the plain on/off means of a scripted fight carry up to 6 points of scene imbalance)
+        and +0.2% +- 1.7 at the checkpoint; the EDGE lists' time per run is 8 to 12% lower everywhere. Not
+        done: the play build (its profile has to be trained with the options on) and the question below.
+        Details in EDGE_NATIVE.md.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench

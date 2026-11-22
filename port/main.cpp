@@ -320,6 +320,9 @@ extern "C" int g_vk_batch_max;   /* toolkit libs/video/rsx_vulkan_backend.c: dra
 extern "C" unsigned long long g_vk_flush_stat[2];   /* batch flushes, us ending and submitting them */
 extern "C" int g_eng_volume_inplace;   /* toolkit libs/video/rsx_draw_engine.c */
 extern "C" void spu_ibc_set_size(unsigned n);
+/* 1 = the EDGE native stages' v4 float rule is held off (their v3 form runs): the "v4" lever below, or
+ * GOW_EDGE_V4_HOLD=1 from the start. The stages read it where they pick the rule of a call. */
+extern "C" { int g_gow_edge_v4_hold = getenv("GOW_EDGE_V4_HOLD") ? atoi(getenv("GOW_EDGE_V4_HOLD")) : 0; }
 static int s_idle_wait = -1;   /* GOW_IDLE_WAIT */
 static int s_park_cap = -1;    /* GCM_PARK_TICK_CAP */
 extern "C" long long g_gcm_ab_ticks, g_gcm_ab_draws, g_gcm_ab_passes, g_gcm_ab_words;
@@ -368,6 +371,7 @@ static void ab_set(const char* lever, int on)
     else if (!strcmp(lever, "rslow")) { const char* e = getenv("GOW_AB_RSLOW"); g_rsx_slow_pct = on ? (e ? atoi(e) : 20) : 0; }   /* walker pass +n% */
     else if (!strcmp(lever, "mslow")) { const char* e = getenv("GOW_AB_MSLOW"); g_gcm_main_slow_us = on ? (e ? atoi(e) : 3000) : 0; }   /* flip-requesting thread +us a flip */
     else if (!strcmp(lever, "slow")) { const char* e = getenv("GOW_AB_SLOW"); g_spu_slow_pct = on ? (e ? atoi(e) : 20) : 0; }   /* the wids from SPU_SLOW_WIDS */
+    else if (!strcmp(lever, "v4")) g_gow_edge_v4_hold = !on;   /* on = the stages' v4 options as set, off = held (v3) */
     else if (!strcmp(lever, "idle")) { const char* e = getenv("GOW_AB_IDLE"); s_idle_wait = on ? (e ? atoi(e) : 2) : 0; }
     else if (!strcmp(lever, "parkcap")) s_park_cap = on;
     else if (!strcmp(lever, "bmax")) { const char* e = getenv("GOW_AB_BMAX"); g_vk_batch_max = on ? (e ? atoi(e) : 256) : 0; }   /* draws per batch */

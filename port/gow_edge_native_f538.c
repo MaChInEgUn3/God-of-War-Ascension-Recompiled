@@ -28,6 +28,8 @@
 #include <immintrin.h>
 #include "spu_context.h"
 #include "spu_helpers.h"
+/* GOW_AB=v4 (main.cpp) and GOW_EDGE_V4_HOLD=1: while this is 1 every stage's v4 rule is held off (v3 runs) */
+extern int g_gow_edge_v4_hold;
 
 /* ---- LS access: big-endian words, 16-byte aligned, wrapped to the 256 KB store (as
  * spu_ls_read128/write128 do). One byte shuffle swaps the four words. */
@@ -153,9 +155,28 @@ static inline v8 g53_fma(v8 a, v8 b, v8 c)   /* a*b + c */
 typedef struct { v8 mn, mx; } g53_rng;
 #define G53_AI static inline __attribute__((always_inline))
 G53_AI void g53_rng_add(g53_rng* R, v8 lo, v8 hi) { R->mn = _mm256_min_epu32(R->mn, lo); R->mx = _mm256_max_epu32(R->mx, hi); }
+/* ---- v4 (spec == 2): the rule of the runtime's native helpers as they are built today (SPU_FP_DAZ; statement
+ * and tests in gow_edge_native_73e0.c): a native result is the SPU's unless its exponent is 254 or 255, a -0
+ * becomes +0, inputs need no check. The x-ops take the +0 step and feed the rng's running max only (its min
+ * keeps its initial value, so g53_rng_ok tests the max alone); g53_xin tracks nothing. */
+G53_AI v8 g53_dout(g53_rng* R, v8 r)
+{
+    r = _mm256_andnot_si256(_mm256_cmpeq_epi32(r, _mm256_set1_epi32((int)0x80000000u)), r);
+    R->mx = _mm256_max_epu32(R->mx, _mm256_add_epi32(r, r));
+    return r;
+}
+static int s53_v4;                       /* GOW_EDGE_F538_V4=1: speculative iterations on the v4 rule; 3 (lab): drawn per call */
+static int s53_v4_rej;                   /* GOW_EDGE_F538_V4_REJECT=N (lab): every Nth kept v4 iteration is redone exactly */
+static _Thread_local int t53_v4;         /* the rule of the call in progress (set by g53_run) */
+static _Thread_local unsigned t53_rej_n;
+static uint64_t s53_alt_cyc[2];
+static long s53_alt_calls[2];
+static uint32_t s53_alt_rng = 0x9E3779B9u;
+static inline int g53_rej_hit(void) { return s53_v4_rej > 0 && (++t53_rej_n % (unsigned)s53_v4_rej) == 0; }
+
 G53_AI v8 g53_xin(int spec, g53_rng* R, v8 x)
 {
-    if (!spec) return _mm256_setzero_si256();
+    if (!spec || spec == 2) return _mm256_setzero_si256();
     const v8 s = _mm256_add_epi32(x, x);
     const v8 z = _mm256_cmpeq_epi32(s, _mm256_setzero_si256());
     g53_rng_add(R, _mm256_or_si256(s, z), s);
@@ -178,12 +199,14 @@ static inline int g53_rng_ok(const g53_rng* R)
 G53_AI v8 g53_xfm(int spec, g53_rng* R, v8 a, v8 za, v8 b, v8 zb, v8* z)
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g53_fm(a, b); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g53_dout(R, g53_f(_mm256_mul_ps(g53_p(a), g53_p(b)))); }
     *z = _mm256_or_si256(za, zb);
     return g53_chk_out(R, g53_f(_mm256_mul_ps(g53_p(a), g53_p(b))), *z);
 }
 G53_AI v8 g53_xfma(int spec, g53_rng* R, v8 a, v8 za, v8 b, v8 zb, v8 c, v8 zc, v8* z)   /* a*b + c */
 {
     if (!spec) { *z = _mm256_setzero_si256(); return g53_fma(a, b, c); }
+    if (spec == 2) { *z = _mm256_setzero_si256(); return g53_dout(R, g53_f(_mm256_fmadd_ps(g53_p(a), g53_p(b), g53_p(c)))); }
     *z = _mm256_and_si256(_mm256_or_si256(za, zb), zc);
     return g53_chk_out(R, g53_f(_mm256_fmadd_ps(g53_p(a), g53_p(b), g53_p(c))), *z);
 }
@@ -234,6 +257,7 @@ G53_AI int g53_iter(const uint8_t* ls, uint32_t a38, const v8* M, const v8* zM, 
         }
     }
     if (spec && !g53_rng_ok(&R)) return 0;
+    if (spec == 2 && __builtin_expect(s53_v4_rej != 0, 0) && g53_rej_hit()) return 0;
     s[0] = c->F01; s[1] = F23; s[2] = F45; s[3] = F67;
     o->F01 = P[0]; o->P23 = P[1]; o->P45 = P[2]; o->P67 = P[3];
     o->R23 = G53_ROT12(V[1]); o->R45 = G53_ROT12(V[2]); o->R67 = G53_ROT12(V[3]);
@@ -276,7 +300,7 @@ static void g53_pk(spu_context* ctx)
     uint32_t a38 = g[38]._u32[0];
     for (uint32_t i = 0; i + 1 < n; i++) {
         g53_carry o; v8 s[4];
-        if (!spec || !g53_iter(ls, a38, M, zM, &c, &o, s, 1)) {
+        if (!spec || !(t53_v4 ? g53_iter(ls, a38, M, zM, &c, &o, s, 2) : g53_iter(ls, a38, M, zM, &c, &o, s, 1))) {
             if (spec) s53_redo++;
             g53_iter(ls, a38, M, zM, &c, &o, s, 0);
         }
@@ -398,6 +422,73 @@ static void g53_selftest(void)
                     "kept)\n", bad, slow, bad_it, iters, kept);
 }
 
+/* v4 needs the mode its rule is stated for (round toward zero, FTZ, DAZ on this thread), else v3 for the call */
+static inline int g53_v4_pick(void)
+{
+    int v4 = s53_v4;
+    if (v4 == 3) { s53_alt_rng ^= s53_alt_rng << 13; s53_alt_rng ^= s53_alt_rng >> 17; s53_alt_rng ^= s53_alt_rng << 5; v4 = (int)(s53_alt_rng & 1u); }
+    if (v4 && (g_gow_edge_v4_hold || (_mm_getcsr() & 0xE040u) != 0xE040u)) v4 = 0;
+    t53_v4 = v4;
+    return v4;
+}
+/* self-test of the v4 ops (once, at mode init, on the calling SPU thread): whenever the range test keeps an op,
+ * all eight lanes must be the 4-lane helper's bits; a failure switches v4 off */
+static uint32_t s53_st_rng = 0x2545F491u;
+static uint32_t g53_st_rand(void) { s53_st_rng ^= s53_st_rng << 13; s53_st_rng ^= s53_st_rng >> 17; s53_st_rng ^= s53_st_rng << 5; return s53_st_rng; }
+static uint32_t g53_st_edge(int cls)
+{
+    const uint32_t r = g53_st_rand(), sign = r & 0x80000000u;
+    switch (cls) {
+    case 0: return r;
+    case 1: return sign | (r & 0x007FFFFFu);
+    case 2: return sign;
+    case 3: return sign | 0x7F800000u | (r & 0x007FFFFFu);
+    case 4: return sign | 0x7F000000u | (r & 0x007FFFFFu);
+    case 5: return sign | ((1u + (r >> 8) % 40u) << 23);
+    case 6: return sign | ((1u + (r >> 8) % 40u) << 23) | (r & 7u);
+    case 7: return sign | ((100u + (r >> 8) % 56u) << 23) | (r & 0x007FFFFFu);
+    default: return sign | ((215u + (r >> 8) % 40u) << 23) | (r & 0x007FFFFFu);
+    }
+}
+static long g53_selftest_v4(void)
+{
+    long bad = 0, kept = 0, tried = 0;
+    const v8 Z = _mm256_setzero_si256();
+    for (int it = 0; it < 60000; it++) {
+        u128 a[2], b[2], c[2];
+        const int ca = it % 9, cb = (it / 9) % 9, cc = (it / 81) % 9;
+        for (int h = 0; h < 2; h++)
+            for (int i = 0; i < 4; i++) { a[h]._u32[i] = g53_st_edge(ca); b[h]._u32[i] = g53_st_edge(cb); c[h]._u32[i] = g53_st_edge(cc); }
+        if ((it & 31) == 6)
+            for (int h = 0; h < 2; h++) { const u128 pr = spu_fm(a[h], b[h]); for (int i = 0; i < 4; i++) c[h]._u32[i] = pr._u32[i] ^ 0x80000000u; }
+        const v8 A = g53_v8(a[0], a[1]), B = g53_v8(b[0], b[1]), C = g53_v8(c[0], c[1]);
+        for (int op = 0; op < 2; op++) {
+            g53_rng R; R.mn = _mm256_set1_epi32(-1); R.mx = _mm256_setzero_si256();
+            v8 z;
+            const v8 r = op == 0 ? g53_xfm(2, &R, A, Z, B, Z, &z) : g53_xfma(2, &R, A, Z, B, Z, C, Z, &z);
+            tried++;
+            if (!g53_rng_ok(&R)) continue;
+            kept++;
+            for (int h = 0; h < 2; h++) {
+                const u128 e = op == 0 ? spu_fm(a[h], b[h]) : spu_fma(a[h], b[h], c[h]);
+                const u128 gg = h ? g53_hi(r) : g53_lo(r);
+                bad += memcmp(&e, &gg, 16) != 0;
+            }
+        }
+    }
+    fprintf(stderr, "[edge-f538] self-test of the v4 ops against the 4-lane helpers (MXCSR %04X): %ld of %ld kept ops differ (%ld tried)\n",
+            _mm_getcsr() & 0xFFC0u, bad, kept, tried);
+    return bad;
+}
+static void g53_alt_report(void)
+{
+    static const char* nm[2] = { "v3", "v4" };
+    for (int m = 0; m < 2; m++)
+        if (s53_alt_calls[m])
+            fprintf(stderr, "[edge-f538-alt] %s: %ld calls; ticks per call %.1f\n", nm[m], s53_alt_calls[m],
+                    (double)s53_alt_cyc[m] / (double)s53_alt_calls[m]);
+}
+
 /* ---- entry points the lift calls ---------------------------------------------------- */
 static int s53_mode = -1;
 
@@ -409,6 +500,16 @@ int gow_edge_f538_mode(void)
         if (m < 0 || m > 4) m = 1;
         const char* v = getenv("GOW_EDGE_F538_V2");
         s53_v2 = v && atoi(v) == 1;
+        { const char* v4 = getenv("GOW_EDGE_F538_V4"); s53_v4 = v4 ? atoi(v4) : 0; if (s53_v4 != 1 && s53_v4 != 3) s53_v4 = 0; }
+        { const char* rj = getenv("GOW_EDGE_F538_V4_REJECT"); s53_v4_rej = rj ? atoi(rj) : 0; if (s53_v4_rej < 0) s53_v4_rej = 0; }
+#if !(defined(SPU_FP_DAZ) && SPU_FP_DAZ)
+        s53_v4 = 0;   /* the v4 rule is the runtime's SPU_FP_DAZ rule */
+#endif
+        if (m && s53_v4) {
+            fprintf(stderr, "[edge-f538] GOW_EDGE_F538_V4=%d (speculative iterations on the DAZ rule)\n", s53_v4);
+            if (g53_selftest_v4() != 0) { fprintf(stderr, "[edge-f538] the v4 self-test FAILED on this host: GOW_EDGE_F538_V4 ignored (v3)\n"); s53_v4 = 0; }
+            if (s53_v4) atexit(g53_alt_report);
+        }
         s53_mode = m;
         if (!m) fprintf(stderr, "[edge-f538] GOW_EDGE_F538=0 (lifted loop)\n");
         else {
@@ -444,7 +545,8 @@ static void g53_fault(spu_context* ctx)
 static void g53_run(spu_context* ctx)
 {
     if (s53_mode == 2 || s53_mode == 4) g53_v1(ctx);
-    else                                g53_pk(ctx);
+    else { const int v4 = g53_v4_pick(); const uint64_t t0 = __rdtsc(); g53_pk(ctx);
+           s53_alt_cyc[v4] += __rdtsc() - t0; s53_alt_calls[v4]++; }
     if (__builtin_expect(s53_fault != 0, 0)) g53_fault(ctx);
 }
 
@@ -528,5 +630,5 @@ void gow_edge_f538_check_end(spu_context* ctx)
         s53_bad++;
         fprintf(stderr, "[edge-f538-check] call %ld: %d GPRs and %ld LS bytes differ\n", call, bad, nls);
     }
-    if ((call & 4095) == 4095) g53_check_report();   /* a game run ends by kill: atexit never runs */
+    if ((call & 4095) == 4095) { g53_check_report(); if (s53_v4) g53_alt_report(); }   /* a game run ends by kill: atexit never runs */
 }

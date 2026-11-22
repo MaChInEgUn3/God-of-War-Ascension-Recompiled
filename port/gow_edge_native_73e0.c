@@ -27,6 +27,8 @@
 #include <immintrin.h>
 #include "spu_context.h"
 #include "spu_helpers.h"
+/* GOW_AB=v4 (main.cpp) and GOW_EDGE_V4_HOLD=1: while this is 1 every stage's v4 rule is held off (v3 runs) */
+extern int g_gow_edge_v4_hold;
 
 /* ---- LS access: big-endian words, 16-byte aligned, wrapped to the 256 KB store (as
  * spu_ls_read128/write128 do). One byte shuffle swaps the four words. */
@@ -907,7 +909,7 @@ static void g73_v23(spu_context* ctx, int v3)
      * them for SPU threads); anything else runs v3 */
     RK.v4 = s73_v4;
     if (RK.v4 == 3) { s73_alt_rng ^= s73_alt_rng << 13; s73_alt_rng ^= s73_alt_rng >> 17; s73_alt_rng ^= s73_alt_rng << 5; RK.v4 = (int)(s73_alt_rng % 3u); }
-    if (RK.v4 && (_mm_getcsr() & 0xE040u) != 0xE040u) RK.v4 = 0;
+    if (RK.v4 && (g_gow_edge_v4_hold || (_mm_getcsr() & 0xE040u) != 0xE040u)) RK.v4 = 0;
     s73_alt_calls[RK.v4]++;
     do {
         GOW_73_S79B0()
@@ -1082,7 +1084,7 @@ int gow_edge_73e0_mode(void)
                 fprintf(stderr, "[edge-73e0] the v4 self-test FAILED on this host: GOW_EDGE_73E0_V4 ignored (v3)\n");
                 s73_v4 = 0;
             }
-            if (s73_v4 == 3) atexit(g73_alt_report);
+            if (s73_v4) atexit(g73_alt_report);
         }
     }
     return s73_mode;
@@ -1214,5 +1216,5 @@ void gow_edge_73e0_check_end(spu_context* ctx)
         s73_bad++;
         fprintf(stderr, "[edge-73e0-check] call %ld: %d GPRs and %ld LS bytes differ\n", call, bad, nls);
     }
-    if ((call & 4095) == 4095) { g73_check_report(); if (s73_v4 == 3) g73_alt_report(); }   /* a game run ends by kill: atexit never runs */
+    if ((call & 4095) == 4095) { g73_check_report(); if (s73_v4) g73_alt_report(); }   /* a game run ends by kill: atexit never runs */
 }

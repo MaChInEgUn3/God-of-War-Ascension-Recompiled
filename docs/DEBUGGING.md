@@ -374,6 +374,14 @@ Lessons that cost days; keep them.
   destroys came back at the present (STATUS, 2026-11-14). The `[vk-slow]` lines of `VK_SLOW_MS` are a
   thresholded sample; their counts do not compare between runs. Batch size is `VK_DRAW_BATCH_MAX` (default
   128 with `VK_ASYNC`, 512 without).
+* **A lever's figure in a scripted scene** (2026-11-22): the window sequence is fixed, so in a scene driven by a
+  timed script the on and off windows do not hold the same content: five fight runs with no lever read +6.7, +2.2,
+  +2.3, +0.2 and +0.1% by plain means, the first with 5.2% fewer draws a frame in its on windows.
+  `python analysis/abfit.py [maxw=<n>] <log>...` fits log fps on the lever and log draws per window and prints the
+  lever's effect at equal draws beside the plain one (those five runs: +0.8% +- 0.7 pooled). Validate it on null
+  runs of the scene first; `maxw=370` leaves out the windows after the bench stops its input. Whole runs cannot be
+  compared at all in that fight: three runs of one build on the same settings read 16.0, 21.7 and 26.6 frames a
+  second (at 1,601, 1,288 and 1,194 draws a frame).
 * **Before probing a scene, test it with no lever** (`GOW_AB=none,1,<start>`, then `analysis/abnull.py <log>`):
   it prints the autocorrelation of frames per window and the on/off difference a pattern reports with nothing
   switched. A scene with a cycle of its own aliases with a periodic pattern: the parked first fight reported
@@ -707,6 +715,16 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   v3 / v4a / v4b at random per region entry and prints ticks per iteration for each (`[edge-73e0-alt]`, at exit
   and with the check report), the way to time them on a busy host; `GOW_EDGE_73E0_V4_REJECT=N` redoes every Nth
   kept v4 iteration exactly (to exercise that path under check mode).
+  The other module stages have the same option (2026-11-22): `GOW_EDGE_V4=1` (E550), `GOW_EDGE_F538_V4=1`,
+  `GOW_EDGE_D640_V4=1`, `GOW_EDGE_A880_V4=1`, `GOW_EDGE_6AC8_V4=1` (`=3`: the rule drawn per call, `..._V4_REJECT=N`),
+  each with its own self-test line and MXCSR guard. With any v4 option set a stage prints `[edge-<stage>-alt]
+  v3|v4: N calls; ticks per call` at exit and with its check report: read it to see which rule the calls really
+  took (the check lines do not say). `GOW_EDGE_V4_HOLD=1` holds every stage's v4 (v3 runs) from the start;
+  `GOW_AB=v4,<window s>,<start s>` flips that hold in a running game (on = the options as set). Several check
+  modes may run at once (each compares its own region); on the fight save a check mode on E550, f538, d640,
+  a880 or 6ac8 slows the arena's opening shot and the scene then stays there, so check those stages on a job
+  capture of the fight instead (`SPU_JOB_CAPTURE` with `SPU_JOB_CAPTURE_T0` past the fight's start and
+  `SPU_JOB_CAPTURE_EVERY`, lab exe, then `SPU_JOB_REPLAY` with the check modes).
   D640's two loops (`loc_D92C` triangle culling in D640, `loc_D4DC` vertex transform in D250,
   `port/gow_edge_native_d640.c`) share `GOW_EDGE_D640`: 0 = lifted, unset/1 = native v3 (`GOW_EDGE_D640_V2=1`: v2),
   2 = v1, 3/4 = check (`[edge-d640-check] D92C: N calls checked, M differ` and the same for D4DC);
