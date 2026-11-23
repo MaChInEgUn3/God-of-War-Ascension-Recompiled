@@ -771,10 +771,33 @@ so far came from the menu, the first level and its corridor. The scenes after it
         1 of 18. Unresolved.
       * What is established: it is a state of the game's own logic on running threads, and it depends on
         timing between threads: with a timing disturbance (a 2 ms sampler on the main thread, or a function
-        trace on the audio driver) 0 of 11 runs stuck, without one 8 of 21 on the same settings. In the traced
-        runs the title's second file scheduler handles a request around 149-161 s in all eight good runs and
-        none in the one traced stuck run. What happens before that (from the level's start to the trigger) is
-        the next thing to trace.
+        trace on the audio driver) 0 of 11 runs stuck, without one 8 of 21 on the same settings. (A note that stood
+        here, that the title's second file scheduler handles a request before the trigger in good runs only,
+        did not hold in six new traces: next point.)
+      * Work of 2026-11-23 (the fight save, the stick held forward from 150 s; an in-run slow-down of the EDGE
+        lists, `SPU_SLOW_PCT=300 SPU_SLOW_WIDS=15,16,17`, four times their time; one-second draw counts).
+        What a run shows: 4-5 s into the walk the draws fall from about 2,400 to about 1,900 a frame. A good run
+        shows the arena within the next second (2,800-3,350 draws at 8-10 fps for 4-5 s, the wide shot), the
+        log's unmap lines about 2 s after that, then the cinematic. A stuck run never shows the arena: 1,300-1,600
+        draws in that second, the unmap lines a second later, the 720-draw view for good. So the outcome is
+        decided about 2 s before the unmap lines, while Kratos is still walking, and the stuck view is a state
+        in which the old area is gone and the arena never appears, not the cinematic's first shot.
+        Counts: slowed from the start and walking in, 32 runs of 32 stuck (most with the EDGE lists slowed, some
+        with other job lists or the RSX walker slowed instead; among them the walk at half stick 3 of 3, a walk
+        begun 65 s later 3 of 3, with the timeline tracer on 3 of 3). By window: slowed only at 140-150 s
+        (before the walk) 0 of 3; only at 150-170 s 3 of 3; at 140-170 s 4 of 4, and the state stays when the speed returns; only after 170 s 0 of
+        4; only before 140 s 1 of 4, the usual rate. One slowed run did pass (1 of 3 in an arm where Kratos
+        arrived late, after attack presses), so slow frames do not make a pass impossible.
+        Ideas measured and dropped: button presses (slowed with no press at all 4 of 4 stuck; CROSS every second
+        across the transition 3 of 4 passed); the step per frame (the half-stick walk takes 110-112 frames from
+        the stick to the unmap lines against 76-87 at full speed unslowed, and still stuck); the time of
+        arrival; the file I/O (three stuck and three good timeline traces: no thread and system call appears in
+        one group only, and the media threads' reads have the same shape in both, a burst of 800-1,050 reads
+        around the unmap lines). So it is decided in the title's own logic on the main thread during the walk,
+        slow frames in that stretch make the stuck outcome certain, and the cause is still not known. The next
+        tool is in the tree: `PPU_COV` (DEBUGGING) lists the guest functions a run entered in a time window,
+        to set a good run against a stuck one; the first dumps exist and are not read to a conclusion yet.
+        Whether the faster EDGE stages change the rate stays unresolved.
     * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
       path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the

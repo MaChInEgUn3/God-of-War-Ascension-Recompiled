@@ -14380,7 +14380,7 @@ index b44816b0..9b3c4a92 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index f54150d9..a9d7065e 100644
+index f54150d9..3e1ad1bf 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -21,10 +21,12 @@
@@ -15523,7 +15523,7 @@ index f54150d9..a9d7065e 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4051,3 +4776,305 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4051,3 +4776,376 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -15560,7 +15560,7 @@ index f54150d9..a9d7065e 100644
 +static struct PpuTraceLiveInit {
 +    PpuTraceLiveInit() {
 +        if (getenv("PPU_DESC_CHECK") || getenv("PPU_DELAY_FN") || getenv("PPU_TRACE_DUMP") ||
-+            getenv("PPU_TRACE_DUMP2") || getenv("PPU_FRAME_FUNCS")) return;
++            getenv("PPU_TRACE_DUMP2") || getenv("PPU_FRAME_FUNCS") || getenv("PPU_COV")) return;
 +        const char* m = getenv("PPU_TRACE_MAX");
 +        if ((m ? atol(m) : 4000) <= 0) { ppu_trace_live = 0; return; }
 +        const char* e = getenv("PPU_TRACE_ADDRS");
@@ -15624,7 +15624,7 @@ index f54150d9..a9d7065e 100644
 +        return;
 +    if (s_extras < 0)
 +        s_extras = (getenv("PPU_DESC_CHECK") || getenv("PPU_DELAY_FN") || getenv("PPU_TRACE_DUMP") ||
-+                    getenv("PPU_TRACE_DUMP2") || getenv("PPU_FRAME_FUNCS")) ? 1 : 0;
++                    getenv("PPU_TRACE_DUMP2") || getenv("PPU_FRAME_FUNCS") || getenv("PPU_COV")) ? 1 : 0;
 +    /* PPU_FRAME_FUNCS=<hex ea of a guest frame counter>: per value of that counter, how often each guest
 +     * function was entered (all threads). When the port calls ppu_frame_funcs_mark() during a frame it wants
 +     * explained, the tracer prints at the next change of the counter what that frame entered and the frame
@@ -15718,6 +15718,77 @@ index f54150d9..a9d7065e 100644
 +        }
 +        uint16_t* c = s_ff_cnt[0] + (addr >> 2);
 +        if (*c != 0xFFFF) (*c)++;
++    }
++    /* PPU_COV=<from s>:<to s>:<path>: which guest functions were entered in a time window, for a set
++     * difference between two runs (one that reaches a state against one that does not: the functions
++     * entered in one and never in the other, and when each first ran). Seconds count from the first traced
++     * entry (the guest's start). When the window closes, one text line per function entered in it:
++     * "<addr> <entries> <entries on thread 1> <mask of thread ids, bit 31 = id 31 and above> <first ms>
++     * <last ms>" (ms from the window's start). "[ppu-cov]" lines on stderr mark the opening and the dump,
++     * which places the window on the log's own clock. Needs a PPU_TRACE_FUNCS=all lift. The hook stays live
++     * for the whole run (a few percent of a busy guest thread), which shifts thread timing; the counts are
++     * not atomic (a diagnostic). Nothing is written if the run ends before the window closes. */
++    { static int s_cov = -1;                    /* -1 unread, 0 off, 1 waiting, 2 open, 3 dumped */
++      static uint32_t s_cov_from, s_cov_to, s_cov_ms, s_cov_tick;
++      static uint32_t *s_cov_n, *s_cov_n1, *s_cov_tids, *s_cov_first, *s_cov_last;
++      static char s_cov_path[512];
++      static std::chrono::steady_clock::time_point s_cov_t0;
++      static std::mutex s_cov_mx;
++      if (s_cov < 0) {
++          std::lock_guard<std::mutex> lk(s_cov_mx);
++          if (s_cov < 0) {
++              const char* e = getenv("PPU_COV"); double a = 0, b = 0; int ok = 0;
++              if (e && sscanf(e, "%lf:%lf:%511[^\n]", &a, &b, s_cov_path) == 3 && a >= 0 && b > a) {
++                  s_cov_from = (uint32_t)(a * 1000.0); s_cov_to = (uint32_t)(b * 1000.0);
++                  s_cov_n = (uint32_t*)calloc(0x200000, 4); s_cov_n1 = (uint32_t*)calloc(0x200000, 4);
++                  s_cov_tids = (uint32_t*)calloc(0x200000, 4);
++                  s_cov_first = (uint32_t*)calloc(0x200000, 4); s_cov_last = (uint32_t*)calloc(0x200000, 4);
++                  ok = s_cov_n && s_cov_n1 && s_cov_tids && s_cov_first && s_cov_last;
++                  s_cov_t0 = std::chrono::steady_clock::now();
++                  fprintf(stderr, "[ppu-cov] %s: window %u..%u ms from now, to %s\n",
++                          ok ? "armed" : "no memory", s_cov_from, s_cov_to, s_cov_path);
++              } else if (e) fprintf(stderr, "[ppu-cov] PPU_COV wants <from s>:<to s>:<path>\n");
++              s_cov = ok ? 1 : 0;
++          }
++      }
++      if (s_cov == 1 || s_cov == 2) {
++          if ((++s_cov_tick & 0xFF) == 0) {
++              const uint32_t ms = (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(
++                  std::chrono::steady_clock::now() - s_cov_t0).count();
++              s_cov_ms = ms;
++              if (s_cov == 1 && ms >= s_cov_from) {
++                  std::lock_guard<std::mutex> lk(s_cov_mx);
++                  if (s_cov == 1) { s_cov = 2; fprintf(stderr, "[ppu-cov] window open at %u ms\n", ms); }
++              } else if (s_cov == 2 && ms >= s_cov_to) {
++                  std::lock_guard<std::mutex> lk(s_cov_mx);
++                  if (s_cov == 2) {
++                      s_cov = 3;
++                      uint32_t fns = 0;
++                      FILE* f = fopen(s_cov_path, "w");
++                      if (f) {
++                          fprintf(f, "# PPU_COV window %u..%u ms, closed at %u ms\n", s_cov_from, s_cov_to, ms);
++                          for (uint32_t i = 0; i < 0x200000; i++)
++                              if (s_cov_n[i]) { fns++;
++                                  fprintf(f, "%06X %u %u %08X %u %u\n", i << 2, s_cov_n[i], s_cov_n1[i],
++                                          s_cov_tids[i], s_cov_first[i], s_cov_last[i]); }
++                          fclose(f);
++                      }
++                      fprintf(stderr, "[ppu-cov] window closed at %u ms: %u functions %s %s\n", ms, fns,
++                              f ? "written to" : "NOT written, cannot open", s_cov_path);
++                  }
++              }
++          }
++          if (s_cov == 2 && addr < 0x800000) {
++              const uint32_t i = addr >> 2, now_ms = s_cov_ms;
++              const uint32_t rel = now_ms > s_cov_from ? now_ms - s_cov_from : 0;
++              const uint64_t tid = (uint64_t)ctx->thread_id;
++              if (!s_cov_n[i]) s_cov_first[i] = rel;
++              s_cov_n[i]++;
++              if (tid == 1) s_cov_n1[i]++;
++              s_cov_tids[i] |= 1u << (tid < 31 ? (unsigned)tid : 31u);
++              s_cov_last[i] = rel;
++          }
++      }
 +    }
 +    /* PPU_TRACE_ADDRS=<hex>[-<hex>],... : run-time filter for a build lifted with PPU_TRACE_FUNCS=all.
 +     * Unset = trace every function the lifter instrumented. Code is below 0x800000. */

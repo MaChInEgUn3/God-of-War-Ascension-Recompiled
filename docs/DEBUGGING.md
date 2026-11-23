@@ -722,7 +722,8 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   took (the check lines do not say). `GOW_EDGE_V4_HOLD=1` holds every stage's v4 (v3 runs) from the start;
   `GOW_AB=v4,<window s>,<start s>` flips that hold in a running game (on = the options as set). Several check
   modes may run at once (each compares its own region); on the fight save a check mode on E550, f538, d640,
-  a880 or 6ac8 slows the arena's opening shot and the scene then stays there, so check those stages on a job
+  a880 or 6ac8 slows the walk into the arena and the arena's cinematic then never starts (see "Reproducing
+  the arena state that does not play" below), so check those stages on a job
   capture of the fight instead (`SPU_JOB_CAPTURE` with `SPU_JOB_CAPTURE_T0` past the fight's start and
   `SPU_JOB_CAPTURE_EVERY`, lab exe, then `SPU_JOB_REPLAY` with the check modes).
   D640's two loops (`loc_D92C` triangle culling in D640, `loc_D4DC` vertex transform in D250,
@@ -992,6 +993,33 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   thread (same sp and lr) from a running one. For a state only some runs reach, the same dump from a run that
   got there and one that did not shows whether any thread waits in a different place (for the arena shot that
   does not play: none does).
+* **Which guest functions did a run enter in a time window?** (needs the `all` lift) `PPU_COV=<from s>:<to
+  s>:<path>` records every guest function entered between those seconds (counted from the first traced entry,
+  i.e. the guest's start: 1.3-3.2 s ahead of the `[flip]` clock in GoW:A; the `[ppu-cov] window open at ... ms`
+  and `window closed` lines in the log place it). When the window closes it writes one line per function:
+  address, entries, entries on thread 1, a mask of thread ids (bit 31 = id 31 and above), first and last entry in
+  ms from the window's start. Nothing is written if the run ends first. `python analysis/covdiff.py --a <dumps>
+  --b <dumps> [--main] [--top N]` prints the functions entered in every A run and in no B run, and the reverse,
+  ordered by first entry: for a state only some runs reach, A = the runs that got there, B = the ones that did
+  not. The hook stays live for the whole run (a few percent of the main thread), which shifts thread timing: count
+  the outcomes of such runs separately. Give every run the same window, and one long enough to cover what the
+  other group may only do later (a diff of windows that end at different points of the scene mostly lists that).
+  `PPU_TRACE_ADDRS=<addr,...>` with `PPU_TRACE_MAX` may be set in the same run: its `[FN ...]` lines give each
+  entry's `lr`, the caller that the lifted source does not show for functions reached through a table.
+* **Reproducing the arena state that does not play** (port; STATUS has the counts). On the fight save with the
+  stick held forward from 150 s (`STICK=128,0,128,128,150,175` in the run scripts) slow the EDGE lists while
+  Kratos walks in: `SPU_SLOW_PCT=300 SPU_SLOW_WIDS=15,16,17` from the start (every run so far), or only during the
+  walk with the in-run lever, `GOW_AB="slow,20,150" GOW_AB_PERIODIC=1 GOW_AB_SLOW=300` (3 of 3; the state stays
+  when the speed returns). Slowed only before the walk (`"slow,10,140"`) or only after 170 s it does not stick.
+  `PS3_FTRACE` and `PPU_COV` do not hide it under that slow-down (3 of 3 each); at full speed a tracer changes
+  the rate. Reading a run: `GOW_AB="none,1,140"` prints one `[ab]` line a second from 140 s with the draws; the
+  transition's log markers are six `[cellGcmSys] UnmapIoAddress` lines (the first with `io=0x07100000`) and then
+  `MapMainMemory(ea=0x88200000, ...)` and `MapMainMemory(ea=0x88A00000, ...)`. About 4-5 s into the walk the draws
+  fall from about 2,400 to about 1,900 a frame; a good run shows the arena in the next second (2,800-3,350 draws
+  at 8-10 fps for 4-5 s), the unmap lines about 2 s later, the second map line about 3 s after those, then 250-360
+  draws for about 23 s (the cinematic) and the fight; a stuck run goes 1,900 -> 1,300-1,600 -> about 780, the
+  unmap lines a second later and the map lines within 2 s, then 690-770 draws for good. A bench figure for the
+  fight is only taken from a run whose draws show the fight.
 * **Where is the main thread when flips stop?** `GOW_CLOCK_WATCH=<s>` prints three `[GSTACK:stall-main]` guest stacks
   (`ppu_dump_thread_stack(1, ...)`); identical sp/lr = blocked. This beat a day of reasoning about pipeline cycles.
 * **SPURS tasksets**: `SPU_TS_COMMITLOG=<taskset ea>` logs the bitsets at each SPU commit to that taskset's header line
