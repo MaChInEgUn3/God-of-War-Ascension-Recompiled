@@ -902,9 +902,11 @@ so far came from the menu, the first level and its corridor. The scenes after it
           that thread has at least 3 ms of slack at the flip, and none of its waits in the gcm layer
           (about 4.5 ms a frame together) shrank with the lever on;
         - a fourth EDGE lane: +5.0 +- 1.0 (one run, no held-on control: not a figure);
-        - the load control (`burn`: 500 ms a second of spinning on one spare thread, slowing nothing):
-          -1.3 +- 1.0 and -2.3 +- 1.4 (two runs).
-        The slow-down lever busy-waits on the SPU kernel thread, so part of its effect is the load itself:
+        - the spin control (`burn`: 500 ms a second of busy-wait on one spare thread, slowing nothing):
+          -1.3 +- 1.0 and -2.3 +- 1.4 (two runs). It waits the way the levers do (a loop on the
+          processor's pause instruction), so it is the control for the levers' own spin and not a measure
+          of what a thread of real work costs (the load test below).
+        The slow-down lever busy-waits on the SPU kernel thread, so part of its effect is that spin:
         net of the control the EDGE lists cost about 8% and the other workloads about 3.5% (the control
         spins one spare thread, the lever the lane threads: "about" is all it gives). Per 100 ms a second
         added that is about 2% for EDGE against under 1% for the others: on this scene EDGE job time is
@@ -917,8 +919,25 @@ so far came from the menu, the first level and its corridor. The scenes after it
         four 22%. The EDGE lists are at their cap of three lanes 52.5% of the time (two 32%, one 12-13%).
         SPU job time is about 250 ms a frame of about 51 ms: the EDGE lists about 120 (three lists of 525
         runs of 75 us each), the other workloads about 130 (the largest as much as one EDGE list).
-        Not done: the load control and the group doses in the fight; whether a module run gets slower
-        when more of them run at once; what the idle kernel threads wait for.
+        A module run gets slower when more of them run at once (later the same day, the faster stages
+        on; in-run, three EDGE lanes against fewer): the EDGE lists' time a run is 18.0% +- 1.5 lower
+        with one lane than with three and 6.8% +- 0.7 lower with two (about 54, 61 and 66 us), while
+        frames fall 48.5% and 16.4%. In the traces a run that starts with five others active lasts a
+        median 62 us against 45 with two. A sampler on the EDGE threads finds little of their time in
+        lock or wait symbols.
+        Load from outside does the same: two threads of real compute beside the game (a tight integer
+        loop in two other processes, switched on and off every 10 s) raise the EDGE time a run by 9.4% +-
+        1.0 with one lane and 8.7% +- 1.1 with three in quiet seconds (5.3% and 5.2% over all seconds),
+        and cost 8.8% and 6.8% of the frames. A full thread of the `burn` spin raises it only 1.7% and
+        2.1% (frames 0.0 and -0.8, +- 1.2). So on the test host the module runs slow down with the
+        compute load on the machine, the game's own included. The outside load prices a thread at about
+        two thirds of what one more lane costs, so the cause of the lane effect is not fully identified,
+        and which resource the threads share is not shown. With three lanes the game keeps about seven
+        threads busy (six SPU kernel threads at 84-88% of a processor each, the draw walker's thread near
+        80%, the main thread near 57%).
+        Not done: the load test and the group doses in the fight; whether processor time removed inside
+        the game buys what the outside load costs; what the idle kernel threads wait for (their recorded
+        waits are all the kernel's idle wait, about 1.5 ms each).
     * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
       path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the

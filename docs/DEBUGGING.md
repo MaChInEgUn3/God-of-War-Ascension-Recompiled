@@ -564,6 +564,11 @@ Lessons that cost days; keep them.
   doubled). Put a `none` run in every chain as the reader's null. `mslow` tests slack at the flip, not pace:
   a null there says the thread had that much slack, and `analysis/abwait.py` shows whether one of its waits
   absorbed it. In a fight the scene changes under the lever: read with `analysis/abfit.py`.
+  `burn` waits on the pause instruction, as the levers do: it is the control for their spin and says little
+  about what a thread of real work beside the game costs (2026-11-23: a full thread of `burn` raised the EDGE
+  time a run by about 2%, two threads of a tight integer loop in other processes by about 9%). For that, run
+  a compute load on a wall-clock schedule (on for 10 s, off for 10 s), print the wall clock before the run,
+  label the `[ab]` windows by it and drop the window on each switch and the second after it.
 
 **In-run A/B** (`GOW_AB=<lever>,<window s>,<start s>`, port `main.cpp`): from `<start s>` the lever is switched window by window in a fixed
 pseudo-random order (the old order on, off, off, on with `GOW_AB_PERIODIC=1`) and each window prints `[ab] lever= w= on= frames= secs=`. Levers: `icall` (`g_ppu_icall_fast`), `dma`
