@@ -826,8 +826,9 @@ so far came from the menu, the first level and its corridor. The scenes after it
         An option that keeps the guest clock on the title's game time: `PS3_CLOCK_STEP_CAP=<ms>[,<from s>]`
         (runtime, default off; DEBUGGING). Under the slow-down, `58,140` passed 4 runs of 4 and `58` from the
         start 2 of 2, the uncapped control on the same build stuck. Unslowed, `58,140` passed 8 of 8, two
-        of them with host frames of 68 and 78 ms mean on that half second, the range that stuck without it
-        (small numbers; the unslowed rate without it is about a quarter). One slowed run had a single 874
+        of them with a host mean of 68 and 78 ms on that half second (without the cap the stuck runs began
+        at 69 ms, and the 78 carries one 163 ms frame; small numbers, and the unslowed rate without it is
+        about a quarter). One slowed run had a single 874
         ms frame in that half second, which the cap lets through, and still launched. The New Game replay
         with the cap from the start ran its 700 s with the same sequence of map and unmap lines as an
         earlier replay, each within 5 s; the cap was rarely active there (1.3% of frames, by ten-flip
@@ -844,6 +845,29 @@ so far came from the menu, the first level and its corridor. The scenes after it
         For performance the target on that half second is a frame time under about 62 ms: it runs at 13-17
         fps there, the margin where about a quarter of plain runs stick. Whether the faster EDGE stages
         change the rate stays unresolved; the readout above (the launch against the end event) can answer it.
+      * The pre-arena scene standing, the same day (the fight save with no input: 2,400-2,480 draws a frame,
+        the scene Kratos walks through to the arena; one-second `[ab]` windows from 145 s, no hook, no
+        tracer). It runs at 18-19 frames a second (52-56 ms) with dips to 11-15 for 5-8 s every 27-30 s.
+        The dips are the test host's, not the game's: their phase follows the wall clock from run to run,
+        every CPU-side cost rises together in them (`us_run` +19%, `us_draw` +29%) with the same draws, and
+        a one-second sampler of the host's CPU shows a burst on the same period in which the whole machine
+        is busy for about a second, with the game closed as well. Frames a second against that burst
+        correlate at -0.65 to -0.77 in five runs, and one-second logs of 2026-11-20 and 11-21 show the same
+        spacing. A burst second runs at 13.7 fps against 18.1, the deepest at 11-13.
+        Levers, read inside quiet seconds only (no burst in the second or the seven before it): the EDGE
+        lists made 20% slower -9.1% +- 1.4 (one run; a stage that paced the frame alone would cost 16.7%,
+        so they carry about half of it); the faster EDGE stages (the six v4 options against held) +6.0% +-
+        1.0 and +6.6% +- 1.4 with `us_run` -7.6% and -8.5% (two runs where the rule asks four); a fourth
+        EDGE lane +4.3% +- 1.3 with `us_run` +4.1% (one run and no held-on control: not a figure) and
+        nothing in burst seconds (-0.3% +- 4.0). Slowing the walker or the flip-requesting thread showed
+        nothing in one run each with 5 s windows, which on this scene resolves nothing under about 8%.
+        What it means for the stuck state: the walk's decisive half second runs at 45-52 ms in a quiet run,
+        and a burst second is about 1.5 times slower at its deepest: 68-78 ms, or 63-73 with the faster
+        stages. So speed-ups of this size narrow the exposure on such a host and do not close it; only the
+        step cap has closed it in tests. Not shown: that the unslowed stuck runs are the ones a burst fell
+        on (in 71 older logs slow seconds at the walk go with sticking, but slow passes exist and some runs
+        are slow for longer than a burst lasts); and the timeline tracer's 0 stuck of 20 is not explained
+        by it.
     * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
       path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the

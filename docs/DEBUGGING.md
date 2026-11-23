@@ -79,7 +79,12 @@ Lessons that cost days; keep them.
 * **Reading an in-run A/B on a host with periodic dips**: run `GOW_AB=<lever>,1,<start s>` (1 s windows) and
   `python analysis/abphase.py <log>...`: on/off frames apart for normal seconds and for seconds inside a dip
   (median of frames over +-4 windows below 16.5), each with its standard error. A 5 s on/off pattern can alias
-  with a dip that comes every ~30 s. `python analysis/ftbins.py <ftrace> [bin s]` bins a `PS3_FTRACE` file by time:
+  with a dip that comes every ~30 s. On the test host those dips are a machine-wide CPU burst every 27-30 s
+  (STATUS, 2026-11-23), so a host sampler run alongside (one line a second: the wall clock and the host's CPU
+  use) labels the seconds directly: fit the lag between the log's flip clock and the wall clock per run by the
+  most negative correlation of frames a second with the burst, then compare on and off inside quiet seconds
+  (no burst in the second or the seven before it); the slow tail of a dip lasts longer than the burst.
+  `python analysis/ftbins.py <ftrace> [bin s]` bins a `PS3_FTRACE` file by time:
   flips per bin, the (thread, kind) rows whose milliseconds per bin vary most, and the longest spans.
 * **Who calls through a table of handlers**: `PPU_ICALL_TABLE_LOG=<ea>,<lo>,<hi>` reads the struct pointer at
   guest address `<ea>` (with `PPU_ICALL_TABLE_DIRECT=1`, `<ea>` is the struct itself), prints the function
