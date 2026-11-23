@@ -886,6 +886,11 @@ int main(int argc, char** argv)
      * inside GoW:A's FIFO (JUMP chains waiting for a patch); the "circling"
      * resync to `put` threw the rest of the frame away and the game froze. */
     if (!getenv("GCM_FIFO_CIRCLE_PASSES")) _putenv_s("GCM_FIFO_CIRCLE_PASSES", "0");
+    /* GCM_FLIP_SLACK=0: GoW:A steps fixed-size blocks through its command ring, so with the
+     * toolkit's margin a share of its flips had `current` inside the margin and took the
+     * immediate path (presented before the drain reached the frame's tail). With margin 0
+     * no flip is refused on the bench scenes. */
+    if (!getenv("GCM_FLIP_SLACK")) _putenv_s("GCM_FLIP_SLACK", "0");
     /* VK_TEX_OFF=1 until guest shaders exist (glslang missing): the Vulkan
      * backend decodes the whole mip chain on the CPU at every BEGIN that has a
      * dirty texture unit, and GoW:A re-sends its texture state per draw, so one

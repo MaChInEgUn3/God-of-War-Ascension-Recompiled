@@ -1277,3 +1277,28 @@ Status: design, started 2026-10-24. Progress log at the end.
     shot (STATUS.md): of the plain runs of this day, 3 of 5 stuck with v4 active before the fight and 1 of 8
     with it held or absent, against 27 of 103 before; too few to say. No default changes before that is
     answered.
+- 2026-11-22, later: a PGO build with both rules in its profile. It is what the play script's v4 switch
+  selects; the play build in use and every default stay as they were.
+  - **Profile.** Retrained on the three usual scenes (corridor, still view, New Game replay) with every v4
+    option set and the lever flipping in 2 s windows from 60 s, so the old and the new rule both ran in each
+    training run (152 / 161, 142 / 142 and 153 / 162 windows on / off). The profile does not show the rules
+    apart: their operations are inlined into the stages' loop functions. The use build matches the profile in
+    every module (426 lifted SPU modules, 0 mismatched functions).
+  - **Check modes on that exe**, every v4 option on, no check line with a differing call, every by-rule line
+    v4: lighting stage in the fight proper `[edge-73e0-check] 1974273 calls checked, 0 differ`; all six at
+    once over the corridor (`[edge-check] 1351681`, `[edge-73e0-check] 335872`, `[edge-f538-check] 1208320`,
+    `[edge-d640-check] D92C: 389130` and `D4DC: 389120`, `[edge-a880-check] 446464`, `[edge-6ac8-check]
+    307201`) and over the New Game replay (1732609, 360448, 1777665, 462908 and 462849, 552960, 356352).
+  - **The lever on that exe** (v4 against v3 in one run, `analysis/abfit.py maxw=370`): corridor +8.3% +- 0.5
+    and +8.2% +- 0.7 (19.2 against 17.8 and 18.1 against 16.8 frames a second), checkpoint +4.8% +- 0.6 (22.8
+    against 21.7; the non-PGO build read +0.2% +- 1.7 there), fight +7.8, +5.2, +5.9 and +4.1: pooled +6.2% +-
+    0.7. The EDGE lists' time per run is about 10% lower with v4 on, as before.
+  - **Against the play build in use**, whole runs with no v4 option, three alternating pairs a scene of 400 s:
+    corridor +0.4% (se 4.5), checkpoint +5.1% (se 7.4): no figure. One build's corridor runs ranged 14.3 to
+    16.7 frames a second that evening with the EDGE lists' time per run moving in step (74 to 87 us): the
+    machine's speed moved from run to run by more than any difference between the builds could be. So the
+    build in use stays the default until a comparison that can resolve is found.
+  - **Stuck shot, counted again:** twelve short fight runs, six with v4 active from the start and six with it
+    held: none stuck in either arm, which says nothing about a difference. The day's plain runs: 3 of 11
+    stuck with v4 active before the fight, 1 of 18 with it held or absent. Still open.
+  - **Not done on that exe:** the check modes with the v4 options off (v3 is what a default swap would run).

@@ -766,6 +766,9 @@ so far came from the menu, the first level and its corridor. The scenes after it
         fight runs, 3 of 5 stuck with the faster EDGE stages active before the fight and 1 of 8 with them held
         or absent (27 of 103 before): too few to tell, and it has to be answered before those stages become a
         default.
+        A direct count that evening (six short runs with them active from the start, six with them held)
+        had no stuck run in either arm; with those and four more held runs the day stands at 3 of 11 against
+        1 of 18. Unresolved.
       * What is established: it is a state of the game's own logic on running threads, and it depends on
         timing between threads: with a timing disturbance (a 2 ms sampler on the main thread, or a function
         trace on the audio driver) 0 of 11 runs stuck, without one 8 of 21 on the same settings. In the traced
@@ -901,6 +904,16 @@ so far came from the menu, the first level and its corridor. The scenes after it
         and +0.2% +- 1.7 at the checkpoint; the EDGE lists' time per run is 8 to 12% lower everywhere. Not
         done: the play build (its profile has to be trained with the options on) and the question below.
         Details in EDGE_NATIVE.md.
+      * A PGO build for them (2026-11-22, later; not the default). Its profile was trained with the lever
+        flipping between the old and the new rule, so both are compiled warm. On that build the six checks
+        again found 0 differing calls (lighting stage in the fight proper, all six over the corridor and the
+        New Game replay), and the new rule is worth +8.2% +- 0.4 in the corridor (19.2 against 17.8 frames a
+        second), +6.2% +- 0.7 in the fight and +4.8% +- 0.6 at the checkpoint, measured inside one run. It
+        is offered through the play script's switch (`PLAY_V4=1`), which runs that build with the six
+        options. It does not replace the play build yet: three whole-run pairs a scene against the build in
+        use read +0.4% (se 4.5) and +5.1% (se 7.4), because the machine's own speed moved by up to 9% from
+        one run to the next that evening, and the old rule has not been run under the check modes on the new
+        build. The port also sets `GCM_FLIP_SLACK=0` itself now.
       * The same play build makes three lanes for RenderJobs the default (`SPURS_LANES` ends in `;13=3`).
   * Where the frame goes now (2026-11-20; traces of single runs, rankings rather than figures):
     * Cores are not the bound: a spare thread spinning 0.83 of a core in alternating 1 s windows of the bench
