@@ -1009,6 +1009,16 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   `PPU_TRACE_CHAIN=<n>` adds, after the first n `[FN]` lines of each traced function (up to 64 functions), a
   `[FN <addr>]   chain:` line with the return addresses the callers saved, innermost first: the whole call
   path, where `lr` alone stops one level up.
+* **Does a behaviour follow the title's time step?** (test instruments, default off) `PS3_CLOCK_SCALE=<pct>,<from
+  s>` makes the guest-visible clocks (the timebase, `sys_time_get_system_time`, `sys_time_get_current_time`)
+  advance at pct percent of host time from that second after the first guest clock read, with no jump at the
+  switch (`[clock] PS3_CLOCK_SCALE: switch at ... s` in the log). Sleeps, timeouts and the vblank stay on host
+  time, so it is not a way to play: it holds the host's slowness fixed and changes only the step the title
+  computes from its clock. (port) `GOW_VBLANK_MS=<ms>[,<from s>]` changes the vblank period the same way (the
+  default is 16; with a from-time the menus and the load keep 60 Hz). Check the manipulation in every such run:
+  something the title times (a scripted sequence's events, traced with `PPU_TRACE_ADDRS` on a `PS3_FTRACE`
+  timeline) must stretch by the factor set; if it does not move, that clock is not the one the title steps on
+  and the run says nothing.
 * **Reproducing the arena state that does not play** (port; STATUS has the counts). On the fight save with the
   stick held forward from 150 s (`STICK=128,0,128,128,150,175` in the run scripts) slow the EDGE lists while
   Kratos walks in: `SPU_SLOW_PCT=300 SPU_SLOW_WIDS=15,16,17` from the start (every run so far), or only during the

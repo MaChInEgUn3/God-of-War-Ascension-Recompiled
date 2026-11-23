@@ -16051,7 +16051,7 @@ index b3bc534d..658fb818 100644
          ok = atomic_compare_exchange_strong_explicit(
              atom, &expected, desired,
 diff --git a/runtime/ppu/ppu_sysprx.cpp b/runtime/ppu/ppu_sysprx.cpp
-index 1a393fde..aeb03f50 100644
+index 1a393fde..34b2ed82 100644
 --- a/runtime/ppu/ppu_sysprx.cpp
 +++ b/runtime/ppu/ppu_sysprx.cpp
 @@ -25,6 +25,7 @@
@@ -16062,7 +16062,25 @@ index 1a393fde..aeb03f50 100644
  extern "C" uint32_t vm_read32(uint64_t a);
  extern "C" uint64_t vm_read64(uint64_t a);
  extern "C" void     vm_write32(uint64_t a, uint32_t v);
-@@ -109,7 +110,9 @@ static void sys_process_is_stack(ppu_context* ctx)
+@@ -56,6 +57,8 @@ static void sys_initialize_tls(ppu_context* ctx)
+             block, (uint32_t)ctx->gpr[13], seg_addr, seg_size, mem_size);
+ }
+ 
++extern "C" uint64_t ps3_clock_lag_ns(void);   /* PS3_CLOCK_SCALE (runtime/syscalls/sys_timer.c) */
++
+ /* sys_time_get_system_time() -> microseconds since boot, REAL time.
+  * This was a fake counter advancing 1 ms PER CALL ("so callers see time
+  * progress") -- so any guest clock built on it ran at call-rate, not
+@@ -74,6 +77,8 @@ static void sys_time_get_system_time(ppu_context* ctx)
+     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+     ctx->gpr[3] = (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+ #endif
++    {   const uint64_t lag_us = ps3_clock_lag_ns() / 1000ull;   /* PS3_CLOCK_SCALE (sys_timer.c) */
++        if (lag_us) ctx->gpr[3] = ctx->gpr[3] > lag_us ? ctx->gpr[3] - lag_us : 0; }
+ }
+ 
+ /* sys_process_is_stack(u32 addr) -> 1 if addr is in the stack region. We model
+@@ -109,7 +114,9 @@ static void sys_process_is_stack(ppu_context* ctx)
   * unregistered context (bug); stamp a sentinel that matches no real thread. */
  #define LWM_SELF(ctx) ((uint32_t)(ctx)->thread_id ? (uint32_t)(ctx)->thread_id : 0x7FFFFFFEu)
  
@@ -16073,7 +16091,7 @@ index 1a393fde..aeb03f50 100644
  static void sys_lwmutex_create(ppu_context* ctx)
  {
      uint32_t lwm  = (uint32_t)ctx->gpr[3];
-@@ -125,9 +128,9 @@ static void sys_lwmutex_create(ppu_context* ctx)
+@@ -125,9 +132,9 @@ static void sys_lwmutex_create(ppu_context* ctx)
      vm_write32(lwm + 0x10, 0);          /* sleep_queue */
      vm_write32(lwm + 0x14, 0);
      /* A recreate at a reused address must not inherit a locked slot (e.g. the
@@ -16086,7 +16104,7 @@ index 1a393fde..aeb03f50 100644
      ctx->gpr[3] = 0;
  }
  /* REAL mutual exclusion. The old no-op ("boot is single-threaded") corrupted
-@@ -149,7 +152,7 @@ static void sys_lwmutex_create(ppu_context* ctx)
+@@ -149,7 +156,7 @@ static void sys_lwmutex_create(ppu_context* ctx)
   * we stamp (only the holder ever writes owner=self, so the re-lock check is
   * race-free). Keyed by guest address in an open-addressed table. */
  #define LWM_HASH 65536u
@@ -16095,7 +16113,7 @@ index 1a393fde..aeb03f50 100644
      volatile long holder; volatile long long acq_us; volatile long long acq_fences;
      volatile unsigned long long acq_cpu_us; } g_lwm[LWM_HASH];
  extern "C" { extern volatile long long g_gcm_ref_pub_count;    /* cellGcmSys.c */
-@@ -179,23 +182,24 @@ static struct LwmSlot* lwm_find(uint32_t addr){
+@@ -179,23 +186,24 @@ static struct LwmSlot* lwm_find(uint32_t addr){
          if(cur==0) return nullptr; }
      return nullptr;
  }
@@ -16126,7 +16144,7 @@ index 1a393fde..aeb03f50 100644
              }
              _InterlockedExchange(&g_lwm_tab_lock, 0);
              if (r) return r;
-@@ -204,6 +208,39 @@ static HANDLE lwm_sem(uint32_t addr)
+@@ -204,6 +212,39 @@ static HANDLE lwm_sem(uint32_t addr)
      }
      return nullptr;   /* table full (raise LWM_HASH) */
  }
@@ -16166,7 +16184,7 @@ index 1a393fde..aeb03f50 100644
  /* Contention-probe window flag: 0 by default (prints stay bounded). A title's
   * diagnostic code may set it around a suspect wait to uncap the [LWM-BLOCK]
   * logging during that window only (park hunts: gate on state, not counts). */
-@@ -218,8 +255,8 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -218,8 +259,8 @@ static void sys_lwmutex_lock(ppu_context* ctx)
       * contended lock yields to other threads instead of hard-blocking). We had
       * been ignoring r4 and always waiting INFINITE, which defeats that pattern. */
      uint64_t timeout_us = ctx->gpr[4];
@@ -16177,7 +16195,7 @@ index 1a393fde..aeb03f50 100644
          /* Recursive re-lock by the current holder: bump the count, no wait.
           * Only the holder ever stamps owner=self, so this check is race-free. */
          if (vm_read32(lwm + LWM_OWNER) == self && vm_read32(lwm + LWM_RECUR) > 0) {
-@@ -227,7 +264,7 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -227,7 +268,7 @@ static void sys_lwmutex_lock(ppu_context* ctx)
              ctx->gpr[3] = 0;
              return;
          }
@@ -16186,7 +16204,7 @@ index 1a393fde..aeb03f50 100644
              /* Contended: log who we're stuck behind (owner stamped at acquire),
               * then block. Bounded diagnostics for park hunts; uncapped while the
               * probe window is open (g_nd_inpump). */
-@@ -240,10 +277,7 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -240,10 +281,7 @@ static void sys_lwmutex_lock(ppu_context* ctx)
                  fprintf(stderr, "[LWM-CONVOY] tid=%llu BLOCKs lwm=0x%08X -> held-by-tid=%ld for %lldus (guest-owner=%u)\n",
                      (unsigned long long)ctx->thread_id, lwm, h, held, vm_read32(lwm + LWM_OWNER)); fflush(stderr); }
              long long _blk_start = lwm_trace() ? lwm_now_us() : 0;
@@ -16198,7 +16216,7 @@ index 1a393fde..aeb03f50 100644
                  if (lwm_trace()) fprintf(stderr, "[LWM-CONVOY] tid=%llu TIMED-OUT on lwm=0x%08X after %lldus (ETIMEDOUT, retry)\n",
                      (unsigned long long)ctx->thread_id, lwm, lwm_now_us() - _blk_start);
                  ctx->gpr[3] = (uint64_t)(int64_t)(int32_t)0x8001000Bu;
-@@ -259,18 +293,44 @@ static void sys_lwmutex_lock(ppu_context* ctx)
+@@ -259,18 +297,44 @@ static void sys_lwmutex_lock(ppu_context* ctx)
      vm_write32(lwm + LWM_RECUR, 1);
      ctx->gpr[3] = 0;   // CELL_OK
  }
@@ -16246,7 +16264,7 @@ index 1a393fde..aeb03f50 100644
      }
      if (lwm_trace()) { struct LwmSlot* sl = lwm_find(lwm); if (sl) { sl->holder = (long)self; sl->acq_us = lwm_now_us(); sl->acq_fences = g_gcm_ref_pub_count; sl->acq_cpu_us = ppu_thread_cpu_us(self); } }
      vm_write32(lwm + LWM_OWNER, self);
-@@ -315,11 +375,10 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
+@@ -315,11 +379,10 @@ static void sys_lwmutex_unlock(ppu_context* ctx)
                  fprintf(stderr, "%s\n", b); fflush(stderr);
              }
              sl->holder = 0; } }
@@ -16262,7 +16280,7 @@ index 1a393fde..aeb03f50 100644
      ctx->gpr[3] = 0;
  }
  
-@@ -337,8 +396,17 @@ static void sys_lwcond_create(ppu_context* ctx)
+@@ -337,8 +400,17 @@ static void sys_lwcond_create(ppu_context* ctx)
      static uint32_t s_lwcond_id = 0x4C000000u;
      uint32_t lwcond  = (uint32_t)ctx->gpr[3];
      uint32_t lwmutex = (uint32_t)ctx->gpr[4];
@@ -16281,7 +16299,7 @@ index 1a393fde..aeb03f50 100644
      ctx->gpr[3] = 0;
  }
  static void sys_lwcond_destroy(ppu_context* ctx)    { ctx->gpr[3] = 0; }
-@@ -353,15 +421,15 @@ static void sys_lwcond_wait(ppu_context* ctx)
+@@ -353,15 +425,15 @@ static void sys_lwcond_wait(ppu_context* ctx)
  {
      uint32_t lwcond  = (uint32_t)ctx->gpr[3];
      uint32_t lwmutex = vm_read32(lwcond + 0x00);
@@ -16301,7 +16319,7 @@ index 1a393fde..aeb03f50 100644
          vm_write32(lwmutex + LWM_OWNER, own);
          vm_write32(lwmutex + LWM_RECUR, rc ? rc : 1);
      }
-@@ -897,6 +965,8 @@ extern "C" void ppu_sysprx_register(void)
+@@ -897,6 +969,8 @@ extern "C" void ppu_sysprx_register(void)
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwmutex_lock"),    "sys_lwmutex_lock",    sys_lwmutex_lock);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwmutex_unlock"),  "sys_lwmutex_unlock",  sys_lwmutex_unlock);
      ps3_hle_register_ctx(ps3_compute_nid("sys_lwmutex_trylock"), "sys_lwmutex_trylock", sys_lwmutex_trylock);
@@ -32574,10 +32592,96 @@ index 66eef25c..f109c293 100644
      int slot = -1;
      for (int i = 0; i < SYS_MEMORY_ALLOC_MAX; ++i)
 diff --git a/runtime/syscalls/sys_timer.c b/runtime/syscalls/sys_timer.c
-index 5683446d..18b1fbc2 100644
+index 5683446d..e2a33927 100644
 --- a/runtime/syscalls/sys_timer.c
 +++ b/runtime/syscalls/sys_timer.c
-@@ -238,7 +238,32 @@ int64_t sys_timer_usleep(ppu_context* ctx)
+@@ -9,6 +9,7 @@
+ #include <time.h>
+ #include "sys_event.h"
+ #include "../memory/vm.h"
++#include <stdio.h>
+ #include <stdlib.h>   /* getenv -- an implicit decl returns int, truncating the pointer */
+ #include <string.h>
+ #include <stdlib.h>
+@@ -59,8 +60,53 @@ int lv2_deadline_passed(int64_t deadline)
+  * polled. Overflow-safe split multiply (rem < qpf, so
+  * rem * 79.8e6 < ~8e14 << 2^63).
+  * -----------------------------------------------------------------------*/
++/* PS3_CLOCK_SCALE=<pct>,<from s> (a test instrument, default off): from <from s>
++ * seconds after the first guest clock read, the guest-visible clocks (the
++ * timebase, sys_time_get_system_time, sys_time_get_current_time) advance at
++ * <pct> percent of host time; they stay continuous and monotonic at the switch.
++ * Sleeps, timeouts and the vblank stay on host time, so this answers "does the
++ * title's behaviour follow its time step?" and is not a way to play. Returns how
++ * far the guest clocks lag host time, in ns (0 when off or before the switch). */
++uint64_t ps3_clock_lag_ns(void)
++{
++    static int s_init = 0, s_said = 0;
++    static unsigned s_pct = 100;
++    static uint64_t s_from_ns = 0, s_t0 = 0;
++    if (!s_init) {
++        const char* e = getenv("PS3_CLOCK_SCALE");
++        if (e && *e) {
++            char* p = NULL;
++            long pct = strtol(e, &p, 10);
++            double from = (p && *p == ',') ? atof(p + 1) : 0.0;
++            if (pct >= 1 && pct < 100 && from >= 0.0) {
++                s_from_ns = (uint64_t)(from * 1e9);
++                s_pct = (unsigned)pct;
++                fprintf(stderr, "[clock] PS3_CLOCK_SCALE: guest clocks at %ld%% of host time from %.1f s "
++                                "after the first guest clock read\n", pct, from);
++            } else fprintf(stderr, "[clock] PS3_CLOCK_SCALE wants <pct 1-99>,<from s>\n");
++        }
++        s_init = 1;
++    }
++    if (s_pct >= 100) return 0;
++    uint64_t now;
++#ifdef _WIN32
++    {   LARGE_INTEGER n; ensure_qpc_init(); QueryPerformanceCounter(&n);
++        uint64_t q = (uint64_t)s_qpc_freq.QuadPart, v = (uint64_t)n.QuadPart;
++        now = (v / q) * 1000000000ull + (v % q) * 1000000000ull / q; }
++#else
++    {   struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++        now = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec; }
++#endif
++    if (!s_t0) s_t0 = now;        /* benign race: same anchor either way */
++    const uint64_t el = now - s_t0;
++    if (el <= s_from_ns) return 0;
++    if (!s_said) { s_said = 1; fprintf(stderr, "[clock] PS3_CLOCK_SCALE: switch at %.1f s\n", (double)el / 1e9); }
++    return (el - s_from_ns) * (uint64_t)(100u - s_pct) / 100u;
++}
++
+ uint64_t ppu_timebase_now(void)
+ {
++    uint64_t tb;
+ #ifdef _WIN32
+     static LONGLONG t0 = 0;
+     ensure_qpc_init();
+@@ -69,13 +115,20 @@ uint64_t ppu_timebase_now(void)
+     if (!t0) t0 = now.QuadPart;   /* benign race: same anchor either way */
+     uint64_t d = (uint64_t)(now.QuadPart - t0);
+     uint64_t q = (uint64_t)s_qpc_freq.QuadPart;
+-    return (d / q) * PS3_TIMEBASE_FREQ + (d % q) * PS3_TIMEBASE_FREQ / q;
++    tb = (d / q) * PS3_TIMEBASE_FREQ + (d % q) * PS3_TIMEBASE_FREQ / q;
+ #else
+     struct timespec ts;
+     clock_gettime(CLOCK_MONOTONIC, &ts);
+-    return (uint64_t)ts.tv_sec * PS3_TIMEBASE_FREQ +
+-           (uint64_t)ts.tv_nsec * PS3_TIMEBASE_FREQ / 1000000000ull;
++    tb = (uint64_t)ts.tv_sec * PS3_TIMEBASE_FREQ +
++         (uint64_t)ts.tv_nsec * PS3_TIMEBASE_FREQ / 1000000000ull;
+ #endif
++    {   const uint64_t lag = ps3_clock_lag_ns();
++        if (lag) {
++            const uint64_t lt = (lag / 1000000000ull) * PS3_TIMEBASE_FREQ +
++                                (lag % 1000000000ull) * PS3_TIMEBASE_FREQ / 1000000000ull;
++            tb = tb > lt ? tb - lt : 0;
++        } }
++    return tb;
+ }
+ 
+ static void write_be32(uint32_t addr, uint32_t val)
+@@ -238,7 +291,32 @@ int64_t sys_timer_usleep(ppu_context* ctx)
           * and busy-spins at full speed (so the wait is effectively a no-op).
           * Busy-wait to a precise QPC deadline, yielding inside the spin
           * (SwitchToThread) so a sibling host thread the guest may be waiting on
@@ -32611,6 +32715,34 @@ index 5683446d..18b1fbc2 100644
          ensure_qpc_init();
          LARGE_INTEGER qpc_start, qpc_now;
          QueryPerformanceCounter(&qpc_start);
+@@ -346,6 +424,12 @@ int64_t sys_time_get_current_time(ppu_context* ctx)
+     sec  = (uint64_t)ts.tv_sec;
+     nsec = (uint64_t)ts.tv_nsec;
+ #endif
++    {   const uint64_t lag = ps3_clock_lag_ns();      /* PS3_CLOCK_SCALE */
++        if (lag) {
++            uint64_t total = sec * 1000000000ULL + nsec;
++            total = total > lag ? total - lag : 0;
++            sec = total / 1000000000ULL; nsec = total % 1000000000ULL;
++        } }
+ 
+     if (sec_addr != 0) {
+         write_be64(sec_addr, sec);
+diff --git a/runtime/syscalls/sys_timer.h b/runtime/syscalls/sys_timer.h
+index 7b38fcbb..36492b0e 100644
+--- a/runtime/syscalls/sys_timer.h
++++ b/runtime/syscalls/sys_timer.h
+@@ -32,6 +32,10 @@ extern "C" {
+  * to the PS3 timebase. Called from every lifted mftb site (ppu_lifter.py). */
+ uint64_t ppu_timebase_now(void);
+ 
++/* PS3_CLOCK_SCALE=<pct>,<from s> (a test instrument): how far the guest-visible
++ * clocks lag host time, in ns; 0 when off or before the switch. */
++uint64_t ps3_clock_lag_ns(void);
++
+ #ifdef _WIN32
+ /* Sub-millisecond timed-wait support for the lv2 sync primitives.
+  * SleepConditionVariableCS / WaitForSingleObject floor a timed wait to 1 ms,
 diff --git a/tests/test_gcm_ea2io_range.c b/tests/test_gcm_ea2io_range.c
 new file mode 100644
 index 00000000..151e8568

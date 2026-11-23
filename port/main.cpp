@@ -615,9 +615,15 @@ static DWORD WINAPI frame_clock(LPVOID)
             /* ~60 Hz. GOW_VBLANK_MS=<ms> (diagnostic) changes the vblank period:
              * whether the game logic is paced by vsync shows as a frame rate that
              * scales with it. */
-            { static int s_vb = -1; if (s_vb < 0) { const char* e = getenv("GOW_VBLANK_MS");
-                  s_vb = (e && atoi(e) > 0) ? atoi(e) : 16; }
-              next_tick += (ULONGLONG)s_vb; }
+            /* GOW_VBLANK_MS=<ms>,<from s>: the changed period only from that many seconds
+             * after this loop's first tick (the menus and the load keep 60 Hz). */
+            { static int s_vb = -1; static ULONGLONG s_vb_from = 0, s_vb_t0 = 0;
+              if (s_vb < 0) { const char* e = getenv("GOW_VBLANK_MS");
+                  s_vb = (e && atoi(e) > 0) ? atoi(e) : 16;
+                  const char* c = e ? strchr(e, ',') : nullptr;
+                  s_vb_from = c ? (ULONGLONG)(atof(c + 1) * 1000.0) : 0;
+                  s_vb_t0 = GetTickCount64(); }
+              next_tick += (ULONGLONG)((s_vb_from && now - s_vb_t0 < s_vb_from) ? 16 : s_vb); }
             fired++;
         }
         if (fired >= 240) next_tick = now;   /* fell too far behind -- resync */
