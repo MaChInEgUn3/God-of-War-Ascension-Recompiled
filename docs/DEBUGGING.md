@@ -84,6 +84,10 @@ Lessons that cost days; keep them.
   use) labels the seconds directly: fit the lag between the log's flip clock and the wall clock per run by the
   most negative correlation of frames a second with the burst, then compare on and off inside quiet seconds
   (no burst in the second or the seven before it); the slow tail of a dip lasts longer than the burst.
+  A fit over a wide range of lags can land seconds off in a run with a weak correlation: print the wall clock
+  before each run and anchor the lag on the log file's creation time (the flip clock's zero came 0.4-1.8 s
+  after it in 12 well-fitted runs), then refine inside +-1 s. Fix the classes and the fit before the launch,
+  and when a rule is changed after the tables are seen, report both readings.
   `python analysis/ftbins.py <ftrace> [bin s]` bins a `PS3_FTRACE` file by time:
   flips per bin, the (thread, kind) rows whose milliseconds per bin vary most, and the longest spans.
 * **Who calls through a table of handlers**: `PPU_ICALL_TABLE_LOG=<ea>,<lo>,<hi>` reads the struct pointer at
@@ -629,7 +633,12 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
     are not comparable with the 10.7-11.6 series before it.
 * **Before trusting a timing** (2026-10-28 lessons; the same exe went from 11.4 to 0.6 game frames/s on a busy host):
   - Free space on the work drive: at 7 GB free (the frame dumps had grown to 91 GB) every run was ~25% slower,
-    boot included. The harness now warns under 20 GB; prune old `work/frames/<tag>` dirs.
+    boot included. The harness now warns under 20 GB; prune old `work/frames/<tag>` dirs. On 2026-11-23 the
+    dumps filled the drive during a chain: the logs were cut short while every run still ended normally, and
+    the warning had been hidden all day by the chain's output filter. Keep `WARNING` in any filter over a
+    chain's output, read the free space before each chain, and remove a block's frame folders once it is
+    read. That day the standing level of one scene did not differ between a nearly full and a pruned drive
+    (about 5% resolution, runs 1.5 h apart), so the ~25% above is not a constant; check, do not assume.
   - Host load with the game closed: the processor total should be ~10%. `Get-Process` CPU misses protected and
     system processes; `Win32_PerfFormattedData_PerfProc_Process` and `..._PerfOS_Processor` (privileged time) show
     them. A run-long log of both every 30 s beside each A/B (a PowerShell loop) tells a slow arm from a busy host.

@@ -868,6 +868,26 @@ so far came from the menu, the first level and its corridor. The scenes after it
         on (in 71 older logs slow seconds at the walk go with sticking, but slow passes exist and some runs
         are slow for longer than a burst lasts); and the timeline tracer's 0 stuck of 20 is not explained
         by it.
+      * A count of unslowed walks, the same day, for two questions: do the faster EDGE stages change the
+        stuck rate, and are the stuck runs the ones a host burst fell on? 24 walks into the arena on the
+        fight save (uncapped, no hook, no tracer), alternating the six v4 options on and held, with the host
+        sampler alongside. The classes were fixed before the launch: B = a burst second inside 150.0-156.0
+        s on the flip clock, N = none inside 147.0-156.5 s, edge otherwise. Stuck: 5 of 24.
+        By arm: v4 on 2 of 12, held 3 of 12, and the arms did differ (the EDGE lists' time a run 7-10%
+        lower with v4 on in the standing seconds before the walk). Twelve against twelve resolves only a
+        large difference: nothing is claimed about v4 and the stuck rate, in either direction.
+        By class, with the lag between the two clocks fitted as written before the launch: B 4 stuck of 8,
+        N 0 of 13, edge 1 of 3. With the lag anchored on the log's creation time (adopted after the tables
+        were seen; one run changes class): B 3 of 7, N 1 of 14, edge 1 of 3. So a burst on the walk is not
+        enough to stick the arena (four passes with a burst inside the window). Whether one is needed is
+        not shown: N means no burst of the one sampled process, not a quiet host, and the run that changes
+        class was slow before its walk for a reason not identified (so was one N pass).
+        Sixteen runs and the last eight ran 1.5 h apart: the first chain filled the test disk with the
+        bench script's frame dumps, eight runs lost their logs to it and were repeated after a prune. The
+        standing level before the walk did not differ between the two groups at about 5% resolution; the
+        walk's half second and the stuck rate were not compared across them. The frame dump itself (every
+        300 presents) is not a visible hitch: over 227 dumps the dump's second ran like the two before it
+        (ratio 1.01).
     * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
       path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the
