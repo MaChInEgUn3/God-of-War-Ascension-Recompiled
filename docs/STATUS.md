@@ -794,10 +794,56 @@ so far came from the menu, the first level and its corridor. The scenes after it
         arrival; the file I/O (three stuck and three good timeline traces: no thread and system call appears in
         one group only, and the media threads' reads have the same shape in both, a burst of 800-1,050 reads
         around the unmap lines). So it is decided in the title's own logic on the main thread during the walk,
-        slow frames in that stretch make the stuck outcome certain, and the cause is still not known. The next
-        tool is in the tree: `PPU_COV` (DEBUGGING) lists the guest functions a run entered in a time window,
-        to set a good run against a stuck one; the first dumps exist and are not read to a conclusion yet.
-        Whether the faster EDGE stages change the rate stays unresolved.
+        and slow frames in that stretch make the stuck outcome certain. `PPU_COV` (DEBUGGING) lists the guest
+        functions a run entered in a time window, to set a good run against a stuck one; the next point reads
+        them.
+      * Later on 2026-11-23: what differs between the outcomes, and what cures it under the slow-down. (The
+        addresses are the title's own functions, found with `PPU_COV`, `PPU_TRACE_ADDRS` and a `PS3_FTRACE`
+        timeline, DEBUGGING; the same fight save and walk.)
+        The events. The walk crosses a row of volumes whose enter and leave events the title's per-frame
+        function 0x1E7A20 hands to 0x1E6780. In every traced run, good or stuck, the same events come at the
+        same game times counted from the first: two leaves at 1.5 s, one at 2.0 s, an enter at about 2.5 s
+        and another the frame after. A good run then gets two more enters one or two frames later, and the
+        second of them starts the cinematic (0x1E6780 -> 0x1218C8 -> 0x122514 -> 0x121AB8 -> 0x203E44). A
+        stuck run never gets those two: six frames after the 2.5 s event its object update (0xBD740 ->
+        0xA6D00 -> 0x23EAC0 -> 0x22F420) sends the event that runs the cinematic's end path, which a good run
+        reaches only when the cinematic is over, and from then on 0x391E64 is called every frame. The two
+        objects whose enters are missing exist beforehand in both outcomes, with the same first 0x40 bytes.
+        The title's time. Summing min(flip-to-flip time on the guest clock, 66.7 ms) from the first event
+        puts the 1.5 s events at 1.50-1.58 s and the 2.0 s event at 1.99-2.09 s in all 36 traced runs,
+        slowed or not: the title steps its game time on the guest clock and limits a step to 1/15 s, so
+        under 15 frames a second it runs in slow motion by its own rule.
+        The guest clock changed (`PS3_CLOCK_SCALE`, a test instrument: the guest clocks run at a percentage
+        of host time from 140 s, everything else as before). Under the slow-down 14 runs of 14 passed (25 to
+        70 percent, two each), against 51 of 51 stuck with the clock untouched (every run in which the stick
+        walked Kratos in under the slow-down; the one slowed pass of the point above arrived by attack
+        lunges, 1 of 3 in that arm). With the clock untouched the traced runs separate on the mean guest
+        step between the 2.0 s and 2.5 s events: up to 66 ms passed (10 runs), from 69 ms stuck (7). That
+        line does not hold once the clock is scaled: a run at 70 percent passed with a 101 ms guest step and
+        the same host frame times, frame numbers and game time as a stuck control. So the step alone does
+        not decide it: something in the title sets its clock against a quantity that runs on host time in
+        this runtime, or reads the unlimited clock difference. Which, is not known.
+        An option that keeps the guest clock on the title's game time: `PS3_CLOCK_STEP_CAP=<ms>[,<from s>]`
+        (runtime, default off; DEBUGGING). Under the slow-down, `58,140` passed 4 runs of 4 and `58` from the
+        start 2 of 2, the uncapped control on the same build stuck. Unslowed, `58,140` passed 8 of 8, two
+        of them with host frames of 68 and 78 ms mean on that half second, the range that stuck without it
+        (small numbers; the unslowed rate without it is about a quarter). One slowed run had a single 874
+        ms frame in that half second, which the cap lets through, and still launched. The New Game replay
+        with the cap from the start ran its 700 s with the same sequence of map and unmap lines as an
+        earlier replay, each within 5 s; the cap was rarely active there (1.3% of frames, by ten-flip
+        means, over 58 ms), so that run shows it does no harm where the game is fast and nothing about slow
+        stretches.
+        Its cost is game speed, not frames: the point where the game slows moves from 15 to about 17 frames
+        a second. Game time with the cap against game time without it, from the same traces: 0.97-0.99
+        over the walk, the arena and the cinematic, 0.91-0.95 in the fight at 14-17 fps (from ten-flip
+        means), never under 0.87 for a frame. The guest clock itself ran at 0.93-0.95 of host time unslowed
+        and at about half under the slow-down, which matters to anything that reads the clock directly.
+        Sleeps, timeouts, the vblank and the audio stay on host time. Not judged: sound, and what a person
+        sees. Not tested: the cap from the start unslowed through the arena, other slow stretches, long
+        play. It is not a default anywhere.
+        For performance the target on that half second is a frame time under about 62 ms: it runs at 13-17
+        fps there, the margin where about a quarter of plain runs stick. Whether the faster EDGE stages
+        change the rate stays unresolved; the readout above (the launch against the end event) can answer it.
     * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
       path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the

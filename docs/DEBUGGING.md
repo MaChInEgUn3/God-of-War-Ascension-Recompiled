@@ -1023,9 +1023,18 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   the guest clocks advance at most <ms> from one flip request to the next. Past the cap they creep at 2% of host
   time (strictly increasing for every thread) up to 250 ms into the frame, then run at host rate (a load or a
   hitch is not a slow frame), and they carry on from there at the next flip. A title that takes its step from
-  its clock then never sees a step above the cap: under 1000/<ms> frames a second the game slows down instead
-  of taking larger steps. Sleeps, timeouts and the vblank stay on host time. `[clock] PS3_CLOCK_STEP_CAP:` lines
-  mark arming and activation. Not verified yet beyond building (2026-11-23).
+  its clock then sees no step above the cap from a frame shorter than 250 ms: under 1000/<ms> frames a second
+  the game slows down instead of taking larger steps. Sleeps, timeouts, the vblank and the audio stay on host
+  time. `[clock] PS3_CLOCK_STEP_CAP:` lines mark arming and activation.
+  Verified on GoW:A, 2026-11-23 (STATUS has the counts): on the fight save, under the slow-down that sticks the
+  arena every time, `58,140` passed 4 runs of 4 and `58` from the start 2 of 2 (the uncapped control on the same
+  build stuck); unslowed, `58,140` passed 8 of 8; a 700 s New Game replay with `58` from the start ran through
+  with the cap rarely active. Not verified: sound, the cap from the start unslowed through that arena, slow
+  stretches other than that fight, long play, other titles.
+  Reading its cost from a `PS3_FTRACE` timeline: with d the flip-to-flip times, the guest clock advances
+  g = min(d, cap + 2% of the rest) for a frame under 250 ms. The sum of g over the sum of d is the guest clock's
+  rate against host time. For a title that limits its own step to L, the game-speed cost against the same run
+  without the cap is the sum of min(g, L) over the sum of min(d, L); it cannot fall under cap/L.
 * **Reproducing the arena state that does not play** (port; STATUS has the counts). On the fight save with the
   stick held forward from 150 s (`STICK=128,0,128,128,150,175` in the run scripts) slow the EDGE lists while
   Kratos walks in: `SPU_SLOW_PCT=300 SPU_SLOW_WIDS=15,16,17` from the start (every run so far), or only during the
