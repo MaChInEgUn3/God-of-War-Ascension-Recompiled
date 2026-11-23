@@ -2830,7 +2830,7 @@ index 286bf478..d2697985 100644
          return CELL_SAVEDATA_ERROR_PARAM;
  
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index efad9b92..3800eba3 100644
+index efad9b92..847af59e 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -22,6 +22,7 @@
@@ -4023,7 +4023,16 @@ index efad9b92..3800eba3 100644
  
      /* Publish progress: get chases put; ref advances at most ONE queued fence
       * per tick (gcm_ref_push/gcm_ref_publish_one above) so every SET_REFERENCE
-@@ -2741,6 +3574,11 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
+@@ -2673,6 +3506,8 @@ u32 cellGcm_display_buffer_count(void)
+ 
+ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
+ {
++    /* A frame boundary for PS3_CLOCK_STEP_CAP (runtime/syscalls/sys_timer.c); does nothing when that is off. */
++    { extern void ps3_clock_frame_mark(void); ps3_clock_frame_mark(); }
+     /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
+      * which answers "did it ever flip?" and not "is it still flipping, and how
+      * fast?" -- the question that matters when a title stops appearing on
+@@ -2741,6 +3576,11 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
      s_last_flip_time = get_timestamp_ns();
      if (PS3_FT_ON()) { const uint64_t t = ps3_ft_now();
                         ps3_ft_span(PS3_FT_FLIP_REQ, 0, bufferId, (uint32_t)in_fifo, t, t); }
@@ -4035,7 +4044,7 @@ index efad9b92..3800eba3 100644
  
      /* Invoke via OPD resolution, not a raw call into guest code.
       *
-@@ -2775,7 +3613,27 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2775,7 +3615,27 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
      const u32 end = vm_read32(ctx + 4), cur = vm_read32(ctx + 8);
      /* Never near the end: those bytes are the title's reserve before its
       * ring wraps, and the recycle above keys on them. */
@@ -4064,7 +4073,7 @@ index efad9b92..3800eba3 100644
      vm_write32(cur, GCM_FLIP_MARKER | bufferId);
      s_fifo_flips_queued++;
      /* Wrap here, on the guest thread, once the ring is nearly used -- what the
-@@ -2794,8 +3652,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2794,8 +3654,15 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
       * Rewinding it to `begin` in mid-frame cut the frame short, dropping the
       * fence release in its tail, and the title then waited for it forever. */
      const u32 begin = vm_read32(ctx), io_begin = gcm_ea2io(begin);
@@ -4081,7 +4090,7 @@ index efad9b92..3800eba3 100644
      if (runtime_ring && end - (cur + 4) < GCM_FLIP_WRAP_BYTES && io_begin != 0xFFFFFFFFu &&
          s_fifo_getoff >= io_begin + GCM_RECYCLE_MARGIN) {
          vm_write32(cur + 4, 0x20000000u | io_begin);   /* JUMP -> begin */
-@@ -3094,9 +3959,75 @@ static u32 gcm_io_alloc(u32 size)
+@@ -3094,9 +3961,75 @@ static u32 gcm_io_alloc(u32 size)
      return 0xFFFFFFFFu;
  }
  
@@ -4157,7 +4166,7 @@ index efad9b92..3800eba3 100644
      /* Log the REQUEST before validating it. Every rejection below used to
       * happen before the only printf in this function, so a title whose
       * mapping we refused looked -- in the log -- like a title that never asked.
-@@ -3151,6 +4082,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3151,6 +4084,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
      s_io_mapping_count++;
  
      populate_offset_table(ea, io_offset, size);
@@ -4165,7 +4174,7 @@ index efad9b92..3800eba3 100644
  
      vm_write32((uint32_t)(uintptr_t)offset, io_offset);   /* guest out-param */
      return CELL_OK;
-@@ -3159,6 +4091,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
+@@ -3159,6 +4093,7 @@ s32 cellGcmMapMainMemory(u32 ea, u32 size, u32* offset)
  /* NID: 0x5A41C10F */
  s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
  {
@@ -4173,7 +4182,7 @@ index efad9b92..3800eba3 100644
      /* Logged before validation, and every failure path named -- same reason as
       * cellGcmMapMainMemory above. Two of these returned silently AFTER the log
       * line as well, so even a call that got that far could vanish. */
-@@ -3194,7 +4127,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
+@@ -3194,7 +4129,11 @@ s32 cellGcmMapEaIoAddress(u32 ea, u32 io, u32 size)
      return CELL_OK;
  }
  
@@ -4186,7 +4195,7 @@ index efad9b92..3800eba3 100644
  s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
  {
      /* RPCS3 cellGcmSys.cpp accepts exactly STRICT_ORDERING (not an arbitrary
-@@ -3202,8 +4139,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
+@@ -3202,8 +4141,11 @@ s32 cellGcmMapEaIoAddressWithFlags(u32 ea, u32 io, u32 size, u32 flags)
       * order after its acquire fence; there is no relaxed DMA mapping path to
       * select here. Preserve that path rather than pretending to enable a new
       * ordering mode by storing an unused flag. */
@@ -4199,7 +4208,7 @@ index efad9b92..3800eba3 100644
      if ((ea | io | size) & 0xFFFFFu || !size)
          return CELL_GCM_ERROR_INVALID_ALIGNMENT;
      const u64 ea_end = (u64)ea + size;
-@@ -3242,8 +4182,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
+@@ -3242,8 +4184,30 @@ s32 cellGcmUnmapEaIoAddress(u32 ea)
  }
  
  /* NID: 0x3B9BD5BD */
@@ -4230,7 +4239,7 @@ index efad9b92..3800eba3 100644
      IoMapping* mapping = find_mapping_by_io(io);
      if (!mapping)
          return CELL_GCM_ERROR_FAILURE;
-@@ -3688,6 +4650,7 @@ void cellGcmTerminate(void)
+@@ -3688,6 +4652,7 @@ void cellGcmTerminate(void)
      memset(&s_config, 0, sizeof(s_config));
      memset(&s_control, 0, sizeof(s_control));
      memset(s_io_mappings, 0, sizeof(s_io_mappings));
@@ -32592,7 +32601,7 @@ index 66eef25c..f109c293 100644
      int slot = -1;
      for (int i = 0; i < SYS_MEMORY_ALLOC_MAX; ++i)
 diff --git a/runtime/syscalls/sys_timer.c b/runtime/syscalls/sys_timer.c
-index 5683446d..e2a33927 100644
+index 5683446d..7c3f5904 100644
 --- a/runtime/syscalls/sys_timer.c
 +++ b/runtime/syscalls/sys_timer.c
 @@ -9,6 +9,7 @@
@@ -32603,10 +32612,89 @@ index 5683446d..e2a33927 100644
  #include <stdlib.h>   /* getenv -- an implicit decl returns int, truncating the pointer */
  #include <string.h>
  #include <stdlib.h>
-@@ -59,8 +60,53 @@ int lv2_deadline_passed(int64_t deadline)
+@@ -59,8 +60,131 @@ int lv2_deadline_passed(int64_t deadline)
   * polled. Overflow-safe split multiply (rem < qpf, so
   * rem * 79.8e6 < ~8e14 << 2^63).
   * -----------------------------------------------------------------------*/
++static uint64_t clock_host_ns(void)
++{
++#ifdef _WIN32
++    LARGE_INTEGER n; ensure_qpc_init(); QueryPerformanceCounter(&n);
++    const uint64_t q = (uint64_t)s_qpc_freq.QuadPart, v = (uint64_t)n.QuadPart;
++    return (v / q) * 1000000000ull + (v % q) * 1000000000ull / q;
++#else
++    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
++#endif
++}
++
++/* PS3_CLOCK_STEP_CAP=<ms>[,<from s>] (opt-in, default off): the guest-visible
++ * clocks advance at most <ms> per guest frame (from one flip request to the
++ * next). Inside a frame that runs longer they creep at 2% of host time, so they
++ * stay strictly increasing for every thread, and they carry on from there at
++ * the next flip: no jump either way. From 250 ms into a frame they run at host
++ * rate again (a load or a hitch is not a slow frame). A title that derives its step from its
++ * clock then never sees a step above <ms>: below 1000/<ms> frames a second the
++ * game slows down instead of taking larger steps. Sleeps, timeouts and the
++ * vblank stay on host time. <from s> counts from the first guest clock read.
++ * mark != 0: called at a flip request. Returns the lag in ns. */
++static uint64_t clock_cap_lag(int mark)
++{
++    static int s_init = 0, s_on = 0, s_active = 0;
++    static uint64_t s_cap_ns = 0, s_from_ns = 0, s_t0 = 0, s_base = 0, s_frame0 = 0;
++#ifdef _WIN32
++    static SRWLOCK s_lk = SRWLOCK_INIT;
++#else
++    static pthread_mutex_t s_lk = PTHREAD_MUTEX_INITIALIZER;
++#endif
++    if (!s_init) {
++        const char* e = getenv("PS3_CLOCK_STEP_CAP");
++        if (e && *e) {
++            char* p = NULL;
++            long ms = strtol(e, &p, 10);
++            double from = (p && *p == ',') ? atof(p + 1) : 0.0;
++            if (ms >= 5 && ms <= 1000 && from >= 0.0) {
++                s_cap_ns = (uint64_t)ms * 1000000ull; s_from_ns = (uint64_t)(from * 1e9); s_on = 1;
++                fprintf(stderr, "[clock] PS3_CLOCK_STEP_CAP: guest clocks advance at most %ld ms a guest frame, "
++                                "from %.1f s after the first guest clock read\n", ms, from);
++            } else fprintf(stderr, "[clock] PS3_CLOCK_STEP_CAP wants <ms 5-1000>[,<from s>]\n");
++        }
++        s_init = 1;
++    }
++    if (!s_on) return 0;
++    const uint64_t now = clock_host_ns();
++    uint64_t lag;
++#ifdef _WIN32
++    AcquireSRWLockExclusive(&s_lk);
++#else
++    pthread_mutex_lock(&s_lk);
++#endif
++    if (!s_t0) s_t0 = now;
++    lag = s_base;
++    if (s_active && now > s_frame0 + s_cap_ns) {
++        /* Only up to 250 ms into the frame: a load or a hitch with no flip for longer
++         * is not a slow frame, and a clock that hardly moves through it would stall
++         * whatever the title times there. */
++        const uint64_t limit = s_cap_ns < 250000000ull ? 250000000ull - s_cap_ns : 0;
++        uint64_t over = now - s_frame0 - s_cap_ns;
++        if (over > limit) over = limit;
++        lag += over * 98ull / 100ull;
++    }
++    if (mark) {
++        if (!s_active && now - s_t0 >= s_from_ns) {
++            s_active = 1;
++            fprintf(stderr, "[clock] PS3_CLOCK_STEP_CAP: active from %.1f s\n", (double)(now - s_t0) / 1e9);
++        }
++        s_base = lag; s_frame0 = now;
++    }
++#ifdef _WIN32
++    ReleaseSRWLockExclusive(&s_lk);
++#else
++    pthread_mutex_unlock(&s_lk);
++#endif
++    return lag;
++}
++
 +/* PS3_CLOCK_SCALE=<pct>,<from s> (a test instrument, default off): from <from s>
 + * seconds after the first guest clock read, the guest-visible clocks (the
 + * timebase, sys_time_get_system_time, sys_time_get_current_time) advance at
@@ -32634,21 +32722,20 @@ index 5683446d..e2a33927 100644
 +        }
 +        s_init = 1;
 +    }
-+    if (s_pct >= 100) return 0;
-+    uint64_t now;
-+#ifdef _WIN32
-+    {   LARGE_INTEGER n; ensure_qpc_init(); QueryPerformanceCounter(&n);
-+        uint64_t q = (uint64_t)s_qpc_freq.QuadPart, v = (uint64_t)n.QuadPart;
-+        now = (v / q) * 1000000000ull + (v % q) * 1000000000ull / q; }
-+#else
-+    {   struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-+        now = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec; }
-+#endif
++    const uint64_t cap_lag = clock_cap_lag(0);
++    if (s_pct >= 100) return cap_lag;
++    const uint64_t now = clock_host_ns();
 +    if (!s_t0) s_t0 = now;        /* benign race: same anchor either way */
 +    const uint64_t el = now - s_t0;
-+    if (el <= s_from_ns) return 0;
++    if (el <= s_from_ns) return cap_lag;
 +    if (!s_said) { s_said = 1; fprintf(stderr, "[clock] PS3_CLOCK_SCALE: switch at %.1f s\n", (double)el / 1e9); }
-+    return (el - s_from_ns) * (uint64_t)(100u - s_pct) / 100u;
++    return cap_lag + (el - s_from_ns) * (uint64_t)(100u - s_pct) / 100u;
++}
++
++/* The guest asked for a flip: a frame boundary for PS3_CLOCK_STEP_CAP. */
++void ps3_clock_frame_mark(void)
++{
++    (void)clock_cap_lag(1);
 +}
 +
  uint64_t ppu_timebase_now(void)
@@ -32657,7 +32744,7 @@ index 5683446d..e2a33927 100644
  #ifdef _WIN32
      static LONGLONG t0 = 0;
      ensure_qpc_init();
-@@ -69,13 +115,20 @@ uint64_t ppu_timebase_now(void)
+@@ -69,13 +193,20 @@ uint64_t ppu_timebase_now(void)
      if (!t0) t0 = now.QuadPart;   /* benign race: same anchor either way */
      uint64_t d = (uint64_t)(now.QuadPart - t0);
      uint64_t q = (uint64_t)s_qpc_freq.QuadPart;
@@ -32681,7 +32768,7 @@ index 5683446d..e2a33927 100644
  }
  
  static void write_be32(uint32_t addr, uint32_t val)
-@@ -238,7 +291,32 @@ int64_t sys_timer_usleep(ppu_context* ctx)
+@@ -238,7 +369,32 @@ int64_t sys_timer_usleep(ppu_context* ctx)
           * and busy-spins at full speed (so the wait is effectively a no-op).
           * Busy-wait to a precise QPC deadline, yielding inside the spin
           * (SwitchToThread) so a sibling host thread the guest may be waiting on
@@ -32715,7 +32802,7 @@ index 5683446d..e2a33927 100644
          ensure_qpc_init();
          LARGE_INTEGER qpc_start, qpc_now;
          QueryPerformanceCounter(&qpc_start);
-@@ -346,6 +424,12 @@ int64_t sys_time_get_current_time(ppu_context* ctx)
+@@ -346,6 +502,12 @@ int64_t sys_time_get_current_time(ppu_context* ctx)
      sec  = (uint64_t)ts.tv_sec;
      nsec = (uint64_t)ts.tv_nsec;
  #endif
@@ -32729,16 +32816,20 @@ index 5683446d..e2a33927 100644
      if (sec_addr != 0) {
          write_be64(sec_addr, sec);
 diff --git a/runtime/syscalls/sys_timer.h b/runtime/syscalls/sys_timer.h
-index 7b38fcbb..36492b0e 100644
+index 7b38fcbb..2872b098 100644
 --- a/runtime/syscalls/sys_timer.h
 +++ b/runtime/syscalls/sys_timer.h
-@@ -32,6 +32,10 @@ extern "C" {
+@@ -32,6 +32,14 @@ extern "C" {
   * to the PS3 timebase. Called from every lifted mftb site (ppu_lifter.py). */
  uint64_t ppu_timebase_now(void);
  
 +/* PS3_CLOCK_SCALE=<pct>,<from s> (a test instrument): how far the guest-visible
 + * clocks lag host time, in ns; 0 when off or before the switch. */
 +uint64_t ps3_clock_lag_ns(void);
++
++/* PS3_CLOCK_STEP_CAP=<ms>[,<from s>] (opt-in): the guest clocks advance at most
++ * <ms> per guest frame. The video library calls this at every flip request. */
++void ps3_clock_frame_mark(void);
 +
  #ifdef _WIN32
  /* Sub-millisecond timed-wait support for the lv2 sync primitives.

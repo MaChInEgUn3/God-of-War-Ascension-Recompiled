@@ -1019,6 +1019,13 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   something the title times (a scripted sequence's events, traced with `PPU_TRACE_ADDRS` on a `PS3_FTRACE`
   timeline) must stretch by the factor set; if it does not move, that clock is not the one the title steps on
   and the run says nothing.
+  `PS3_CLOCK_STEP_CAP=<ms>[,<from s>]` (opt-in, default off) is the same idea as an option rather than a test:
+  the guest clocks advance at most <ms> from one flip request to the next. Past the cap they creep at 2% of host
+  time (strictly increasing for every thread) up to 250 ms into the frame, then run at host rate (a load or a
+  hitch is not a slow frame), and they carry on from there at the next flip. A title that takes its step from
+  its clock then never sees a step above the cap: under 1000/<ms> frames a second the game slows down instead
+  of taking larger steps. Sleeps, timeouts and the vblank stay on host time. `[clock] PS3_CLOCK_STEP_CAP:` lines
+  mark arming and activation. Not verified yet beyond building (2026-11-23).
 * **Reproducing the arena state that does not play** (port; STATUS has the counts). On the fight save with the
   stick held forward from 150 s (`STICK=128,0,128,128,150,175` in the run scripts) slow the EDGE lists while
   Kratos walks in: `SPU_SLOW_PCT=300 SPU_SLOW_WIDS=15,16,17` from the start (every run so far), or only during the
