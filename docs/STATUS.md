@@ -854,16 +854,13 @@ so far came from the menu, the first level and its corridor. The scenes after it
         is busy for about a second, with the game closed as well. Frames a second against that burst
         correlate at -0.65 to -0.77 in five runs, and one-second logs of 2026-11-20 and 11-21 show the same
         spacing. A burst second runs at 13.7 fps against 18.1, the deepest at 11-13.
-        Levers, read inside quiet seconds only (no burst in the second or the seven before it): the EDGE
-        lists made 20% slower -9.1% +- 1.4 (one run; a stage that paced the frame alone would cost 16.7%,
-        so they carry about half of it); the faster EDGE stages (the six v4 options against held) +6.0% +-
-        1.0 and +6.6% +- 1.4 with `us_run` -7.6% and -8.5% (two runs where the rule asks four); a fourth
-        EDGE lane +4.3% +- 1.3 with `us_run` +4.1% (one run and no held-on control: not a figure) and
-        nothing in burst seconds (-0.3% +- 4.0). Slowing the walker or the flip-requesting thread showed
-        nothing in one run each with 5 s windows, which on this scene resolves nothing under about 8%.
+        The levers on this scene are in the point "The levers on the standing scene" below, read with one
+        reader and with controls; it supersedes the first reading published here on 2026-11-23 (the EDGE
+        lists 20% slower -9.1%, the faster EDGE stages +6.0% and +6.6%, a fourth EDGE lane +4.3%, and
+        "the EDGE lists carry about half of the frame's pace").
         What it means for the stuck state: the walk's decisive half second runs at 45-52 ms in a quiet run,
-        and a burst second is about 1.5 times slower at its deepest: 68-78 ms, or 63-73 with the faster
-        stages. So speed-ups of this size narrow the exposure on such a host and do not close it; only the
+        and a burst second is about 1.5 times slower at its deepest: 68-78 ms, or about 64-74 with the
+        faster stages. So speed-ups of this size narrow the exposure on such a host and do not close it; only the
         step cap has closed it in tests. Not shown: that the unslowed stuck runs are the ones a burst fell
         on (in 71 older logs slow seconds at the walk go with sticking, but slow passes exist and some runs
         are slow for longer than a burst lasts); and the timeline tracer's 0 stuck of 20 is not explained
@@ -888,6 +885,40 @@ so far came from the menu, the first level and its corridor. The scenes after it
         walk's half second and the stuck rate were not compared across them. The frame dump itself (every
         300 presents) is not a visible hitch: over 227 dumps the dump's second ran like the two before it
         (ratio 1.01).
+      * The levers on the standing scene, the same day (one reader for every run: one-second windows from
+        145 s, quiet seconds only, the lag anchored on the log's creation time; frames a second with the
+        lever on against off, +- one standard error; the flip-to-flip intervals there are a smooth spread
+        of 44-58 ms, not multiples of the vblank, so the percentages are not a boundary effect):
+        - no lever (the reader's null): -0.3% +- 0.9 (one run);
+        - the six v4 EDGE stage options against held: +5.7, +6.0, +4.1, +5.2 (four runs, each +- 0.9 to 1.2;
+          mean +5.25%), with the EDGE lists' time a run 6.5-8.2% lower;
+        - the EDGE lists 20% slower (407 ms of busy-wait a second): -8.0, -11.4, -10.6 (three runs);
+        - every other SPU workload 20% slower (490 ms a second): -5.1 +- 1.6 and -5.4 +- 0.9 (two runs);
+          the four groups of those workloads one at a time got only 73-194 ms a second and showed -2.2,
+          +0.2, +0.1 and +0.3 (+- 1.1 to 1.5, one run each): under-dosed, so untested by group, not slack;
+        - the draw walker 20% slower (154 ms a second): -0.2 +- 1.1 and 0.0 +- 1.3 (two runs): it has
+          slack here (in the host's burst seconds -11 +- 6 and -6 +- 3: not resolved);
+        - 3 ms more at each flip request on the requesting thread: +1.5 +- 1.5 and +2.2 +- 1.3 (two runs):
+          that thread has at least 3 ms of slack at the flip, and none of its waits in the gcm layer
+          (about 4.5 ms a frame together) shrank with the lever on;
+        - a fourth EDGE lane: +5.0 +- 1.0 (one run, no held-on control: not a figure);
+        - the load control (`burn`: 500 ms a second of spinning on one spare thread, slowing nothing):
+          -1.3 +- 1.0 and -2.3 +- 1.4 (two runs).
+        The slow-down lever busy-waits on the SPU kernel thread, so part of its effect is the load itself:
+        net of the control the EDGE lists cost about 8% and the other workloads about 3.5% (the control
+        spins one spare thread, the lever the lane threads: "about" is all it gives). Per 100 ms a second
+        added that is about 2% for EDGE against under 1% for the others: on this scene EDGE job time is
+        the dearer one, and job time as such is not what paces the frame.
+        The fight, one run each, read by the adjacent-window fit with the draws (no load control there):
+        no lever +1.0% +- 2.5; the EDGE lists 20% slower (408 ms a second) -9.9% +- 2.4; every other
+        workload 20% slower (477 ms a second) -8.4% +- 2.2. Both cost frames in the fight.
+        How many module runs are active at once (two traces of the standing seconds, v3 stages): six SPU
+        kernel threads, 4.85 of them running a module on average; all six 38% of the time, five 25%,
+        four 22%. The EDGE lists are at their cap of three lanes 52.5% of the time (two 32%, one 12-13%).
+        SPU job time is about 250 ms a frame of about 51 ms: the EDGE lists about 120 (three lists of 525
+        runs of 75 us each), the other workloads about 130 (the largest as much as one EDGE list).
+        Not done: the load control and the group doses in the fight; whether a module run gets slower
+        when more of them run at once; what the idle kernel threads wait for.
     * Flips presented before their frame's tail (found 2026-11-20; since 2026-11-21 the play scripts close that
       path with `GCM_FLIP_SLACK=0`, see the end of this item and DEBUGGING; the exe's own default is unchanged). The runtime queues the
       title's flip into the command stream only when at least 4 KB of the current block are left; otherwise the

@@ -419,7 +419,9 @@ Lessons that cost days; keep them.
   runs and their length, the walker's share in passes, fence waits, the main thread's sleeps); runs that
   began before the window started leave no span.
 * **Timeline of module runs**: `PS3_FTRACE_MIN_US=1` keeps every module run (one SPU-busy span each, with the
-  workload) and every kernel wait; 5 s of the corridor fight is about 270,000 spans.
+  workload) and every kernel wait; 5 s of the corridor fight is about 270,000 spans. In the text file the
+  `a` and `b` fields are hexadecimal (a module run of workload 15 has `b` = `f`); a sweep over the kind 4
+  spans gives how many module runs are active at once and each workload's job time a frame.
   The lever `burn` separates pacing from contention: a spare thread spins `GOW_AB_BURN` microseconds (default
   2000) out of about every 5 ms while on, with nothing slowed, and `burn_ms=` shows what it spun. If frames
   fall with it as they do with a slow-down probe of the same spin, the probe measured the machine's load
@@ -554,6 +556,14 @@ Lessons that cost days; keep them.
   - `mslow`: the flip-requesting thread busy-waits `GOW_AB_MSLOW=<us>`, default 3000, at each flip request.
 
   A stage that fully paces the frame adds n/(100+n) of frame time (pct probes) or the whole wait (`mslow`).
+  The `slow` and `rslow` levers busy-wait, so they also load the host: run `burn` at the same dose in the
+  same chain and set it beside the probe (2026-11-23, standing scene: 500 ms a second of `burn` cost 1.3%
+  and 2.3%). Size a dose in ms a second, not in percent: the `[ab]` line prints what was added (`sslow_ms`,
+  `rslow_ms`, `burn_ms`), 20% of a small workload is too little to read (73-194 ms a second showed nothing
+  against a null of +-0.9%), and 100% of a large one overshoots (a path that is not critical becomes so when
+  doubled). Put a `none` run in every chain as the reader's null. `mslow` tests slack at the flip, not pace:
+  a null there says the thread had that much slack, and `analysis/abwait.py` shows whether one of its waits
+  absorbed it. In a fight the scene changes under the lever: read with `analysis/abfit.py`.
 
 **In-run A/B** (`GOW_AB=<lever>,<window s>,<start s>`, port `main.cpp`): from `<start s>` the lever is switched window by window in a fixed
 pseudo-random order (the old order on, off, off, on with `GOW_AB_PERIODIC=1`) and each window prints `[ab] lever= w= on= frames= secs=`. Levers: `icall` (`g_ppu_icall_fast`), `dma`
