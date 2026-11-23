@@ -1006,13 +1006,17 @@ ms per game frame, with quartiles. Only for a switch that can change while the g
   other group may only do later (a diff of windows that end at different points of the scene mostly lists that).
   `PPU_TRACE_ADDRS=<addr,...>` with `PPU_TRACE_MAX` may be set in the same run: its `[FN ...]` lines give each
   entry's `lr`, the caller that the lifted source does not show for functions reached through a table.
+  `PPU_TRACE_CHAIN=<n>` adds, after the first n `[FN]` lines of each traced function (up to 64 functions), a
+  `[FN <addr>]   chain:` line with the return addresses the callers saved, innermost first: the whole call
+  path, where `lr` alone stops one level up.
 * **Reproducing the arena state that does not play** (port; STATUS has the counts). On the fight save with the
   stick held forward from 150 s (`STICK=128,0,128,128,150,175` in the run scripts) slow the EDGE lists while
   Kratos walks in: `SPU_SLOW_PCT=300 SPU_SLOW_WIDS=15,16,17` from the start (every run so far), or only during the
   walk with the in-run lever, `GOW_AB="slow,20,150" GOW_AB_PERIODIC=1 GOW_AB_SLOW=300` (3 of 3; the state stays
   when the speed returns). Slowed only before the walk (`"slow,10,140"`) or only after 170 s it does not stick.
   `PS3_FTRACE` and `PPU_COV` do not hide it under that slow-down (3 of 3 each); at full speed a tracer changes
-  the rate. Reading a run: `GOW_AB="none,1,140"` prints one `[ab]` line a second from 140 s with the draws; the
+  the rate (the timeline tracer or a sampler on: 0 stuck of 20; the function hook live, as with `PPU_COV` or
+  `PPU_TRACE_ADDRS`: 6 of 9). Reading a run: `GOW_AB="none,1,140"` prints one `[ab]` line a second from 140 s with the draws; the
   transition's log markers are six `[cellGcmSys] UnmapIoAddress` lines (the first with `io=0x07100000`) and then
   `MapMainMemory(ea=0x88200000, ...)` and `MapMainMemory(ea=0x88A00000, ...)`. About 4-5 s into the walk the draws
   fall from about 2,400 to about 1,900 a frame; a good run shows the arena in the next second (2,800-3,350 draws

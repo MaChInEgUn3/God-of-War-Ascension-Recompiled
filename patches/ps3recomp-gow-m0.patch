@@ -14380,7 +14380,7 @@ index b44816b0..9b3c4a92 100644
          /* Recorded before the diagnostic paths below, several of which return
           * early. An import moving between resolved and unresolved is exactly the
 diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
-index f54150d9..3e1ad1bf 100644
+index f54150d9..954881e0 100644
 --- a/runtime/ppu/ppu_loader.cpp
 +++ b/runtime/ppu/ppu_loader.cpp
 @@ -21,10 +21,12 @@
@@ -15523,7 +15523,7 @@ index f54150d9..3e1ad1bf 100644
          /* Read back: demand-committed pages can swallow a write, and a silently
           * empty argv is hard to recognise from the guest side. */
          for (uint32_t a = 0; a < argc_n; a++) {
-@@ -4051,3 +4776,376 @@ extern "C" void ppu_guest_callstack(const char* tag)
+@@ -4051,3 +4776,402 @@ extern "C" void ppu_guest_callstack(const char* tag)
  #endif
  }
  
@@ -15844,6 +15844,32 @@ index f54150d9..3e1ad1bf 100644
 +            addr, (unsigned long long)ctx->thread_id, (uint32_t)ctx->gpr[3], (uint32_t)ctx->gpr[4],
 +            (uint32_t)ctx->gpr[5], (uint32_t)ctx->gpr[6], (uint32_t)ctx->gpr[7],
 +            (uint32_t)ctx->lr, (uint32_t)ctx->gpr[1], us);
++    /* PPU_TRACE_CHAIN=<n>: for the first n traced entries of each function (up to 64 functions) a second
++     * line with the guest back chain: the return addresses the callers saved, innermost first (the "[FN]"
++     * line's lr is the direct caller; this goes on from there). A function reached through a table has no
++     * caller in the lifted source; this names the chain that got there. */
++    { static int s_chain = -1; static uint32_t s_ca[64], s_cn[64]; static int s_cu = 0;
++      if (s_chain < 0) { const char* e = getenv("PPU_TRACE_CHAIN"); s_chain = e ? atoi(e) : 0;
++                         if (s_chain < 0) s_chain = 0; }
++      if (s_chain) {
++          int k = 0; for (; k < s_cu; k++) if (s_ca[k] == addr) break;
++          if (k == s_cu && s_cu < 64) { s_ca[s_cu] = addr; s_cn[s_cu] = 0; s_cu++; }
++          if (k < s_cu && s_cn[k] < (uint32_t)s_chain) {
++              s_cn[k]++;
++              char bc[700]; int bp = snprintf(bc, sizeof bc, "[FN %08X]   chain:", addr);
++              uint32_t f = (uint32_t)ctx->gpr[1];
++              for (int d = 0; d < 16 && bp < 640; d++) {
++                  if (!ppu_dump_readable(f, 8)) break;
++                  const uint32_t prev = vm_read32(f + 4);           /* low half of the 64-bit back chain */
++                  if (prev <= f || !ppu_dump_readable(prev + 0x14, 4)) break;   /* stacks grow down */
++                  const uint32_t ra = vm_read32(prev + 0x14);       /* low half of the saved lr */
++                  if (ra >= 0x10000 && ra < 0x800000) bp += snprintf(bc + bp, sizeof(bc) - bp, " %08X", ra);
++                  f = prev;
++              }
++              fprintf(stderr, "%s\n", bc);
++          }
++      }
++    }
 +    /* PPU_TRACE_DUMP=<hex fn>,<reg>,<hex len>[,<hops>]: also dump len bytes at gpr[reg] on entry
 +     * to fn, after <hops> pointer dereferences. PPU_TRACE_DUMP2 takes a second spec of the same
 +     * form, so one entry can show an object and a block it points to. */
